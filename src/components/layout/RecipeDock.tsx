@@ -2,6 +2,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { Link, useLocation } from '@tanstack/react-router'
 import { motion } from 'motion/react'
 import {
+  ArrowRightIcon,
   DicesIcon,
   LoaderCircleIcon,
   PersonStandingIcon,
@@ -11,10 +12,45 @@ import {
   UserRoundIcon,
   XIcon,
 } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
 import { costumesQuery, portraitsQuery, posesQuery } from '@/api/gallery'
-import { poseThumbPath, referenceImageUrl } from '@/lib/recipeImages'
 import { workflowIdentity } from '@/lib/comfyWorkflowParameters'
+import { poseThumbPath, referenceImageUrl } from '@/lib/recipeImages'
+import { cn } from '@/lib/utils'
 import { useStudio } from '@/store/studioStore'
+
+type CoreSlot = 'portrait' | 'costume' | 'pose'
+
+const SLOT_SPARK_ANGLES = [-55, -22, 12, 46, 130, 215]
+const SLOT_SPARK_COLORS: Record<CoreSlot, string> = {
+  portrait: '#E5A918',
+  costume: '#19857B',
+  pose: '#D9381E',
+}
+
+function SlotSparkBurst({ slot, burstKey }: { slot: CoreSlot; burstKey: number }) {
+  if (!burstKey) return null
+  const color = SLOT_SPARK_COLORS[slot]
+  return (
+    <span
+      key={burstKey}
+      aria-hidden="true"
+      className="pointer-events-none absolute top-1/2 left-6 z-20 size-0"
+    >
+      {SLOT_SPARK_ANGLES.map((deg, idx) => (
+        <span
+          key={deg}
+          className="hp-spark-dot absolute top-0 left-0 size-1.5 rounded-full"
+          style={{
+            backgroundColor: idx % 2 === 0 ? color : '#FFFFFF',
+            boxShadow: `0 0 6px ${color}`,
+            ['--spark-a' as string]: `${deg}deg`,
+          }}
+        />
+      ))}
+    </span>
+  )
+}
 
 export function RecipeDock() {
   const { pathname } = useLocation()
@@ -30,17 +66,123 @@ export function RecipeDock() {
     randomizeRecipe,
   } = useStudio()
   const qc = useQueryClient()
+
+  const dockGlassRef = useRef<HTMLDivElement | null>(null)
+  const ctaLinkRef = useRef<HTMLAnchorElement | null>(null)
+  const impactTimerRef = useRef<number | null>(null)
+  const safetyMaskTimerRef = useRef<number | null>(null)
+  const prevReadyRef = useRef(false)
+
+  const [maskedSlots, setMaskedSlots] = useState<Set<CoreSlot>>(() => new Set())
+  const [sparkKeys, setSparkKeys] = useState<Record<CoreSlot, number>>({
+    portrait: 0,
+    costume: 0,
+    pose: 0,
+  })
+  const [ctaIgniteKey, setCtaIgniteKey] = useState(0)
+
   const extraCount = (recipe.extraImages || []).length
   const workflowImages =
     apiConfig.activeProvider === 'comfyui' &&
     recipe.workflowImagesIdentity === workflowIdentity(apiConfig.comfyuiParams.workflowJson)
       ? Object.values(recipe.workflowImages || {})
       : []
-  const count =
-    [recipe.portrait, recipe.costume, recipe.pose].filter(Boolean).length +
-    extraCount +
-    workflowImages.length
-  const coreSlotsFilled = [recipe.portrait, recipe.costume, recipe.pose].filter(Boolean).length
+
+  const showPortrait = Boolean(recipe.portrait) && !maskedSlots.has('portrait')
+  const showCostume = Boolean(recipe.costume) && !maskedSlots.has('costume')
+  const showPose = Boolean(recipe.pose) && !maskedSlots.has('pose')
+
+  const coreSlotsFilled = [showPortrait, showCostume, showPose].filter(Boolean).length
+  const count = coreSlotsFilled + extraCount + workflowImages.length
+  const isFullReady = coreSlotsFilled === 3
+
+  // 监听首页卡包飞入起飞与落地撞击事件
+  useEffect(() => {
+    const onFlightStart = (e: Event) => {
+      const detail = (e as CustomEvent<{ slots?: CoreSlot[] }>).detail
+      const slots = detail?.slots ?? ['portrait', 'costume', 'pose']
+      setMaskedSlots(new Set(slots))
+      if (safetyMaskTimerRef.current) window.clearTimeout(safetyMaskTimerRef.current)
+      safetyMaskTimerRef.current = window.setTimeout(() => {
+        setMaskedSlots(new Set())
+      }, 1700)
+    }
+
+    const onImpact = (e: Event) => {
+      const detail = (e as CustomEvent<{ slot?: CoreSlot; index?: number; isFinal?: boolean }>).detail
+      const slot = detail?.slot
+      if (!slot) return
+
+      // 1. 揭晓对应槽位的卡图
+      setMaskedSlots((prev) => {
+        if (!prev.has(slot)) return prev
+        const next = new Set(prev)
+        next.delete(slot)
+        return next
+      })
+
+      // 2. 触发槽位 Q 弹 + 星芒粒子迸发
+      const slotEl = document.querySelector<HTMLElement>(`[data-dock-slot="${slot}"]`)
+      if (slotEl) {
+        slotEl.classList.remove('hp-slot-pop')
+        void slotEl.offsetWidth
+        slotEl.classList.add('hp-slot-pop')
+        window.setTimeout(() => slotEl.classList.remove('hp-slot-pop'), 500)
+      }
+      setSparkKeys((prev) => ({ ...prev, [slot]: prev[slot] + 1 }))
+
+      // 3. 触发整条悬浮块根据落点左右中微倾震颤
+      const glass = dockGlassRef.current
+      if (glass) {
+        const cls =
+          slot === 'portrait'
+            ? 'dock-impact-left'
+            : slot === 'costume'
+              ? 'dock-impact-center'
+              : 'dock-impact-right'
+        glass.classList.remove('dock-impact-left', 'dock-impact-center', 'dock-impact-right')
+        void glass.offsetWidth
+        glass.classList.add(cls)
+        if (impactTimerRef.current) window.clearTimeout(impactTimerRef.current)
+        impactTimerRef.current = window.setTimeout(() => {
+          glass.classList.remove('dock-impact-left', 'dock-impact-center', 'dock-impact-right')
+        }, 480)
+      }
+
+      // 4. 压轴最后一张落地时，强制点燃立即合成按钮波纹
+      if (detail?.isFinal) {
+        setCtaIgniteKey((k) => k + 1)
+      }
+    }
+
+    window.addEventListener('recipe-dock-flight-start', onFlightStart)
+    window.addEventListener('recipe-dock-impact', onImpact)
+    return () => {
+      window.removeEventListener('recipe-dock-flight-start', onFlightStart)
+      window.removeEventListener('recipe-dock-impact', onImpact)
+      if (impactTimerRef.current) window.clearTimeout(impactTimerRef.current)
+      if (safetyMaskTimerRef.current) window.clearTimeout(safetyMaskTimerRef.current)
+    }
+  }, [])
+
+  // 当通过其他途径（如点击悬浮栏「随机」或在图库凑齐第 3 张）填满 3/3 时，也触发觉醒波纹
+  useEffect(() => {
+    if (isFullReady && !prevReadyRef.current) {
+      setCtaIgniteKey((k) => k + 1)
+    }
+    prevReadyRef.current = isFullReady
+  }, [isFullReady])
+
+  useEffect(() => {
+    if (!ctaIgniteKey || !isFullReady) return
+    const ctaEl = ctaLinkRef.current
+    if (!ctaEl) return
+    ctaEl.classList.remove('cta-ignite')
+    void ctaEl.offsetWidth
+    ctaEl.classList.add('cta-ignite')
+    const tid = window.setTimeout(() => ctaEl.classList.remove('cta-ignite'), 600)
+    return () => window.clearTimeout(tid)
+  }, [ctaIgniteKey, isFullReady])
 
   if (
     pathname.startsWith('/studio') ||
@@ -76,15 +218,22 @@ export function RecipeDock() {
       }
     >
       <div
+        ref={dockGlassRef}
         data-impeccable-ignore="nested-cards"
-        className="md-glass relative overflow-hidden rounded-[22px] p-2 text-foreground sm:px-3 sm:py-2"
+        className={cn(
+          'md-glass relative overflow-visible rounded-[22px] p-2 text-foreground transition-shadow duration-300 sm:px-3 sm:py-2',
+          isFullReady && 'ring-1 ring-[#D9381E]/25'
+        )}
       >
-        {/* 底部极细进度线 */}
-        <div className="pointer-events-none absolute inset-x-6 bottom-0 h-[1.5px] overflow-hidden bg-border">
+        {/* 底部极细充能进度条 */}
+        <div className="pointer-events-none absolute inset-x-4 bottom-0 h-[2px] overflow-hidden rounded-b-[22px] bg-border/80">
           <motion.div
             animate={{ width: `${(coreSlotsFilled / 3) * 100}%` }}
-            transition={{ duration: 0.22, ease: [0.2, 0.8, 0.2, 1] }}
-            className="h-full bg-foreground"
+            transition={{ duration: 0.26, ease: [0.2, 0.8, 0.2, 1] }}
+            className={cn(
+              'h-full transition-colors duration-300',
+              isFullReady ? 'bg-gradient-to-r from-[#E5A918] via-[#D9381E] to-[#D9381E]' : 'bg-foreground'
+            )}
           />
         </div>
 
@@ -94,17 +243,16 @@ export function RecipeDock() {
             <div
               data-dock-slot="portrait"
               className={`relative flex min-w-0 items-center gap-2 rounded-xl px-2.5 py-1.5 transition-colors ${
-                recipe.portrait
-                  ? 'border border-border bg-card shadow-xs'
-                  : 'hover:bg-card/70'
+                showPortrait ? 'border border-border bg-card shadow-xs' : 'hover:bg-card/70'
               }`}
             >
-              {recipe.portrait ? (
+              <SlotSparkBurst slot="portrait" burstKey={sparkKeys.portrait} />
+              {showPortrait && recipe.portrait ? (
                 <>
                   <img
                     src={referenceImageUrl(recipe.portrait.缩略图)}
                     alt={recipe.portrait.标题}
-                    className="size-7 shrink-0 rounded-md object-cover ring-1 ring-border"
+                    className="size-7 shrink-0 rounded-md object-cover ring-1 ring-[#E5A918]/50"
                   />
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-xs font-semibold text-foreground">{recipe.portrait.发型名称}</div>
@@ -135,17 +283,16 @@ export function RecipeDock() {
             <div
               data-dock-slot="costume"
               className={`relative flex min-w-0 items-center gap-2 rounded-xl px-2.5 py-1.5 transition-colors ${
-                recipe.costume
-                  ? 'border border-border bg-card shadow-xs'
-                  : 'hover:bg-card/70'
+                showCostume ? 'border border-border bg-card shadow-xs' : 'hover:bg-card/70'
               }`}
             >
-              {recipe.costume ? (
+              <SlotSparkBurst slot="costume" burstKey={sparkKeys.costume} />
+              {showCostume && recipe.costume ? (
                 <>
                   <img
                     src={referenceImageUrl(recipe.costume.缩略图)}
                     alt={recipe.costume.服装名称}
-                    className="size-7 shrink-0 rounded-md object-cover ring-1 ring-border"
+                    className="size-7 shrink-0 rounded-md object-cover ring-1 ring-[#19857B]/50"
                   />
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-xs font-semibold text-foreground">{recipe.costume.服装名称}</div>
@@ -176,17 +323,16 @@ export function RecipeDock() {
             <div
               data-dock-slot="pose"
               className={`relative flex min-w-0 items-center gap-2 rounded-xl px-2.5 py-1.5 transition-colors ${
-                recipe.pose
-                  ? 'border border-border bg-card shadow-xs'
-                  : 'hover:bg-card/70'
+                showPose ? 'border border-border bg-card shadow-xs' : 'hover:bg-card/70'
               }`}
             >
-              {recipe.pose ? (
+              <SlotSparkBurst slot="pose" burstKey={sparkKeys.pose} />
+              {showPose && recipe.pose ? (
                 <>
                   <img
                     src={referenceImageUrl(poseThumbPath(recipe.pose))}
                     alt={recipe.pose.姿势名称}
-                    className="size-7 shrink-0 rounded-md object-cover ring-1 ring-border"
+                    className="size-7 shrink-0 rounded-md object-cover ring-1 ring-[#D9381E]/50"
                   />
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-xs font-semibold text-foreground" title={recipe.pose.姿势名称}>
@@ -196,7 +342,7 @@ export function RecipeDock() {
                       <button
                         type="button"
                         onClick={toggleRecipePoseDepth}
-                        className="inline-flex items-center gap-1 text-[11px] leading-none text-muted-foreground hover:text-foreground"
+                        className="inline-flex items-center gap-1 text-xs leading-none text-muted-foreground hover:text-foreground"
                       >
                         <span className={!recipe.pose.useDepth ? 'font-semibold text-foreground' : ''}>白模</span>
                         <span>/</span>
@@ -246,22 +392,47 @@ export function RecipeDock() {
                 <Trash2Icon className="size-3.5" />
               </button>
             )}
-            <Link
-              to="/studio"
-              className="inline-flex h-8 items-center gap-1.5 rounded-full bg-primary px-4 text-xs font-semibold text-primary-foreground transition-all hover:opacity-90 active:scale-[0.97]"
-            >
-              {isGenerating ? (
-                <>
-                  <LoaderCircleIcon className="size-3.5 animate-spin" />
-                  <span>生成中…</span>
-                </>
-              ) : (
-                <>
-                  <SparklesIcon className="size-3.5" />
-                  <span>立即合成 ({count}/3)</span>
-                </>
+
+            {/* 满槽觉醒的「立即合成」按钮 */}
+            <div className="relative inline-flex">
+              {ctaIgniteKey > 0 && isFullReady && (
+                <span
+                  key={ctaIgniteKey}
+                  aria-hidden="true"
+                  className="cta-ripple-ring pointer-events-none absolute inset-0 rounded-full border-2 border-[#D9381E]"
+                />
               )}
-            </Link>
+              <Link
+                ref={ctaLinkRef}
+                to="/studio"
+                data-dock-cta
+                className={cn(
+                  'group relative inline-flex h-8 items-center gap-1.5 overflow-hidden rounded-full px-4 text-xs font-semibold transition-all active:scale-[0.97]',
+                  isFullReady
+                    ? 'ks-keycap bg-[#D9381E] text-white shadow-sm hover:-translate-y-0.5 hover:bg-[#C23018]'
+                    : 'bg-primary text-primary-foreground hover:opacity-90'
+                )}
+              >
+                {isFullReady && !isGenerating && (
+                  <span
+                    aria-hidden="true"
+                    className="cta-sheen-bar pointer-events-none absolute inset-y-0 left-0 w-10 bg-gradient-to-r from-transparent via-white/40 to-transparent"
+                  />
+                )}
+                {isGenerating ? (
+                  <>
+                    <LoaderCircleIcon className="size-3.5 animate-spin" />
+                    <span>生成中…</span>
+                  </>
+                ) : (
+                  <>
+                    <SparklesIcon className={cn('size-3.5', isFullReady && 'animate-pulse')} />
+                    <span>立即合成 ({count}/3)</span>
+                    {isFullReady && <ArrowRightIcon className="size-3.5 transition-transform group-hover:translate-x-0.5" />}
+                  </>
+                )}
+              </Link>
+            </div>
           </div>
         </div>
       </div>

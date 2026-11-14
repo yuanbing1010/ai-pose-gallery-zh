@@ -192,8 +192,20 @@ function createVoices() {
       swirl(len: number) {
         air({ from: 700, to: 1800, Q: 0.9, gain: 0.09, attack: len * 0.4, dur: len })
       },
-      land() {
-        air({ from: 2600, to: 1300, Q: 0.6, gain: 0.06, attack: 0.002, dur: 0.05 })
+      land(slotIdx?: number) {
+        const at = now()
+        air({ at, from: 2600, to: 1200, Q: 0.65, gain: 0.08, attack: 0.002, dur: 0.06 })
+        if (slotIdx !== undefined) {
+          coo(155, [[0, 1.25], [0.065, 0.52]], 0.16, at)
+          const notes = [523.25, 659.25, 783.99]
+          const f = notes[slotIdx % notes.length]
+          coo(f, [[0, 0.96], [0.09, 1]], 0.055, at + 0.01)
+        }
+      },
+      dockFull() {
+        const at = now()
+        coo(1046.5, [[0, 0.98], [0.16, 1]], 0.06, at)
+        coo(1318.51, [[0, 0.98], [0.18, 1]], 0.05, at + 0.045)
       },
       dispose() {
         try {
@@ -286,12 +298,16 @@ export function PackStage({
     [drawn]
   )
 
-  // 执行：三张卡沿着抛物线丝滑飞入底部 RecipeDock 对应槽位
+  // 执行：三张卡错落有致地蓄力跳起，划出抛物线依次砸入底部 RecipeDock 对应槽位
   const handleSynthesizeClick = () => {
     if (phase !== 'opened') return
     const scene = sceneRef.current
-    if (!scene) {
+    const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
+    if (!scene || reduce) {
       onSynthesize(drawn)
+      window.dispatchEvent(
+        new CustomEvent('recipe-dock-impact', { detail: { slot: 'pose', index: 2, isFinal: true } })
+      )
       return
     }
 
@@ -301,7 +317,12 @@ export function PackStage({
       return { left: r.left, top: r.top, width: r.width, height: r.height }
     })
 
-    // 1. 写入配方并唤起底部悬浮栏
+    // 1. 先通知悬浮栏进入「待接卡」掩码态，再写入配方（保证中途跳页数据也不丢）
+    if (variant === 'inline' && fromRects.length >= 3) {
+      window.dispatchEvent(
+        new CustomEvent('recipe-dock-flight-start', { detail: { slots: ['portrait', 'costume', 'pose'] } })
+      )
+    }
     onSynthesize(drawn)
 
     if (variant !== 'inline' || fromRects.length < 3) {
@@ -314,6 +335,7 @@ export function PackStage({
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
         const slots: Array<'portrait' | 'costume' | 'pose'> = ['portrait', 'costume', 'pose']
+        const staggerDelays = [0, 165, 340]
         const clones: FlyingCardClone[] = []
 
         slots.forEach((slotKey, i) => {
@@ -328,7 +350,7 @@ export function PackStage({
             alt: cardSpecs[i].title,
             from,
             to: { left: tr.left, top: tr.top, width: tr.width, height: tr.height },
-            delay: i * 80,
+            delay: staggerDelays[i] ?? i * 165,
           })
         })
 
@@ -337,39 +359,47 @@ export function PackStage({
           return
         }
 
-        // 隐藏舞台上静止的 3 张卡，交棒给飞入层
-        cardEls.forEach((el) => {
-          el.style.opacity = '0'
+        // 逐张隐藏舞台原卡（与起飞延迟同步，实现错落跳出舞台的节奏）
+        clones.forEach((c, idx) => {
+          const hideAt = window.setTimeout(() => {
+            const el = cardEls[idx]
+            if (el) el.style.opacity = '0'
+          }, c.delay)
+          flyTimersRef.current.push(hideAt)
         })
+
         setFlyingClones(clones)
 
-        // 每张卡到达槽位时，触发槽位弹性高亮 + 音效
-        clones.forEach((c) => {
+        // 每张卡落地瞬间：触发对应槽位揭晓、底座重力抖动、星芒火花与升调打击音
+        clones.forEach((c, idx) => {
+          const isFinal = idx === clones.length - 1
           const hitAt = window.setTimeout(() => {
-            const slotEl = document.querySelector<HTMLElement>(`[data-dock-slot="${c.slotKey}"]`)
-            if (slotEl) {
-              slotEl.classList.remove('hp-slot-pop')
-              void slotEl.offsetWidth
-              slotEl.classList.add('hp-slot-pop')
-              const cleanup = window.setTimeout(() => slotEl.classList.remove('hp-slot-pop'), 460)
-              flyTimersRef.current.push(cleanup)
+            window.dispatchEvent(
+              new CustomEvent('recipe-dock-impact', {
+                detail: { slot: c.slotKey, index: idx, isFinal },
+              })
+            )
+            sfxRef.current?.land(idx)
+            if (isFinal) {
+              const fullChime = window.setTimeout(() => sfxRef.current?.dockFull(), 85)
+              flyTimersRef.current.push(fullChime)
             }
-            sfxRef.current?.land()
-          }, 520 + c.delay)
+          }, 530 + c.delay)
           flyTimersRef.current.push(hitAt)
         })
 
-        // 所有卡飞入完毕后，清场并滑入新卡包待命
+        // 所有卡砸入并触发「立即合成」充能觉醒后，再优雅换入新卡包待命
+        const maxDelay = clones[clones.length - 1]?.delay ?? 340
         const doneAt = window.setTimeout(() => {
           setFlyingClones([])
           onRedraw()
-        }, 760)
+        }, maxDelay + 1060)
         flyTimersRef.current.push(doneAt)
       })
     })
   }
 
-  // 对飞入克隆节点应用 WAAPI 抛物线动画
+  // 对飞入克隆节点应用 WAAPI 错落蓄力 + 高抛重力加速入袋动画
   useEffect(() => {
     const layer = flyLayerRef.current
     if (!layer || !flyingClones.length) return
@@ -380,24 +410,30 @@ export function PackStage({
       if (!c) return
       const fromCx = c.from.left + c.from.width / 2
       const fromCy = c.from.top + c.from.height / 2
-      const toCx = c.to.left + 24
+      const toCx = c.to.left + 26
       const toCy = c.to.top + c.to.height / 2
       const dx = toCx - fromCx
       const dy = toCy - fromCy
-      const endScale = Math.max(0.14, 28 / Math.max(1, c.from.width))
-      const bank = (idx - 1) * 10
+      const endScale = Math.max(0.16, 30 / Math.max(1, c.from.width))
+      const bank = (idx - 1) * 14
+      const apexLift = [48, 72, 42][idx] ?? 54
       el.animate(
         [
           { transform: 'translate3d(0, 0, 0) rotateZ(0deg) scale(1)', opacity: 1 },
           {
-            transform: `translate3d(${(dx * 0.16).toFixed(1)}px, ${(dy * 0.08 - 36).toFixed(1)}px, 0) rotateZ(${bank}deg) scale(0.92)`,
+            transform: `translate3d(${(-dx * 0.03).toFixed(1)}px, -26px, 0) rotateZ(${(-bank * 0.7).toFixed(1)}deg) scale(1.07)`,
             opacity: 1,
-            offset: 0.25,
+            offset: 0.15,
           },
           {
-            transform: `translate3d(${(dx * 0.94).toFixed(1)}px, ${(dy * 0.94).toFixed(1)}px, 0) rotateZ(0deg) scale(${(endScale * 1.16).toFixed(3)})`,
-            opacity: 0.95,
-            offset: 0.86,
+            transform: `translate3d(${(dx * 0.34).toFixed(1)}px, ${(dy * 0.16 - apexLift).toFixed(1)}px, 0) rotateZ(${bank}deg) scale(0.86)`,
+            opacity: 1,
+            offset: 0.44,
+          },
+          {
+            transform: `translate3d(${(dx * 0.94).toFixed(1)}px, ${(dy * 0.94).toFixed(1)}px, 0) rotateZ(${(bank * 0.2).toFixed(1)}deg) scale(${(endScale * 1.18).toFixed(3)})`,
+            opacity: 0.98,
+            offset: 0.88,
           },
           {
             transform: `translate3d(${dx.toFixed(1)}px, ${dy.toFixed(1)}px, 0) rotateZ(0deg) scale(${endScale.toFixed(3)})`,
@@ -405,9 +441,9 @@ export function PackStage({
           },
         ],
         {
-          duration: 560,
+          duration: 590,
           delay: c.delay,
-          easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
+          easing: 'cubic-bezier(0.28, 0.84, 0.42, 1)',
           fill: 'forwards',
         }
       )

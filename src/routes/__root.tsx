@@ -24,7 +24,6 @@ function RootLayout() {
 
   const isHome = pathname === '/'
   const isStudio = pathname.startsWith('/studio')
-  const isLockedViewport = isHome || isStudio
 
   // 用户前端：全站统一的暖调柔光棚拍背景与可切换暗房模式
   return (
@@ -59,7 +58,7 @@ function RootLayout() {
           >
             <Outlet />
           </div>
-          {!isLockedViewport && <RecipeDock />}
+          <RecipeDock />
         </main>
       </div>
       <Toaster />
