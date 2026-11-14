@@ -99,3 +99,26 @@ export function getStyleVisualMeta(key: string): StyleVisualMeta {
     }
   )
 }
+
+export interface VisualStyleItem {
+  key: string
+  label: string
+  shortLabel: string
+  tagline: string
+  preview?: string
+}
+
+export function getVisualStylePresets(): VisualStyleItem[] {
+  return Object.entries(STYLE_PRESETS)
+    .filter(([key]) => key !== 'none')
+    .map(([key, info]) => {
+      const meta = getStyleVisualMeta(key)
+      return {
+        key,
+        label: info.label,
+        shortLabel: meta.shortLabel,
+        tagline: meta.tagline,
+        preview: meta.preview,
+      }
+    })
+}

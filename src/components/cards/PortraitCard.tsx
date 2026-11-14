@@ -1,4 +1,5 @@
 import { useRef, type CSSProperties, type MouseEvent, type PointerEvent } from 'react'
+import { motion } from 'motion/react'
 import { CheckIcon, FlameIcon, PlusIcon } from 'lucide-react'
 import { getPortraitAccent } from '@/lib/cardAccents'
 import { cn } from '@/lib/utils'
@@ -30,6 +31,7 @@ export function PortraitCard({
     const ny = (e.clientY - rect.top) / Math.max(1, rect.height)
     const rx = (0.5 - ny) * 11
     const ry = (nx - 0.5) * 13
+    el.style.transitionDuration = '75ms'
     el.style.setProperty('--rx', `${rx.toFixed(2)}deg`)
     el.style.setProperty('--ry', `${ry.toFixed(2)}deg`)
     el.style.setProperty('--gx', `${(nx * 100).toFixed(1)}%`)
@@ -40,6 +42,7 @@ export function PortraitCard({
   const handlePointerLeave = () => {
     const el = cardRef.current
     if (!el) return
+    el.style.transitionDuration = '360ms'
     el.style.setProperty('--rx', '0deg')
     el.style.setProperty('--ry', '0deg')
     el.style.setProperty('--gx', '50%')
@@ -54,7 +57,7 @@ export function PortraitCard({
   return (
     <figure
       style={{ '--enter-index': index } as CSSProperties}
-      className="md-tile-enter group select-none"
+      className="md-tile-enter group select-none transition-transform duration-150 active:scale-[0.985]"
     >
       <div
         ref={cardRef}
@@ -71,7 +74,7 @@ export function PortraitCard({
           } as CSSProperties
         }
         className={cn(
-          'relative flex w-full flex-col overflow-hidden rounded-[20px] border bg-card shadow-[0_6px_20px_rgba(10,10,10,0.05)] transition-[transform,box-shadow,border-color] duration-200 ease-out group-hover:shadow-[0_18px_36px_rgba(10,10,10,0.12)] dark:shadow-none dark:group-hover:shadow-[0_20px_40px_rgba(0,0,0,0.7)] active:scale-[0.985]',
+          'relative flex w-full flex-col overflow-hidden rounded-[20px] border bg-card shadow-[0_6px_20px_rgba(10,10,10,0.05)] transition-[transform,box-shadow,border-color] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] group-hover:shadow-[0_18px_36px_rgba(10,10,10,0.12)] dark:shadow-none dark:group-hover:shadow-[0_20px_40px_rgba(0,0,0,0.7)]',
           picked ? 'border-foreground ring-2 ring-foreground' : 'border-border group-hover:border-foreground/25'
         )}
       >
@@ -132,17 +135,25 @@ export function PortraitCard({
             aria-pressed={picked}
             onClick={handleTogglePick}
             className={cn(
-              'absolute top-2 right-2 z-[4] flex size-7 items-center justify-center rounded-full shadow-sm transition-all duration-150 active:scale-95',
+              'absolute top-2 right-2 z-[4] flex size-7 items-center justify-center rounded-full shadow-sm transition-all duration-150 active:scale-90',
               picked
                 ? 'bg-primary text-primary-foreground ring-2 ring-background'
-                : 'md-pill opacity-0 hover:bg-primary hover:text-primary-foreground group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100'
+                : 'md-pill opacity-85 hover:bg-primary hover:text-primary-foreground group-hover:opacity-100 group-focus-within:opacity-100'
             )}
           >
-            {picked ? <CheckIcon className="size-3.5 stroke-[2.5]" /> : <PlusIcon className="size-3.5" />}
+            <motion.span
+              key={picked ? 'checked' : 'plus'}
+              initial={false}
+              animate={picked ? { scale: [0.65, 1.22, 1] } : { scale: 1 }}
+              transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
+              className="inline-flex items-center justify-center"
+            >
+              {picked ? <CheckIcon className="size-3.5 stroke-[2.5]" /> : <PlusIcon className="size-3.5" />}
+            </motion.span>
           </button>
         </div>
 
-        {/* 卡底一体铭牌条（与姿势卡 GalleryHoloCard 完全统一：色条 + 简洁单行名称） */}
+        {/* 卡底一体铭牌条 */}
         <button
           type="button"
           onClick={onOpenViewer}

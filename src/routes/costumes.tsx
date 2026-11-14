@@ -11,6 +11,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { costumesQuery, isNsfwCostume, isNsfwCostumeCategory } from '@/api/gallery'
 import { FashionCard } from '@/components/cards/FashionCard'
 import { EmptyState } from '@/components/common/EmptyState'
+import { ScrollToTopButton } from '@/components/common/ScrollToTopButton'
 import { CostumeDetailModal } from '@/components/costumes/CostumeDetailModal'
 import {
   CostumeFilterModal,
@@ -29,7 +30,24 @@ import { useStudio } from '@/store/studioStore'
 export const Route = createFileRoute('/costumes')({
   staticData: { title: '服装穿搭库' },
   loader: ({ context }) => context.queryClient.ensureQueryData(costumesQuery),
-  pendingComponent: () => <Skeleton className="h-[540px] rounded-[24px]" />,
+  pendingComponent: () => (
+    <div className="space-y-5">
+      <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-end">
+        <div className="space-y-2">
+          <Skeleton className="h-4 w-32 rounded-full" />
+          <Skeleton className="h-9 w-44 rounded-xl" />
+          <Skeleton className="h-4 w-60 rounded-full" />
+        </div>
+        <Skeleton className="h-14 w-80 rounded-xl" />
+      </div>
+      <Skeleton className="h-10 w-full rounded-xl" />
+      <div className="grid grid-cols-2 gap-x-4 gap-y-6 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+        {Array.from({ length: 10 }).map((_, idx) => (
+          <Skeleton key={idx} className="aspect-[2/3] rounded-[20px]" />
+        ))}
+      </div>
+    </div>
+  ),
   component: CostumesPage,
 })
 
@@ -504,6 +522,7 @@ function CostumesPage() {
           onNext={() => setViewerNav({ index: (viewerIndex + 1) % filtered.length, dir: 1 })}
         />
       )}
+      <ScrollToTopButton />
     </div>
   )
 }

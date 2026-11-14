@@ -9,10 +9,10 @@ export const SHISEI_SOURCE_URLS = {
 }
 
 export const COSTUME_SOURCES = [
-  { id: 'gia', label: 'ギア · 写实', url: 'https://ai-costume-gallery.pages.dev/', notice: 'ギア（@giaaibusi）AI 服装参考。' },
-  { id: 'gia-anime', label: 'ギア · 动漫', url: 'https://ai-costume-anime-gallery.pages.dev/', notice: '仅收录元数据，图片由ギア原站提供；使用请遵守原站说明。' },
-  { id: 'charadb', label: 'たき AI · CharaDB', url: 'https://github.com/taki-ttt/charadb/blob/main/LICENSE', notice: '仅供参考，须遵守原作者限制；请阅读来源条款。' },
-  { id: 'shisei', label: 'Shisei · 中国历代', url: 'https://github.com/wquguru/shisei', notice: 'wquguru 的 AI 生成服装参考，CC0；标注来源。并非专业历史服饰复原。' },
+  { id: 'gia', label: 'ギア · 写实', url: 'https://ai-costume-gallery.pages.dev/', notice: 'ギア（@giaaibusi）服装穿搭参考。' },
+  { id: 'gia-anime', label: 'ギア · 动漫', url: 'https://ai-costume-anime-gallery.pages.dev/', notice: '图片由ギア原站提供，使用请遵守原站说明。' },
+  { id: 'charadb', label: 'たき AI · CharaDB', url: 'https://github.com/taki-ttt/charadb/blob/main/LICENSE', notice: '仅供参考，须遵守原作者限制，详见来源条款。' },
+  { id: 'shisei', label: 'Shisei · 中国历代', url: 'https://github.com/wquguru/shisei', notice: 'wquguru 历代服饰参考（并非专业历史服饰复原），使用请标注来源。' },
 ] as const
 
 export function costumeSourceId(item: CostumeItem): string {

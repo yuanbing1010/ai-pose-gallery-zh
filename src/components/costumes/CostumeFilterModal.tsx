@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { motion } from 'motion/react'
 import {
   CheckIcon,
   GlobeIcon,
@@ -97,6 +98,7 @@ export function CostumeFilterModal({
         <div className="flex items-center gap-3 border-b border-border px-4 py-3.5">
           <SearchIcon className="size-4 shrink-0 text-muted-foreground" />
           <input
+            autoFocus
             type="text"
             value={filterSearch}
             onChange={(e) => setFilterSearch(e.target.value)}
@@ -123,14 +125,21 @@ export function CostumeFilterModal({
                   type="button"
                   onClick={() => setSection(item.id)}
                   className={cn(
-                    'flex shrink-0 items-center gap-2.5 rounded-[10px] px-3 py-2 text-left text-[13px] transition-colors',
+                    'relative flex shrink-0 items-center gap-2.5 rounded-[10px] px-3 py-2 text-left text-[13px] transition-colors',
                     active
-                      ? 'bg-muted font-medium text-foreground'
+                      ? 'font-medium text-foreground'
                       : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground'
                   )}
                 >
-                  <item.icon className="size-3.5 shrink-0 opacity-80" />
-                  <span>{item.label}</span>
+                  {active && (
+                    <motion.span
+                      layoutId="costume-filter-rail"
+                      transition={{ type: 'spring', stiffness: 460, damping: 34 }}
+                      className="absolute inset-0 rounded-[10px] bg-muted"
+                    />
+                  )}
+                  <item.icon className="relative z-10 size-3.5 shrink-0 opacity-80" />
+                  <span className="relative z-10">{item.label}</span>
                 </button>
               )
             })}

@@ -1,9 +1,58 @@
 import type { ReactNode } from 'react'
-import { CheckIcon, DownloadIcon, ExternalLinkIcon, PlusIcon, XIcon } from 'lucide-react'
+import { AnimatePresence, motion } from 'motion/react'
+import { CheckIcon, DownloadIcon, ExternalLinkIcon, PlusIcon, XIcon, type LucideIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogClose, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import type { CardAccent } from '@/lib/cardAccents'
 import { cn } from '@/lib/utils'
+
+export interface ShowcaseStageTabItem<T extends string = string> {
+  id: T
+  label: string
+  icon: LucideIcon
+}
+
+export function ShowcaseStageTabs<T extends string>({
+  items,
+  value,
+  onChange,
+  layoutId = 'showcase-stage-tab-pill',
+}: {
+  items: ShowcaseStageTabItem<T>[]
+  value: T
+  onChange: (id: T) => void
+  layoutId?: string
+}) {
+  return (
+    <div className="inline-flex items-center gap-1 rounded-full bg-black/60 p-1 ring-1 ring-white/15 backdrop-blur-md">
+      {items.map((item) => {
+        const active = value === item.id
+        const Icon = item.icon
+        return (
+          <button
+            key={item.id}
+            type="button"
+            onClick={() => onChange(item.id)}
+            className={cn(
+              'relative inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-medium transition-colors',
+              active ? 'text-black' : 'text-zinc-300 hover:text-white'
+            )}
+          >
+            {active && (
+              <motion.span
+                layoutId={layoutId}
+                transition={{ type: 'spring', stiffness: 460, damping: 34 }}
+                className="absolute inset-0 rounded-full bg-white shadow-sm"
+              />
+            )}
+            <Icon className="relative z-10 size-3.5" />
+            <span className="relative z-10">{item.label}</span>
+          </button>
+        )
+      })}
+    </div>
+  )
+}
 
 export interface ShowcaseDialogProps {
   open: boolean
@@ -108,19 +157,31 @@ export function ShowcaseDialog({
             </div>
 
             <div className="flex items-center gap-2 pt-2">
-              <button
+              <motion.button
                 type="button"
+                whileTap={{ scale: 0.97 }}
                 onClick={onTogglePick}
                 className={cn(
-                  'flex h-11 flex-1 items-center justify-center gap-2 rounded-full text-[13px] font-semibold transition-all active:scale-[0.98]',
+                  'flex h-11 flex-1 items-center justify-center gap-2 rounded-full text-[13px] font-semibold transition-colors',
                   picked
                     ? 'bg-[#19857B] text-white hover:bg-[#146f66]'
                     : 'bg-white text-black hover:bg-zinc-200'
                 )}
               >
-                {picked ? <CheckIcon className="size-4" /> : <PlusIcon className="size-4" />}
-                {pickLabel}
-              </button>
+                <AnimatePresence mode="wait" initial={false}>
+                  <motion.span
+                    key={picked ? 'picked' : 'unpicked'}
+                    initial={{ opacity: 0, scale: 0.7 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0, scale: 0.7 }}
+                    transition={{ duration: 0.14 }}
+                    className="inline-flex items-center"
+                  >
+                    {picked ? <CheckIcon className="size-4" /> : <PlusIcon className="size-4" />}
+                  </motion.span>
+                </AnimatePresence>
+                <span>{pickLabel}</span>
+              </motion.button>
 
               <Button
                 variant="outline"

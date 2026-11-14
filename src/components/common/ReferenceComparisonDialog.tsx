@@ -14,16 +14,16 @@ export function ReferenceComparisonDialog({ result, open, onOpenChange }: Props)
   const returnFocus = useRef<HTMLElement | null>(null)
   return <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
     <DialogPrimitive.Portal>
-      <DialogPrimitive.Overlay className="fixed inset-0 z-[100] bg-black/60" />
+      <DialogPrimitive.Overlay className="fixed inset-0 z-[100] bg-black/65 backdrop-blur-md" />
       <DialogPrimitive.Content
         onOpenAutoFocus={() => { returnFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null }}
         onCloseAutoFocus={(event) => { if (returnFocus.current?.isConnected) { event.preventDefault(); returnFocus.current.focus() } }}
-        className="fixed top-1/2 left-1/2 z-[101] flex h-[94dvh] w-[96vw] max-w-6xl -translate-x-1/2 -translate-y-1/2 flex-col gap-3 rounded-xl bg-background p-3 text-foreground shadow-xl outline-none sm:p-4">
+        className="fixed top-1/2 left-1/2 z-[101] flex h-[94dvh] w-[96vw] max-w-6xl -translate-x-1/2 -translate-y-1/2 flex-col gap-3 rounded-[24px] border border-border bg-background p-4 text-foreground shadow-2xl outline-none sm:p-5">
         <div className="flex shrink-0 items-center gap-2">
           <DialogPrimitive.Title className="mr-auto text-lg font-semibold">对比参考</DialogPrimitive.Title>
           <DialogPrimitive.Close asChild><Button variant="ghost" className="min-h-11 min-w-11" aria-label="关闭参考对比"><XIcon className="size-4" /></Button></DialogPrimitive.Close>
         </div>
-        <DialogPrimitive.Description className="shrink-0 text-xs text-muted-foreground">参考来自这次生成保存的提交快照。两图共同缩放与移动，按原比例显示。</DialogPrimitive.Description>
+        <DialogPrimitive.Description className="shrink-0 text-xs text-muted-foreground">参考来自该作品保存时的原始配方，支持两图共同缩放与移动对比。</DialogPrimitive.Description>
         {result && <ComparisonContent key={result.id} result={result} />}
       </DialogPrimitive.Content>
     </DialogPrimitive.Portal>

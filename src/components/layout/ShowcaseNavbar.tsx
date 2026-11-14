@@ -1,4 +1,5 @@
 import { Link, useLocation } from '@tanstack/react-router'
+import { AnimatePresence, motion } from 'motion/react'
 import {
   BookOpenIcon,
   LayoutDashboardIcon,
@@ -8,11 +9,11 @@ import {
   ShirtIcon,
   SparklesIcon,
   SunIcon,
-  TerminalSquareIcon,
   UserRoundIcon,
 } from 'lucide-react'
 import { useState } from 'react'
 import { useTheme } from '@/components/theme/ThemeProvider'
+import { BrandMark } from '@/components/common/BrandMark'
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet'
 import { activeNavTo } from './nav'
 import { useStudio } from '@/store/studioStore'
@@ -41,7 +42,7 @@ export function ShowcaseNavbar() {
   return (
     <header className="sticky top-0 z-40 w-full border-b border-black/[0.06] bg-[#f5f2eb]/75 backdrop-blur-xl dark:border-white/[0.08] dark:bg-[#14141a]/75">
       <div className="mx-auto flex h-15 w-full max-w-[1440px] items-center justify-between gap-4 px-4 sm:px-6">
-        {/* 左侧：StyleKit 式极简品牌标识 + 桌面端纯文字导航 */}
+        {/* 左侧：品牌标识 + 桌面端主导航 */}
         <div className="flex items-center gap-6">
           <div className="flex items-center gap-2.5">
             <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
@@ -49,7 +50,7 @@ export function ShowcaseNavbar() {
                 <button
                   type="button"
                   aria-label="打开导航菜单"
-                  className="inline-flex size-9 items-center justify-center rounded-full border border-border bg-card text-foreground transition-colors hover:bg-muted lg:hidden"
+                  className="inline-flex size-9 items-center justify-center rounded-full border border-border bg-card text-foreground transition-colors hover:bg-muted active:scale-95 lg:hidden"
                 >
                   <MenuIcon className="size-4" />
                 </button>
@@ -57,14 +58,15 @@ export function ShowcaseNavbar() {
               <SheetContent side="left" className="w-72 border-r border-border bg-background text-foreground">
                 <SheetHeader>
                   <SheetTitle className="flex items-center gap-2.5 text-left">
-                    <span className="flex size-7 items-center justify-center rounded-lg bg-primary text-xs font-black text-primary-foreground">
-                      ✦
+                    <BrandMark />
+                    <span className="flex flex-col leading-none">
+                      <span className="font-mono text-sm font-bold tracking-tight">CHARADECK</span>
+                      <span className="text-[11px] font-medium text-muted-foreground">角色牌局</span>
                     </span>
-                    <span className="font-mono text-sm tracking-tight">POSE.DECK</span>
                   </SheetTitle>
                 </SheetHeader>
                 <nav className="mt-6 flex flex-col gap-1 px-2">
-                  {[...SHOWCASE_NAV_ITEMS, { title: 'AI 合成台', to: '/studio' as const, icon: SparklesIcon }].map((item) => {
+                  {[...SHOWCASE_NAV_ITEMS, { title: '角色合成台', to: '/studio' as const, icon: SparklesIcon }].map((item) => {
                     const isActive = item.to === active
                     return (
                       <Link
@@ -99,11 +101,14 @@ export function ShowcaseNavbar() {
             </Sheet>
 
             <Link to="/" className="group flex items-center gap-2.5">
-              <span className="flex size-7 items-center justify-center rounded-lg bg-primary text-xs font-black text-primary-foreground transition-transform duration-200 group-hover:scale-105">
-                ✦
-              </span>
-              <span className="font-mono text-sm font-semibold tracking-tight text-foreground">
-                POSE.DECK
+              <BrandMark className="transition-transform duration-200 group-hover:scale-105 group-active:scale-95" />
+              <span className="flex items-baseline gap-1.5">
+                <span className="font-mono text-sm font-bold tracking-tight text-foreground">
+                  CHARADECK
+                </span>
+                <span className="hidden text-xs font-medium text-muted-foreground sm:inline">
+                  角色牌局
+                </span>
               </span>
             </Link>
           </div>
@@ -115,15 +120,22 @@ export function ShowcaseNavbar() {
                 <Link
                   key={item.to}
                   to={item.to}
-                  className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[13px] transition-colors ${
+                  className={`relative inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[13px] transition-colors ${
                     isActive
-                      ? 'bg-muted font-medium text-foreground'
+                      ? 'font-medium text-foreground'
                       : 'text-muted-foreground hover:text-foreground'
                   }`}
                 >
-                  <span>{item.title}</span>
+                  {isActive && (
+                    <motion.span
+                      layoutId="showcase-nav-pill"
+                      transition={{ type: 'spring', stiffness: 420, damping: 32 }}
+                      className="absolute inset-0 rounded-full bg-muted"
+                    />
+                  )}
+                  <span className="relative z-10">{item.title}</span>
                   {item.count && (
-                    <span className="font-mono text-[11px] opacity-60">
+                    <span className="relative z-10 font-mono text-[11px] opacity-60">
                       {item.count}
                     </span>
                   )}
@@ -133,26 +145,29 @@ export function ShowcaseNavbar() {
           </nav>
         </div>
 
-        {/* 右侧：日夜主题切换 + 管理端入口 + 高对比主 CTA */}
+        {/* 右侧：日夜主题切换 + 高对比主 CTA */}
         <div className="flex items-center gap-2">
-          <button
+          <motion.button
             type="button"
+            whileTap={{ scale: 0.92 }}
             aria-label={isDark ? '切换到日间画廊模式' : '切换到暗房模式'}
             title={isDark ? '切换到日间画廊模式' : '切换到暗房模式'}
             onClick={() => setTheme(isDark ? 'light' : 'dark')}
             className="inline-flex size-9 items-center justify-center rounded-full border border-border bg-card text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
           >
-            {isDark ? <SunIcon className="size-4" /> : <MoonIcon className="size-4" />}
-          </button>
-
-          <Link
-            to="/admin/login"
-            title="进入管理端系统"
-            aria-label="进入管理端系统"
-            className="inline-flex size-9 items-center justify-center rounded-full border border-border bg-card text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-          >
-            <TerminalSquareIcon className="size-4" />
-          </Link>
+            <AnimatePresence mode="wait" initial={false}>
+              <motion.span
+                key={isDark ? 'sun' : 'moon'}
+                initial={{ opacity: 0, rotate: -45, scale: 0.7 }}
+                animate={{ opacity: 1, rotate: 0, scale: 1 }}
+                exit={{ opacity: 0, rotate: 45, scale: 0.7 }}
+                transition={{ duration: 0.16 }}
+                className="inline-flex items-center justify-center"
+              >
+                {isDark ? <SunIcon className="size-4" /> : <MoonIcon className="size-4" />}
+              </motion.span>
+            </AnimatePresence>
+          </motion.button>
 
           <Link
             to="/studio"

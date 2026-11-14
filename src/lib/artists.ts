@@ -54,14 +54,6 @@ export const STUDIO_ARTISTS: StudioArtistPersona[] = [
     accent: '#6366F1',
     requiresKey: true,
   },
-  {
-    id: 'comfyui',
-    name: '机甲炼金术士',
-    specialty: '本机算力',
-    bio: '直连本地工作流引擎与私有显卡算力，全程掌控采样细节',
-    accent: '#71717A',
-    requiresKey: false,
-  },
 ]
 
 export function getStudioArtist(id: ImageProviderId): StudioArtistPersona {

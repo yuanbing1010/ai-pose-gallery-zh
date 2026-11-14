@@ -15,6 +15,7 @@ import {
 } from '@/components/ui/alert-dialog'
 import { useComfyConnection, type ComfyConnectionState } from './useComfyConnection'
 import { idbRead, idbWrite } from '@/lib/idbStorage'
+import { getStudioArtist } from '@/lib/artists'
 import { parseParameterWorkflow, workflowIdentity } from '@/lib/comfyWorkflowParameters'
 import { durableImage, snapshotGeneration } from '@/lib/generationSnapshot'
 import { recipeBackup } from '@/lib/recipeImages'
@@ -52,6 +53,17 @@ import type {
 } from '@/types/gallery'
 
 const CFG_KEY = 'pose_atlas_api_config_v3'
+function formatStudioError(raw: string, provider: ImageProviderId): string {
+  if (import.meta.env.DEV) console.warn('[studio]', raw)
+  const artistName = getStudioArtist(provider).name
+  if (/API Key|密钥|401|403|鉴权/i.test(raw)) {
+    return `画师「${artistName}」暂未就绪，请尝试切换其他画师或联系管理员。`
+  }
+  if (/ComfyUI|工作流|节点|模型|Endpoint|显存/i.test(raw)) {
+    return `画师「${artistName}」当前绘制服务暂不可用，请切换其他画师或稍后再试。`
+  }
+  return raw.replace(/^\[(ComfyUI|Gemini|GPT|Qwen|Doubao)\]\s*/i, '') || '绘制未能完成，请稍后重试。'
+}
 const RECIPE_KEY = 'pose_atlas_recipe_v3'
 const HISTORY_KEY = 'pose_atlas_history_v3'
 const TASK_KEY = 'pose_atlas_active_task_v1'
@@ -176,7 +188,8 @@ function mergeStoredConfig(raw: unknown): ApiConfig {
     { ...DEFAULT_API_CONFIG.providers.comfyui, ...obj.providers?.comfyui },
     { ...DEFAULT_API_CONFIG.comfyuiParams, configVersion: 1, ...obj.comfyuiParams }
   )
-  const activeProvider = obj.activeProvider ?? DEFAULT_API_CONFIG.activeProvider
+  const rawProvider = obj.activeProvider ?? DEFAULT_API_CONFIG.activeProvider
+  const activeProvider = rawProvider === 'comfyui' ? DEFAULT_API_CONFIG.activeProvider : rawProvider
   const stylePreset = obj.stylePreset && obj.stylePreset in STYLE_PRESETS ? obj.stylePreset : DEFAULT_API_CONFIG.stylePreset
   // v3 起服务端 CORS 代理默认关闭，仅在切换到 Qwen / Doubao 时自动关联开启
   const useProxy =
@@ -544,23 +557,38 @@ export function StudioProvider({ children }: { children: ReactNode }) {
   const toggleRecipePoseDepth = () => {
     const next = !(recipe.pose?.useDepth ?? poseDepthMode)
     setPoseDepthMode(next)
-    toast.success(next ? '已切换姿势图为：深度图 (Depth)' : '已切换姿势图为：素体白模')
+    toast.success(next ? '已切换姿势图为：深度图' : '已切换姿势图为：素体白模')
+  }
+
+  const emitDockImpact = (slot: 'portrait' | 'costume' | 'pose', nextRecipe: RecipeState) => {
+    if (typeof window === 'undefined') return
+    const isFinal = Boolean(nextRecipe.portrait && nextRecipe.costume && nextRecipe.pose)
+    window.dispatchEvent(new CustomEvent('recipe-dock-impact', { detail: { slot, isFinal } }))
   }
 
   const togglePortrait = (item: PortraitItem) => {
-    const remove = recipe.portrait?.id === item.id
-    setRecipe((r) => ({ ...r, portrait: remove ? null : item }))
+    const current = useStudioStore.getState().recipe
+    const remove = current.portrait?.id === item.id
+    const nextRecipe = { ...current, portrait: remove ? null : item }
+    setRecipe(() => nextRecipe)
+    if (!remove) emitDockImpact('portrait', nextRecipe)
     toast.success(remove ? '已移除人像' : `已选人像：${item.发型名称}`)
   }
   const toggleCostume = (item: CostumeItem) => {
-    const remove = recipe.costume?.id === item.id && (recipe.costume.selectedView || 'front') === (item.selectedView || 'front')
-    setRecipe((r) => ({ ...r, costume: remove ? null : item }))
+    const current = useStudioStore.getState().recipe
+    const remove = current.costume?.id === item.id && (current.costume.selectedView || 'front') === (item.selectedView || 'front')
+    const nextRecipe = { ...current, costume: remove ? null : item }
+    setRecipe(() => nextRecipe)
+    if (!remove) emitDockImpact('costume', nextRecipe)
     toast.success(remove ? '已移除服装' : `已选服装：${item.服装名称}`)
   }
   const togglePose = (item: PoseItem) => {
+    const current = useStudioStore.getState().recipe
     const useDepth = item.source === 'upload' ? false : (item.useDepth ?? poseDepthMode)
-    const remove = recipe.pose?.id === item.id && Boolean(recipe.pose?.useDepth) === useDepth
-    setRecipe((r) => ({ ...r, pose: remove ? null : { ...item, useDepth } }))
+    const remove = current.pose?.id === item.id && Boolean(current.pose?.useDepth) === useDepth
+    const nextRecipe = { ...current, pose: remove ? null : { ...item, useDepth } }
+    setRecipe(() => nextRecipe)
+    if (!remove) emitDockImpact('pose', nextRecipe)
     toast.success(remove ? '已移除姿势' : `已选姿势：${item.姿势名称}（${item.角度}${useDepth ? ' · 深度图' : ''}）`)
   }
 
@@ -786,7 +814,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
   }
   const stopTracking = async () => {
     trackingRef.current?.abort()
-    try { await saveActive(null); setGenerationError('已停止跟踪；后端任务可能仍在执行，请先确认队列再提交新任务') }
+    try { await saveActive(null); setGenerationError('已取消等待；先前的绘制任务可能仍在处理中，请稍后再试。') }
     catch { toast.error('停止跟踪记录保存失败') }
   }
   const resumeOnActivation = useEffectEvent(() => { void resumeGeneration() })
@@ -846,7 +874,8 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       if (e instanceof ComfySubmissionRejectedError || (e instanceof ComfyTaskError && e.reason === 'failed')) {
         try { await saveActive(null) } catch { toast.error('任务失败记录未能清除，请停止跟踪后重试') }
       }
-      const msg = e instanceof Error ? e.message : '调用失败'
+      const rawMsg = e instanceof Error ? e.message : '调用失败'
+      const msg = formatStudioError(rawMsg, configSnapshot.activeProvider)
       setGenerationError(msg)
       toast.error(msg.split('\n')[0])
     } finally { isGeneratingRef.current = false; setIsGenerating(false) }

@@ -25,7 +25,7 @@ export function comparisonReferences(result: GenerationHistoryItem): ComparisonR
     for (const [nodeId, image] of Object.entries(recipe.workflowImages || {})) {
       const node = submitted[nodeId]
       if (mapped.includes(nodeId) || !node || node.class_type !== original[nodeId]?.class_type || typeof node.inputs.image !== 'string' || !node.inputs.image.trim() || node.inputs.image === '无') continue
-      add(`workflow:${nodeId}`, `工作流参考 · ${image.name}`, image.url)
+      add(`workflow:${nodeId}`, `画室参考 · ${image.name}`, image.url)
     }
   }
   return refs

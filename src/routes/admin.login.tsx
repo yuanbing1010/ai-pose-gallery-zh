@@ -32,7 +32,7 @@ function AdminLoginPage() {
           <span className="bg-zinc-950 px-2 py-0.5 font-bold text-white dark:bg-zinc-100 dark:text-zinc-950">
             ADMIN // CONSOLE
           </span>
-          <span className="text-zinc-500">POSE &amp; CHARACTER ARCHIVE SYSTEM v2.4</span>
+          <span className="text-zinc-500">CHARADECK ARCHIVE SYSTEM v2.4</span>
         </div>
         <Link
           to="/"

@@ -18,7 +18,7 @@ import {
   useSortable,
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { motion } from 'motion/react'
+import { AnimatePresence, motion } from 'motion/react'
 import {
   ArrowRightIcon,
   CheckCircle2Icon,
@@ -34,7 +34,6 @@ import {
   LoaderCircleIcon,
   PersonStandingIcon,
   ShirtIcon,
-  SlidersHorizontalIcon,
   SparklesIcon,
   Trash2Icon,
   UploadIcon,
@@ -43,7 +42,7 @@ import {
   XIcon,
   ZoomInIcon,
 } from 'lucide-react'
-import { type ChangeEvent, type DragEvent, useEffect, useMemo, useRef, useState } from 'react'
+import { type ChangeEvent, type DragEvent, useEffect, useRef, useState } from 'react'
 import { toast } from '@/lib/notifications'
 import { costumesQuery, portraitsQuery, posesQuery } from '@/api/gallery'
 import { StylePresetSelector } from '@/components/studio/StylePresetSelector'
@@ -60,7 +59,6 @@ import {
   STUDIO_ASPECT_RATIOS,
   type StudioAspectRatio,
 } from '@/lib/artists'
-import { validateReferenceCombinations, workflowIdentity } from '@/lib/comfyWorkflowParameters'
 import { selectCostumeView } from '@/lib/costumeSources'
 import type { RandomScope, ReferenceSlot } from '@/lib/randomRecipe'
 import { poseImagePath, poseThumbPath, referenceImageUrl, uploadedReferences } from '@/lib/recipeImages'
@@ -69,7 +67,6 @@ import { cn } from '@/lib/utils'
 import {
   buildRecipePrompt,
   fileToDataUrl,
-  parseComfyWorkflowNodes,
   stitchRecipeCanvas,
   STYLE_PRESETS,
 } from '@/services/aiGenerator'
@@ -77,7 +74,7 @@ import { useStudio } from '@/store/studioStore'
 import type { GenerationHistoryItem } from '@/types/gallery'
 
 export const Route = createFileRoute('/studio')({
-  staticData: { title: 'AI 合成台' },
+  staticData: { title: '角色合成台' },
   component: StudioPage,
 })
 
@@ -92,16 +89,27 @@ function mergeSceneNote(basePrompt: string, sceneNote: string): string {
   return `${basePrompt}\n${clause}`
 }
 
+function formatProgressMessage(raw: string): string {
+  if (/检查.*ComfyUI|模型/i.test(raw)) return '正在准备画室环境与参考素材…'
+  if (/连接|状态|排队|queue/i.test(raw)) return '正在连线画师并排队等候绘制…'
+  if (/缓存|节点|工作流|开始执行|正在执行/i.test(raw)) return '画师正在精细绘制画面细节…'
+  return raw.replace(/ComfyUI\s*/gi, '')
+}
+
+const SCENE_QUICK_TAGS = ['全身构图', '电影逆光', '柔光棚拍', '动态张力', '半身特写'] as const
+
 function SortableExtraPill({
   img,
   idx,
   onUpdateName,
   onRemove,
+  onPreview,
 }: {
   img: { id: string; name: string; url: string }
   idx: number
   onUpdateName: (id: string, name: string) => void
   onRemove: (id: string) => void
+  onPreview: (url: string) => void
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: img.id })
   const style = {
@@ -127,7 +135,17 @@ function SortableExtraPill({
       >
         <GripVerticalIcon className="size-3" />
       </button>
-      <img src={img.url} alt={img.name} className="size-5 shrink-0 rounded border border-border object-cover" />
+      <button
+        type="button"
+        aria-label={`放大预览附图 ${idx + 1}`}
+        onClick={(e) => {
+          e.stopPropagation()
+          onPreview(img.url)
+        }}
+        className="shrink-0 cursor-zoom-in overflow-hidden rounded border border-border transition-transform hover:scale-105"
+      >
+        <img src={img.url} alt={img.name} className="size-5 object-cover" />
+      </button>
       <input
         type="text"
         value={img.name}
@@ -206,22 +224,24 @@ function StudioPage() {
     pose: 'similar',
   })
   const costumeViews = recipe.costume?.views?.filter((view) => view.原图 && view.缩略图) || []
-  const [showReferenceErrors, setShowReferenceErrors] = useState(false)
-  const referenceErrorsRef = useRef<HTMLDivElement | null>(null)
 
   const [sceneNote, setSceneNote] = useState('')
   const [hoveredStyleKey, setHoveredStyleKey] = useState<string | null>(null)
   const [galleryModalOpen, setGalleryModalOpen] = useState(false)
+  const [allDiceSpin, setAllDiceSpin] = useState(0)
+  const [slotDiceSpin, setSlotDiceSpin] = useState<Record<ReferenceSlot, number>>({
+    portrait: 0,
+    costume: 0,
+    pose: 0,
+  })
 
-  const activeProvider = apiConfig.activeProvider
+  const activeProvider = STUDIO_ARTISTS.some((a) => a.id === apiConfig.activeProvider)
+    ? apiConfig.activeProvider
+    : STUDIO_ARTISTS[0].id
   const activeArtist = getStudioArtist(activeProvider)
-  const activeRatio = readCurrentAspectRatio(apiConfig)
+  const activeRatio = readCurrentAspectRatio({ ...apiConfig, activeProvider })
 
-  const activeWorkflowImages =
-    activeProvider === 'comfyui' &&
-    recipe.workflowImagesIdentity === workflowIdentity(apiConfig.comfyuiParams.workflowJson)
-      ? Object.values(recipe.workflowImages || {})
-      : []
+  const activeWorkflowImages: typeof extraImages = []
 
   const extraImages = recipe.extraImages || []
   const hasStitchRefs = Boolean(recipe.portrait || recipe.costume || recipe.pose || extraImages.length > 0)
@@ -233,11 +253,6 @@ function StudioPage() {
   const [stitchModalUrl, setStitchModalUrl] = useState<string | null>(null)
   const [zoomImageUrl, setZoomImageUrl] = useState<string | null>(null)
   const [isDragging, setIsDragging] = useState(false)
-
-  const parsedComfyNodes = useMemo(
-    () => parseComfyWorkflowNodes(apiConfig.comfyuiParams.workflowJson),
-    [apiConfig.comfyuiParams.workflowJson]
-  )
 
   const handleSelectAspectRatio = (ratio: StudioAspectRatio) => {
     const patches = buildAspectRatioPatches(ratio)
@@ -274,23 +289,6 @@ function StudioPage() {
     }
   }
 
-  const missingReferences =
-    activeProvider === 'comfyui'
-      ? [
-          { label: '人像', node: apiConfig.comfyuiParams.portraitNodeId, image: recipe.portrait },
-          { label: '服装', node: apiConfig.comfyuiParams.costumeNodeId, image: recipe.costume },
-          { label: '姿势', node: apiConfig.comfyuiParams.poseNodeId, image: recipe.pose },
-        ]
-          .filter(
-            (slot) =>
-              slot.node &&
-              slot.node !== 'none' &&
-              parsedComfyNodes.imageNodes.some((node) => node.id === slot.node && node.emptyValue === undefined) &&
-              !slot.image
-          )
-          .map((slot) => slot.label)
-      : []
-
   const processFiles = async (files: File[]) => {
     const imgFiles = files.filter((f) => f.type.startsWith('image/'))
     if (!imgFiles.length) return
@@ -324,6 +322,7 @@ function StudioPage() {
   })
 
   const handleRandom = async () => {
+    setAllDiceSpin((s) => s + 1)
     const [posesRes, costumes, portraits] = await Promise.all([
       qc.ensureQueryData(posesQuery),
       qc.ensureQueryData(costumesQuery),
@@ -338,6 +337,7 @@ function StudioPage() {
 
   const handleRandomSlot = async (slot: ReferenceSlot) => {
     const expectedId = recipe[slot]?.id ?? null
+    setSlotDiceSpin((prev) => ({ ...prev, [slot]: prev[slot] + 1 }))
     setRandomizingSlot(slot)
     try {
       const pools =
@@ -412,29 +412,7 @@ function StudioPage() {
   }
 
   const handleGenerate = () => {
-    if (activeProvider === 'comfyui') {
-      const cp = apiConfig.comfyuiParams
-      const workflowImages =
-        recipe.workflowImagesIdentity === workflowIdentity(cp.workflowJson) ? recipe.workflowImages || {} : {}
-      const selected = [
-        recipe.portrait ? cp.portraitNodeId : '',
-        recipe.costume ? cp.costumeNodeId : '',
-        recipe.pose ? cp.poseNodeId : '',
-        ...Object.keys(workflowImages),
-      ].filter((id) => id && id !== 'none')
-      const combinationError = validateReferenceCombinations(cp.workflowJson, selected)
-      if (combinationError) {
-        toast.error(combinationError)
-        return
-      }
-    }
-    if (missingReferences.length) {
-      setShowReferenceErrors(true)
-      requestAnimationFrame(() => referenceErrorsRef.current?.focus())
-      return
-    }
-
-    // 完整指令在后台按当前配方 + 画风 + 补充细节实时组装，不对外暴露可乱改模板
+    // 完整指令在后台按当前配方 + 画风 + 补充细节实时组装
     const basePrompt = buildRecipePrompt(recipe, apiConfig.stylePreset, activeWorkflowImages, {
       prefix: apiConfig.defaultPromptPrefix,
       suffix: apiConfig.defaultPromptSuffix,
@@ -450,12 +428,24 @@ function StudioPage() {
   const recentHistory = history.slice(0, 10)
   const previewArtist = previewResult ? getStudioArtist(previewResult.provider) : activeArtist
 
+  const toggleSceneQuickTag = (tag: string) => {
+    setSceneNote((prev) => {
+      const tokens = prev
+        .split(/[，,、]+/)
+        .map((s) => s.trim())
+        .filter(Boolean)
+      const exists = tokens.includes(tag)
+      const next = exists ? tokens.filter((t) => t !== tag) : [...tokens, tag]
+      return next.join('，')
+    })
+  }
+
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-2 md:overflow-hidden">
+    <div className="flex min-h-0 flex-1 flex-col gap-2.5 md:overflow-hidden">
       {/* 极简控制台单行顶栏 */}
       <header className="flex shrink-0 flex-wrap items-center justify-between gap-2">
         <div className="flex min-w-0 items-baseline gap-2.5">
-          <h1 className="truncate text-lg font-extrabold tracking-tight sm:text-xl">AI 角色合成工作台</h1>
+          <h1 className="truncate text-lg font-extrabold tracking-tight sm:text-xl">角色合成工作台</h1>
           <span className="hidden text-xs text-muted-foreground xl:inline">
             角色配方 · 挑选画师 · 设定画风与画幅
           </span>
@@ -474,21 +464,13 @@ function StudioPage() {
               <span>作品集 ({history.length})</span>
             </Button>
           )}
-          <Link
-            to="/settings"
-            title="接口与密钥配置"
-            className="inline-flex h-7 items-center gap-1.5 rounded-full border border-border bg-card px-2.5 text-xs font-medium text-muted-foreground shadow-2xs transition-colors hover:border-foreground/30 hover:text-foreground"
-          >
-            <SlidersHorizontalIcon className="size-3.5" />
-            <span>配置</span>
-          </Link>
         </div>
       </header>
 
-      {/* 主驾驶舱：桌面端锁定视口无滚动条，移动端流式堆叠 */}
+      {/* 主驾驶舱：桌面端自然铺展（最高 820px 防超宽屏过度拉伸空洞），移动端流式堆叠 */}
       <ResizablePanelGroup
         orientation={isMobile ? 'vertical' : 'horizontal'}
-        className="min-h-0 w-full flex-1 gap-3 md:gap-0"
+        className="min-h-0 w-full flex-1 gap-3 md:max-h-[820px] md:gap-0"
       >
         {/* 左栏：1. 角色配方 → 2. 选择画师 → 3. 成图画风 → 4. 画面尺寸与细节 */}
         <ResizablePanel
@@ -500,7 +482,7 @@ function StudioPage() {
             initial={{ opacity: 0, y: 6 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.18 }}
-            className="flex min-h-0 min-w-0 flex-1 flex-col gap-2"
+            className="flex min-h-0 min-w-0 flex-1 flex-col gap-2.5"
             onDragOver={(e) => {
               e.preventDefault()
               setIsDragging(true)
@@ -525,10 +507,17 @@ function StudioPage() {
                     type="button"
                     variant="outline"
                     size="sm"
-                    className="h-6.5 rounded-full px-2.5 text-xs"
+                    className="h-6.5 rounded-full px-2.5 text-xs active:scale-95"
                     onClick={handleRandom}
                   >
-                    <DicesIcon className="size-3 text-[#E5A918]" />
+                    <motion.span
+                      key={allDiceSpin}
+                      animate={{ rotate: allDiceSpin ? 360 : 0 }}
+                      transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
+                      className="inline-flex items-center"
+                    >
+                      <DicesIcon className="size-3 text-[#E5A918]" />
+                    </motion.span>
                     <span>全随机</span>
                   </Button>
                   {hasAnyRef && hasStitchRefs && (
@@ -556,27 +545,12 @@ function StudioPage() {
                 onChange={handleUploadFiles}
               />
 
-              {showReferenceErrors && missingReferences.length > 0 && (
-                <div
-                  id="reference-errors"
-                  ref={referenceErrorsRef}
-                  role="alert"
-                  tabIndex={-1}
-                  className="mt-1.5 rounded-xl border border-destructive bg-destructive/10 px-3 py-1.5 text-xs text-destructive focus-visible:outline-2"
-                >
-                  请先选择或上传：{missingReferences.join('、')}。
-                </div>
-              )}
-
               {/* 实体凹槽轨道：3 枚横向卡带 */}
-              <div className="ks-recess mt-1.5 grid grid-cols-1 gap-1.5 rounded-xl border border-border/75 p-1.5 sm:grid-cols-3">
+              <div className="ks-recess mt-2 grid grid-cols-1 gap-2 rounded-xl border border-border/75 p-1.5 sm:grid-cols-3 lg:p-2">
                 {/* 01 人像卡带 */}
                 <div
                   className={cn(
-                    'ks-paper-keycap dark:ks-keycap group relative flex h-[72px] min-w-0 items-center gap-2 overflow-hidden rounded-lg border bg-card p-1.5 transition-all hover:-translate-y-0.5',
-                    showReferenceErrors && missingReferences.includes('人像')
-                      ? 'border-destructive ring-1 ring-destructive'
-                      : 'border-border/80 hover:border-[#E5A918]/60'
+                    'ks-paper-keycap dark:ks-keycap group relative flex h-[72px] lg:h-[88px] min-w-0 items-center gap-2.5 overflow-hidden rounded-lg border border-border/80 bg-card p-1.5 transition-all hover:-translate-y-0.5 hover:border-[#E5A918]/60'
                   )}
                 >
                   <span aria-hidden="true" className="absolute inset-y-1.5 left-0 w-0.5 rounded-r bg-[#E5A918]" />
@@ -588,7 +562,7 @@ function StudioPage() {
                         const item = recipe.portrait
                         if (item) setZoomImageUrl(referenceImageUrl(item.原图 || item.缩略图))
                       }}
-                      className="relative h-full w-11 shrink-0 cursor-zoom-in overflow-hidden rounded-md border border-border/80 bg-muted/30"
+                      className="relative h-full w-12 lg:w-14 shrink-0 cursor-zoom-in overflow-hidden rounded-md border border-border/80 bg-muted/30"
                     >
                       <img
                         src={referenceImageUrl(recipe.portrait.缩略图)}
@@ -600,7 +574,7 @@ function StudioPage() {
                     <Link
                       to="/portraits"
                       aria-label="前往人像库选图"
-                      className="flex h-full w-11 shrink-0 flex-col items-center justify-center rounded-md border border-dashed border-border bg-muted/30 text-[#B88300] transition-colors hover:border-[#E5A918] hover:bg-muted/60 dark:text-[#E5A918]"
+                      className="flex h-full w-12 lg:w-14 shrink-0 flex-col items-center justify-center rounded-md border border-dashed border-border bg-muted/30 text-[#B88300] transition-colors hover:border-[#E5A918] hover:bg-muted/60 dark:text-[#E5A918]"
                     >
                       <UserRoundIcon className="size-4" />
                     </Link>
@@ -676,7 +650,14 @@ function StudioPage() {
                         {randomizingSlot === 'portrait' ? (
                           <LoaderCircleIcon className="size-3 animate-spin" />
                         ) : (
-                          <DicesIcon className="size-3 text-[#E5A918]" />
+                          <motion.span
+                            key={slotDiceSpin.portrait}
+                            animate={{ rotate: slotDiceSpin.portrait ? 360 : 0 }}
+                            transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
+                            className="inline-flex items-center"
+                          >
+                            <DicesIcon className="size-3 text-[#E5A918]" />
+                          </motion.span>
                         )}
                         <span className="truncate">换一个</span>
                       </button>
@@ -687,10 +668,7 @@ function StudioPage() {
                 {/* 02 服装卡带 */}
                 <div
                   className={cn(
-                    'ks-paper-keycap dark:ks-keycap group relative flex h-[72px] min-w-0 items-center gap-2 overflow-hidden rounded-lg border bg-card p-1.5 transition-all hover:-translate-y-0.5',
-                    showReferenceErrors && missingReferences.includes('服装')
-                      ? 'border-destructive ring-1 ring-destructive'
-                      : 'border-border/80 hover:border-[#19857B]/60'
+                    'ks-paper-keycap dark:ks-keycap group relative flex h-[72px] lg:h-[88px] min-w-0 items-center gap-2.5 overflow-hidden rounded-lg border border-border/80 bg-card p-1.5 transition-all hover:-translate-y-0.5 hover:border-[#19857B]/60'
                   )}
                 >
                   <span aria-hidden="true" className="absolute inset-y-1.5 left-0 w-0.5 rounded-r bg-[#19857B]" />
@@ -702,7 +680,7 @@ function StudioPage() {
                         const item = recipe.costume
                         if (item) setZoomImageUrl(referenceImageUrl(item.预览图 || item.原图 || item.缩略图))
                       }}
-                      className="relative h-full w-11 shrink-0 cursor-zoom-in overflow-hidden rounded-md border border-border/80 bg-white dark:bg-zinc-900"
+                      className="relative h-full w-12 lg:w-14 shrink-0 cursor-zoom-in overflow-hidden rounded-md border border-border/80 bg-white dark:bg-zinc-900"
                     >
                       <img
                         src={referenceImageUrl(recipe.costume.缩略图)}
@@ -714,7 +692,7 @@ function StudioPage() {
                     <Link
                       to="/costumes"
                       aria-label="前往服装库选图"
-                      className="flex h-full w-11 shrink-0 flex-col items-center justify-center rounded-md border border-dashed border-border bg-muted/30 text-[#116E65] transition-colors hover:border-[#19857B] hover:bg-muted/60 dark:text-[#4FD1C5]"
+                      className="flex h-full w-12 lg:w-14 shrink-0 flex-col items-center justify-center rounded-md border border-dashed border-border bg-muted/30 text-[#116E65] transition-colors hover:border-[#19857B] hover:bg-muted/60 dark:text-[#4FD1C5]"
                     >
                       <ShirtIcon className="size-4" />
                     </Link>
@@ -810,7 +788,14 @@ function StudioPage() {
                         {randomizingSlot === 'costume' ? (
                           <LoaderCircleIcon className="size-3 animate-spin" />
                         ) : (
-                          <DicesIcon className="size-3 text-[#19857B]" />
+                          <motion.span
+                            key={slotDiceSpin.costume}
+                            animate={{ rotate: slotDiceSpin.costume ? 360 : 0 }}
+                            transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
+                            className="inline-flex items-center"
+                          >
+                            <DicesIcon className="size-3 text-[#19857B]" />
+                          </motion.span>
                         )}
                         <span className="truncate">换一个</span>
                       </button>
@@ -821,10 +806,7 @@ function StudioPage() {
                 {/* 03 姿势卡带 */}
                 <div
                   className={cn(
-                    'ks-paper-keycap dark:ks-keycap group relative flex h-[72px] min-w-0 items-center gap-2 overflow-hidden rounded-lg border bg-card p-1.5 transition-all hover:-translate-y-0.5',
-                    showReferenceErrors && missingReferences.includes('姿势')
-                      ? 'border-destructive ring-1 ring-destructive'
-                      : 'border-border/80 hover:border-[#D9381E]/60'
+                    'ks-paper-keycap dark:ks-keycap group relative flex h-[72px] lg:h-[88px] min-w-0 items-center gap-2.5 overflow-hidden rounded-lg border border-border/80 bg-card p-1.5 transition-all hover:-translate-y-0.5 hover:border-[#D9381E]/60'
                   )}
                 >
                   <span aria-hidden="true" className="absolute inset-y-1.5 left-0 w-0.5 rounded-r bg-[#D9381E]" />
@@ -836,7 +818,7 @@ function StudioPage() {
                         const item = recipe.pose
                         if (item) setZoomImageUrl(referenceImageUrl(poseImagePath(item)))
                       }}
-                      className="relative h-full w-11 shrink-0 cursor-zoom-in overflow-hidden rounded-md border border-border/80 bg-white dark:bg-zinc-900"
+                      className="relative h-full w-12 lg:w-14 shrink-0 cursor-zoom-in overflow-hidden rounded-md border border-border/80 bg-white dark:bg-zinc-900"
                     >
                       <img
                         src={referenceImageUrl(poseThumbPath(recipe.pose))}
@@ -848,7 +830,7 @@ function StudioPage() {
                     <Link
                       to="/poses"
                       aria-label="前往姿势库选图"
-                      className="flex h-full w-11 shrink-0 flex-col items-center justify-center rounded-md border border-dashed border-border bg-muted/30 text-[#D9381E] transition-colors hover:border-[#D9381E] hover:bg-muted/60 dark:text-[#FF7A59]"
+                      className="flex h-full w-12 lg:w-14 shrink-0 flex-col items-center justify-center rounded-md border border-dashed border-border bg-muted/30 text-[#D9381E] transition-colors hover:border-[#D9381E] hover:bg-muted/60 dark:text-[#FF7A59]"
                     >
                       <PersonStandingIcon className="size-4" />
                     </Link>
@@ -949,7 +931,14 @@ function StudioPage() {
                         {randomizingSlot === 'pose' ? (
                           <LoaderCircleIcon className="size-3 animate-spin" />
                         ) : (
-                          <DicesIcon className="size-3 text-[#D9381E]" />
+                          <motion.span
+                            key={slotDiceSpin.pose}
+                            animate={{ rotate: slotDiceSpin.pose ? 360 : 0 }}
+                            transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
+                            className="inline-flex items-center"
+                          >
+                            <DicesIcon className="size-3 text-[#D9381E]" />
+                          </motion.span>
                         )}
                         <span className="truncate">换一个</span>
                       </button>
@@ -984,6 +973,7 @@ function StudioPage() {
                             idx={idx}
                             onUpdateName={updateExtraImageName}
                             onRemove={removeExtraImage}
+                            onPreview={setZoomImageUrl}
                           />
                         ))}
                       </div>
@@ -1030,27 +1020,35 @@ function StudioPage() {
             {/* 控制台主区：2. 选择画师 + 3. 成图画风 + 4. 画幅尺寸与细节 + 生成按钮 */}
             <section
               data-impeccable-ignore="nested-cards"
-              className="ks-elevation flex min-h-0 flex-1 flex-col justify-between gap-2 rounded-2xl border border-border bg-card p-2.5"
+              className="ks-elevation flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto rounded-2xl border border-border bg-card p-2.5 lg:gap-3 lg:p-3.5"
             >
-              {/* 2. 选择画师（创意代号，隐藏底层模型技术词） */}
-              <div className="space-y-1.5">
+              {/* 2. 选择画师 */}
+              <div className="space-y-1.5 lg:space-y-2">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <span className="text-xs font-extrabold tracking-tight text-foreground sm:text-sm">2. 选择画师</span>
-                  <div className="flex min-w-0 max-w-full items-center gap-1.5 rounded-full border border-border/80 bg-[#FAF8F4] px-2.5 py-0.5 text-xs dark:bg-muted/50">
-                    <span
-                      className="size-1.5 shrink-0 rounded-full"
-                      style={{ backgroundColor: activeArtist.accent }}
-                    />
-                    <span className="shrink-0 font-semibold text-foreground">{activeArtist.name}</span>
-                    <span className="text-muted-foreground/50">·</span>
-                    <span className="truncate text-muted-foreground">{activeArtist.bio}</span>
-                  </div>
+                  <AnimatePresence mode="wait" initial={false}>
+                    <motion.div
+                      key={activeArtist.id}
+                      initial={{ opacity: 0, y: 2 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -2 }}
+                      transition={{ duration: 0.14 }}
+                      className="flex min-w-0 max-w-full items-center gap-1.5 rounded-full border border-border/80 bg-[#FAF8F4] px-2.5 py-0.5 text-xs dark:bg-muted/50"
+                    >
+                      <span
+                        className="size-1.5 shrink-0 rounded-full"
+                        style={{ backgroundColor: activeArtist.accent }}
+                      />
+                      <span className="shrink-0 font-semibold text-foreground">{activeArtist.name}</span>
+                      <span className="text-muted-foreground/50">·</span>
+                      <span className="truncate text-muted-foreground">{activeArtist.bio}</span>
+                    </motion.div>
+                  </AnimatePresence>
                 </div>
 
-                <div role="radiogroup" aria-label="选择画师" className="grid grid-cols-2 gap-1.5 sm:grid-cols-5">
+                <div role="radiogroup" aria-label="选择画师" className="grid grid-cols-2 gap-1.5 sm:grid-cols-4 lg:gap-2">
                   {STUDIO_ARTISTS.map((artist) => {
                     const selected = activeProvider === artist.id
-                    const needsKey = artist.requiresKey && !apiConfig.providers[artist.id]?.apiKey?.trim()
                     return (
                       <button
                         key={artist.id}
@@ -1060,13 +1058,20 @@ function StudioPage() {
                         aria-label={`${artist.name}（${artist.specialty}）：${artist.bio}`}
                         onClick={() => updateApiConfig({ activeProvider: artist.id })}
                         className={cn(
-                          'relative flex min-w-0 flex-col items-start justify-center rounded-xl border px-2.5 py-1.5 text-left transition-all active:scale-[0.98]',
+                          'relative flex min-w-0 flex-col items-start justify-center overflow-hidden rounded-xl border px-3 py-1.5 lg:py-2 text-left transition-colors active:scale-[0.98]',
                           selected
-                            ? 'border-foreground bg-foreground text-background shadow-xs'
+                            ? 'border-foreground text-background shadow-xs'
                             : 'border-border/80 bg-[#FAF8F4] text-foreground hover:border-foreground/40 dark:bg-muted/35'
                         )}
                       >
-                        <div className="flex w-full items-center justify-between gap-1">
+                        {selected && (
+                          <motion.span
+                            layoutId="studio-artist-pill"
+                            transition={{ type: 'spring', stiffness: 460, damping: 34 }}
+                            className="absolute inset-0 bg-foreground"
+                          />
+                        )}
+                        <div className="relative z-10 flex w-full items-center justify-between gap-1">
                           <div className="flex min-w-0 items-center gap-1.5">
                             <span
                               className="size-2 shrink-0 rounded-full"
@@ -1074,19 +1079,10 @@ function StudioPage() {
                             />
                             <span className="truncate text-xs font-bold leading-tight">{artist.name}</span>
                           </div>
-                          {needsKey && (
-                            <span
-                              title="需在右上角「配置」中填写该画师密钥"
-                              className={cn(
-                                'size-1.5 shrink-0 rounded-full',
-                                selected ? 'bg-[#E5A918]' : 'bg-[#E5A918]/75'
-                              )}
-                            />
-                          )}
                         </div>
                         <span
                           className={cn(
-                            'mt-0.5 truncate text-xs leading-tight',
+                            'relative z-10 mt-0.5 truncate text-xs leading-tight',
                             selected ? 'text-background/75' : 'text-muted-foreground'
                           )}
                         >
@@ -1098,8 +1094,8 @@ function StudioPage() {
                 </div>
               </div>
 
-              {/* 3. 成图画风（跟随原图默认 + 13 种风格样张 7×2 矩阵） */}
-              <div className="border-t border-border/70 pt-2">
+              {/* 3. 成图画风（动态跟随预设风格矩阵） */}
+              <div className="border-t border-border/70 pt-2 lg:pt-2.5">
                 <StylePresetSelector
                   value={apiConfig.stylePreset}
                   onChange={(v) => updateApiConfig({ stylePreset: v })}
@@ -1108,53 +1104,60 @@ function StudioPage() {
               </div>
 
               {/* 4. 画幅尺寸 + 细节补充 + 立即生成按钮 */}
-              <div className="space-y-2 border-t border-border/70 pt-2">
-                <div className="flex flex-wrap items-center gap-1.5">
+              <div className="mt-auto space-y-1.5 border-t border-border/70 pt-1.5 lg:space-y-2 lg:pt-2.5">
+                <div className="flex flex-wrap items-center gap-1.5 lg:gap-2">
                   <span className="shrink-0 text-xs font-extrabold tracking-tight text-foreground sm:text-sm">
                     4. 画幅与细节
                   </span>
 
-                  {activeProvider === 'comfyui' ? (
-                    <span className="rounded-lg border border-border/80 bg-[#FAF8F4] px-2.5 py-1 text-xs text-muted-foreground dark:bg-muted/35">
-                      尺寸由本地工作流节点控制
-                    </span>
-                  ) : (
-                    <div
-                      role="group"
-                      aria-label="选择成图画幅比例"
-                      className="inline-flex flex-wrap items-center gap-1 rounded-xl border border-border/80 bg-[#FAF8F4] p-0.5 dark:bg-muted/35"
-                    >
-                      {STUDIO_ASPECT_RATIOS.map((opt) => {
-                        const selected = activeRatio === opt.id
-                        return (
-                          <button
-                            key={opt.id}
-                            type="button"
-                            aria-pressed={selected}
-                            title={opt.hint}
-                            onClick={() => handleSelectAspectRatio(opt.id)}
-                            className={cn(
-                              'rounded-lg px-2 py-1 font-mono text-xs font-semibold transition-colors',
-                              selected
-                                ? 'bg-foreground text-background shadow-2xs'
-                                : 'text-muted-foreground hover:text-foreground'
-                            )}
-                          >
-                            {opt.label}
-                          </button>
-                        )
-                      })}
-                    </div>
-                  )}
+                  <div
+                    role="group"
+                    aria-label="选择成图画幅比例"
+                    className="inline-flex shrink-0 items-center gap-0.5 rounded-xl border border-border/80 bg-[#FAF8F4] p-0.5 dark:bg-muted/35"
+                  >
+                    {STUDIO_ASPECT_RATIOS.map((opt) => {
+                      const selected = activeRatio === opt.id
+                      return (
+                        <button
+                          key={opt.id}
+                          type="button"
+                          aria-pressed={selected}
+                          title={opt.hint}
+                          onClick={() => handleSelectAspectRatio(opt.id)}
+                          className={cn(
+                            'relative rounded-lg px-2 py-0.5 font-mono text-xs font-semibold transition-colors lg:py-1',
+                            selected
+                              ? 'text-background'
+                              : 'text-muted-foreground hover:text-foreground'
+                          )}
+                        >
+                          {selected && (
+                            <motion.span
+                              layoutId="studio-ratio-pill"
+                              transition={{ type: 'spring', stiffness: 460, damping: 34 }}
+                              className="absolute inset-0 rounded-lg bg-foreground shadow-2xs"
+                            />
+                          )}
+                          <span className="relative z-10">{opt.label}</span>
+                        </button>
+                      )
+                    })}
+                  </div>
 
-                  <div className="relative min-w-[180px] flex-1">
+                  <div className="relative min-w-[130px] flex-1">
                     <Input
                       id="studio-scene-note"
                       aria-label="补充画面细节"
                       value={sceneNote}
                       onChange={(e) => setSceneNote(e.target.value)}
-                      placeholder="补充场景、光影或动作细节（可选，如：樱花树下逆光微笑…）"
-                      className="h-8 rounded-xl bg-[#FAF8F4] pr-7 text-xs dark:bg-muted/30"
+                      onKeyDown={(e) => {
+                        if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && hydrated && !activeTask && !isGenerating && uploadingSlot === null) {
+                          e.preventDefault()
+                          handleGenerate()
+                        }
+                      }}
+                      placeholder="补充场景、光影或动作细节（可选，Cmd/Ctrl+Enter）…"
+                      className="h-8 rounded-xl bg-[#FAF8F4] pr-7 text-xs lg:h-9 dark:bg-muted/30"
                     />
                     {sceneNote && (
                       <button
@@ -1169,10 +1172,35 @@ function StudioPage() {
                   </div>
                 </div>
 
+                <div className="no-scrollbar flex items-center gap-1.5 overflow-x-auto">
+                  <span className="shrink-0 text-[11px] text-muted-foreground">快捷灵感：</span>
+                  {SCENE_QUICK_TAGS.map((tag) => {
+                    const active = sceneNote
+                      .split(/[，,、]+/)
+                      .map((s) => s.trim())
+                      .includes(tag)
+                    return (
+                      <button
+                        key={tag}
+                        type="button"
+                        onClick={() => toggleSceneQuickTag(tag)}
+                        className={cn(
+                          'shrink-0 rounded-full border px-2.5 py-0.5 text-[11px] font-medium transition-colors active:scale-95',
+                          active
+                            ? 'border-foreground bg-foreground text-background'
+                            : 'border-border/80 bg-[#FAF8F4] text-muted-foreground hover:border-foreground/40 hover:text-foreground dark:bg-muted/35'
+                        )}
+                      >
+                        +{tag}
+                      </button>
+                    )
+                  })}
+                </div>
+
                 <Button
                   onClick={handleGenerate}
                   disabled={!hydrated || !!activeTask || isGenerating || uploadingSlot !== null}
-                  className="ks-keycap h-10 w-full rounded-xl border-0 bg-[#D9381E] text-sm font-extrabold tracking-tight text-white hover:bg-[#C23018]"
+                  className="ks-keycap h-10 w-full rounded-xl border-0 bg-[#D9381E] text-sm font-extrabold tracking-tight text-white hover:bg-[#C23018] lg:h-11"
                 >
                   {isGenerating ? (
                     <>
@@ -1277,26 +1305,42 @@ function StudioPage() {
                 <span aria-hidden="true" className="pointer-events-none absolute right-2.5 bottom-2.5 size-3 border-r border-b border-foreground/20" />
 
                 {isGenerating ? (
-                  <div className="flex flex-col items-center gap-3 text-center">
-                    <div className="flex size-12 items-center justify-center rounded-2xl border border-border bg-card text-[#E5A918] shadow-xs">
-                      <LoaderCircleIcon className="size-6 animate-spin" />
+                  <div className="relative flex w-full max-w-xs flex-col items-center gap-3.5 text-center">
+                    {/* 暗房扫描曝光光束动画 */}
+                    <motion.div
+                      aria-hidden="true"
+                      animate={{ y: [-76, 76, -76] }}
+                      transition={{ duration: 2.8, repeat: Infinity, ease: 'easeInOut' }}
+                      className="pointer-events-none absolute inset-x-0 top-1/2 h-14 -translate-y-1/2 bg-gradient-to-b from-transparent via-[#E5A918]/12 to-transparent blur-sm"
+                    />
+                    <div className="relative flex size-14 items-center justify-center">
+                      <motion.span
+                        aria-hidden="true"
+                        animate={{ scale: [1, 1.32, 1], opacity: [0.55, 0, 0.55] }}
+                        transition={{ duration: 2, repeat: Infinity, ease: 'easeOut' }}
+                        className="absolute inset-0 rounded-2xl border border-[#E5A918]/60"
+                      />
+                      <div className="flex size-12 items-center justify-center rounded-2xl border border-border bg-card text-[#E5A918] shadow-xs">
+                        <LoaderCircleIcon className="size-6 animate-spin" />
+                      </div>
                     </div>
-                    <div className="space-y-1">
+                    <div className="relative space-y-1">
                       <div className="text-sm font-bold">{activeArtist.name}正在绘制角色作品…</div>
                       {generationProgress && (
-                        <div className="w-56 max-w-full space-y-1.5 pt-1">
-                          <div className="text-xs text-foreground/80">{generationProgress.message}</div>
+                        <div className="mx-auto w-56 max-w-full space-y-1.5 pt-1">
+                          <div className="text-xs text-foreground/80">{formatProgressMessage(generationProgress.message)}</div>
                           {generationProgress.percent !== undefined && (
                             <div className="h-1.5 overflow-hidden rounded-full border border-border bg-card">
-                              <div
-                                className="h-full bg-[#D9381E] transition-all"
-                                style={{ width: `${generationProgress.percent}%` }}
+                              <motion.div
+                                animate={{ width: `${generationProgress.percent}%` }}
+                                transition={{ duration: 0.25 }}
+                                className="h-full bg-[#D9381E]"
                               />
                             </div>
                           )}
                         </div>
                       )}
-                      <p className="pt-1 text-xs text-muted-foreground">切换页面不会中断当前生成</p>
+                      <p className="pt-1 text-xs text-muted-foreground">切换页面不会中断当前绘制</p>
                     </div>
                   </div>
                 ) : generationError ? (
@@ -1318,9 +1362,13 @@ function StudioPage() {
                     )}
                   </div>
                 ) : previewUrl ? (
-                  <button
+                  <motion.button
+                    key={previewUrl}
                     type="button"
                     aria-label="放大生成结果"
+                    initial={{ opacity: 0, scale: 0.97, filter: 'blur(6px)' }}
+                    animate={{ opacity: 1, scale: 1, filter: 'blur(0px)' }}
+                    transition={{ duration: 0.34, ease: [0.22, 1, 0.36, 1] }}
                     onClick={() => setZoomImageUrl(previewUrl)}
                     className="group relative flex h-full w-full cursor-zoom-in items-center justify-center focus-visible:outline-2 focus-visible:outline-ring"
                   >
@@ -1329,12 +1377,21 @@ function StudioPage() {
                       alt="生成结果"
                       className="max-h-full max-w-full rounded-lg border border-border/60 object-contain shadow-sm transition group-hover:opacity-95"
                     />
-                  </button>
+                  </motion.button>
                 ) : (
-                  /* 待命舞台：卡带扇形合成预览 + 放大版画风/跟随原图相框 */
-                  <div className="flex w-full max-w-md flex-col items-center gap-4 text-center">
-                    <div className="flex items-center justify-center gap-3 sm:gap-4">
-                      <div className="flex items-center -space-x-2.5">
+                  /* 待命舞台：暗房取景圈 + 卡带扇形合成预览 + 目标画风相框 */
+                  <div className="relative flex w-full max-w-md flex-col items-center gap-5 text-center">
+                    <div
+                      aria-hidden="true"
+                      className="pointer-events-none absolute top-1/2 left-1/2 size-72 -translate-x-1/2 -translate-y-1/2 rounded-full border border-dashed border-foreground/[0.08]"
+                    />
+                    <div
+                      aria-hidden="true"
+                      className="pointer-events-none absolute top-1/2 left-1/2 size-96 -translate-x-1/2 -translate-y-1/2 rounded-full border border-foreground/[0.04]"
+                    />
+
+                    <div className="relative flex items-center justify-center gap-3.5 sm:gap-5">
+                      <div className="flex items-center -space-x-3">
                         {[
                           {
                             key: 'portrait',
@@ -1362,8 +1419,8 @@ function StudioPage() {
                           return (
                             <div
                               key={slot.key}
-                              style={{ transform: `rotate(${(i - 1) * 5}deg)` }}
-                              className="flex h-24 w-18 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-border bg-card shadow-sm"
+                              style={{ transform: `rotate(${(i - 1) * 5.5}deg)` }}
+                              className="flex h-28 w-21 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-border bg-card shadow-sm transition-transform sm:h-32 sm:w-24"
                             >
                               {slot.src ? (
                                 <img
@@ -1382,7 +1439,7 @@ function StudioPage() {
                       <ArrowRightIcon className="size-4 shrink-0 text-muted-foreground/70" />
 
                       {/* 目标画风预览相框 */}
-                      <div className="relative flex size-28 shrink-0 flex-col items-center justify-center overflow-hidden rounded-2xl border-2 border-[#D9381E]/85 bg-card shadow-md sm:size-32">
+                      <div className="relative flex size-32 shrink-0 flex-col items-center justify-center overflow-hidden rounded-2xl border-2 border-[#D9381E]/85 bg-card shadow-md sm:size-36">
                         {styleVisual.preview ? (
                           <>
                             <img
@@ -1404,37 +1461,38 @@ function StudioPage() {
                       </div>
                     </div>
 
-                    <div className="space-y-1">
+                    <div className="relative space-y-1">
                       <div className="text-sm font-bold text-foreground">
-                        {activeArtist.name} · {styleVisual.shortLabel}
-                        {activeProvider !== 'comfyui' && ` · ${activeRatio}`}
+                        {activeArtist.name} · {styleVisual.shortLabel} · {activeRatio}
                       </div>
                       <p className="text-xs text-muted-foreground">
                         {styleVisual.tagline || '支持从三大图库混搭，或拖拽 / 粘贴本地参考图'}
                       </p>
                     </div>
 
-                    <div className="flex flex-wrap items-center justify-center gap-1.5 text-xs">
+                    <div className="relative flex flex-wrap items-center justify-center gap-1.5 text-xs">
                       {[
-                        { label: '人像', ok: Boolean(recipe.portrait) },
-                        { label: '服装', ok: Boolean(recipe.costume) },
+                        { label: '人像', to: '/portraits' as const, ok: Boolean(recipe.portrait) },
+                        { label: '服装', to: '/costumes' as const, ok: Boolean(recipe.costume) },
                         {
                           label: recipe.pose ? `姿势(${recipe.pose.useDepth ? '深度' : '白模'})` : '姿势',
+                          to: '/poses' as const,
                           ok: Boolean(recipe.pose),
                         },
                       ].map((item) => (
-                        <span
-                          key={item.label}
+                        <Link
+                          key={item.to}
+                          to={item.to}
                           className={cn(
-                            'inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 font-medium',
+                            'inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 font-medium transition-colors hover:border-foreground/40',
                             item.ok
                               ? 'border-[#116E65]/30 bg-[#116E65]/10 text-[#116E65] dark:border-[#4FD1C5]/30 dark:text-[#4FD1C5]'
-                              : 'border-border bg-card text-muted-foreground'
+                              : 'border-border bg-card text-muted-foreground hover:text-foreground'
                           )}
                         >
                           {item.ok && <CheckCircle2Icon className="size-3" />}
                           {item.label}
-                        </span>
+                        </Link>
                       ))}
                     </div>
                   </div>
@@ -1482,8 +1540,8 @@ function StudioPage() {
               <section className="ks-elevation flex shrink-0 flex-wrap items-center justify-between gap-2 rounded-2xl border border-[#E5A918]/50 bg-card px-3 py-2 text-xs">
                 <span className="min-w-0 truncate text-muted-foreground">
                   {activeTask.task
-                    ? '检测到未完成的后台任务，可恢复继续等待成图'
-                    : '上次提交可能已发送成功，请恢复确认或取消'}
+                    ? '检测到未完成的绘制任务，可恢复继续等待成图'
+                    : '上次绘制提交状态待确认，请恢复等待或取消'}
                 </span>
                 <div className="flex shrink-0 items-center gap-1.5">
                   <Button

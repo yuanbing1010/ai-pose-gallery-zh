@@ -1,4 +1,5 @@
 import type { CSSProperties, ReactNode } from 'react'
+import { motion } from 'motion/react'
 import { CheckIcon, PlusIcon, RotateCwIcon } from 'lucide-react'
 import TiltedCard from '@/components/cards/TiltedCard'
 import type { CardAccent } from '@/lib/cardAccents'
@@ -133,13 +134,21 @@ export function GalleryHoloCard({
                   onPickToggle()
                 }}
                 className={cn(
-                  'pointer-events-auto flex size-7 items-center justify-center rounded-full shadow-sm transition-all',
+                  'pointer-events-auto flex size-7 items-center justify-center rounded-full shadow-sm transition-all active:scale-90',
                   picked
                     ? 'bg-primary text-primary-foreground ring-2 ring-background'
                     : 'md-pill hover:bg-primary hover:text-primary-foreground'
                 )}
               >
-                {picked ? <CheckIcon className="size-3.5" /> : <PlusIcon className="size-3.5" />}
+                <motion.span
+                  key={picked ? 'checked' : 'plus'}
+                  initial={false}
+                  animate={picked ? { scale: [0.65, 1.22, 1] } : { scale: 1 }}
+                  transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
+                  className="inline-flex items-center justify-center"
+                >
+                  {picked ? <CheckIcon className="size-3.5 stroke-[2.5]" /> : <PlusIcon className="size-3.5" />}
+                </motion.span>
               </button>
             </div>
           </div>

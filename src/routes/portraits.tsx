@@ -16,7 +16,8 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { portraitsQuery } from '@/api/gallery'
 import { PortraitCard } from '@/components/cards/PortraitCard'
 import { EmptyState } from '@/components/common/EmptyState'
-import { ShowcaseDialog } from '@/components/common/ShowcaseDialog'
+import { ShowcaseDialog, ShowcaseStageTabs } from '@/components/common/ShowcaseDialog'
+import { ScrollToTopButton } from '@/components/common/ScrollToTopButton'
 import { ZoomViewport } from '@/components/common/ZoomViewport'
 import { GlowCard3D } from '@/components/costumes/GlowCard3D'
 import { PortraitFilterModal } from '@/components/portraits/PortraitFilterModal'
@@ -28,7 +29,24 @@ import { useStudio } from '@/store/studioStore'
 export const Route = createFileRoute('/portraits')({
   staticData: { title: '人像颜值库' },
   loader: ({ context }) => context.queryClient.ensureQueryData(portraitsQuery),
-  pendingComponent: () => <Skeleton className="h-[540px] rounded-[24px]" />,
+  pendingComponent: () => (
+    <div className="space-y-5">
+      <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-end">
+        <div className="space-y-2">
+          <Skeleton className="h-4 w-36 rounded-full" />
+          <Skeleton className="h-9 w-48 rounded-xl" />
+          <Skeleton className="h-4 w-56 rounded-full" />
+        </div>
+        <Skeleton className="h-14 w-72 rounded-xl" />
+      </div>
+      <Skeleton className="h-10 w-full rounded-xl" />
+      <div className="grid grid-cols-2 gap-x-4 gap-y-6 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+        {Array.from({ length: 10 }).map((_, idx) => (
+          <Skeleton key={idx} className="aspect-[4/5] rounded-[20px]" />
+        ))}
+      </div>
+    </div>
+  ),
   component: PortraitsPage,
 })
 
@@ -164,7 +182,7 @@ function PortraitsPage() {
         <div className="space-y-1.5">
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
             <span className="inline-block h-px w-5 bg-foreground/40" aria-hidden="true" />
-            <span>CC0 公共领域人像与发型参考</span>
+            <span>人物面部与发型风格参考</span>
           </div>
           <h1 className="text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
             人像颜值库
@@ -471,7 +489,6 @@ function PortraitsPage() {
             categoryLabel={currentItem.分区}
             secondaryTag={currentItem.发长}
             title={currentItem.标题}
-            subtitle={currentItem.发型名称}
             picked={picked}
             pickLabel={picked ? '已在配方中（点击移除）' : '锁入角色配方'}
             onTogglePick={() => togglePortrait(currentItem)}
@@ -481,30 +498,15 @@ function PortraitsPage() {
             externalHref={`/${currentItem.原图}`}
             externalLabel="新窗口打开"
             stageTopLeft={
-              <div className="inline-flex items-center gap-1 rounded-full bg-black/60 p-1 ring-1 ring-white/15 backdrop-blur-md">
-                <button
-                  type="button"
-                  onClick={() => setViewerStageMode('3d')}
-                  className={cn(
-                    'inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-medium transition-colors',
-                    viewerStageMode === '3d' ? 'bg-white text-black' : 'text-zinc-300 hover:text-white'
-                  )}
-                >
-                  <BoxIcon className="size-3.5" />
-                  3D 卡牌
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setViewerStageMode('zoom')}
-                  className={cn(
-                    'inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-medium transition-colors',
-                    viewerStageMode === 'zoom' ? 'bg-white text-black' : 'text-zinc-300 hover:text-white'
-                  )}
-                >
-                  <ZoomInIcon className="size-3.5" />
-                  细节缩放
-                </button>
-              </div>
+              <ShowcaseStageTabs
+                layoutId="portrait-stage-tab"
+                value={viewerStageMode}
+                onChange={setViewerStageMode}
+                items={[
+                  { id: '3d', label: '3D 卡牌', icon: BoxIcon },
+                  { id: 'zoom', label: '细节缩放', icon: ZoomInIcon },
+                ]}
+              />
             }
             stageContent={
               viewerStageMode === '3d' ? (
@@ -575,7 +577,7 @@ function PortraitsPage() {
                 <div className="space-y-2.5">
                   <div className="text-xs font-medium tracking-wide text-zinc-400">人像档案</div>
                   <dl className="grid grid-cols-[68px_1fr] gap-y-2 rounded-2xl bg-white/[0.04] p-3.5 text-xs ring-1 ring-white/[0.06]">
-                    <dt className="text-zinc-500">原始编号</dt>
+                    <dt className="text-zinc-500">编号</dt>
                     <dd className="font-mono text-zinc-200">{currentItem.id}</dd>
                     <dt className="text-zinc-500">发型款式</dt>
                     <dd className="text-zinc-200">{currentItem.发型名称}</dd>
@@ -587,8 +589,6 @@ function PortraitsPage() {
                     <dd className="font-mono text-zinc-200">
                       {currentItem.宽} × {currentItem.高}
                     </dd>
-                    <dt className="text-zinc-500">授权协议</dt>
-                    <dd className="font-medium text-emerald-400">CC0 1.0 公共领域（可商用）</dd>
                   </dl>
                 </div>
               </div>
@@ -596,6 +596,7 @@ function PortraitsPage() {
           />
         )
       })()}
+      <ScrollToTopButton />
     </div>
   )
 }

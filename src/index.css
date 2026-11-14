@@ -483,8 +483,8 @@
 .hp-mark {
     position: absolute;
     left: 9%;
-    top: 15%;
-    font: 800 calc(var(--pw) * 0.16) / 1 system-ui, sans-serif;
+    top: 15.5%;
+    font: 800 calc(var(--pw) * 0.132) / 1 system-ui, sans-serif;
     letter-spacing: -0.045em;
     color: #ffffff;
 }
@@ -494,7 +494,7 @@
     right: 0;
     top: 22%;
     text-align: center;
-    font-size: calc(var(--pw) * 0.1);
+    font-size: calc(var(--pw) * 0.088);
 }
 
 .hp-series {
@@ -688,14 +688,15 @@
 
 @keyframes hp-slot-pop {
     0% {
-        transform: scale(1) translateY(0);
-    }
-    28% {
-        transform: scale(0.94, 1.04) translateY(3px);
+        transform: scale(0.95, 1.03) translateY(3px);
         box-shadow: 0 0 0 2px rgba(229, 169, 24, 0.55);
     }
-    62% {
-        transform: scale(1.06, 0.97) translateY(-2px);
+    24% {
+        transform: scale(0.93, 1.05) translateY(4px);
+        box-shadow: 0 0 0 3px rgba(229, 169, 24, 0.6);
+    }
+    58% {
+        transform: scale(1.05, 0.97) translateY(-2px);
         box-shadow: 0 0 0 4px rgba(217, 56, 30, 0.2);
     }
     100% {
@@ -705,21 +706,22 @@
 }
 
 .hp-slot-pop {
-    animation: hp-slot-pop 460ms cubic-bezier(0.22, 1.35, 0.36, 1);
+    animation: hp-slot-pop 380ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 .dark .hp-slot-pop {
     animation-name: hp-slot-pop-dark;
 }
 @keyframes hp-slot-pop-dark {
     0% {
-        transform: scale(1) translateY(0);
-    }
-    28% {
-        transform: scale(0.94, 1.04) translateY(3px);
+        transform: scale(0.95, 1.03) translateY(3px);
         box-shadow: 0 0 0 2px rgba(229, 169, 24, 0.65);
     }
-    62% {
-        transform: scale(1.06, 0.97) translateY(-2px);
+    24% {
+        transform: scale(0.93, 1.05) translateY(4px);
+        box-shadow: 0 0 0 3px rgba(229, 169, 24, 0.7);
+    }
+    58% {
+        transform: scale(1.05, 0.97) translateY(-2px);
         box-shadow: 0 0 0 4px rgba(255, 122, 89, 0.25);
     }
     100% {
@@ -728,36 +730,36 @@
     }
 }
 
-/* 悬浮配方坞受重物撞击时的物理微倾回弹（单次 260ms 干脆震颤） */
+/* 悬浮配方坞受重物撞击时的物理微倾回弹（首帧即瞬时下沉回弹） */
 @keyframes dock-impact-left {
-    0% { transform: translate3d(0, 0, 0) rotate(0deg); }
-    28% { transform: translate3d(-2px, 6px, 0) rotate(-1.05deg) scale(0.992); }
-    62% { transform: translate3d(1px, -2px, 0) rotate(0.32deg) scale(1.005); }
+    0% { transform: translate3d(-1.5px, 4.5px, 0) rotate(-0.85deg) scale(0.994); }
+    24% { transform: translate3d(-2px, 6px, 0) rotate(-1.05deg) scale(0.992); }
+    60% { transform: translate3d(1px, -1.5px, 0) rotate(0.25deg) scale(1.004); }
     100% { transform: translate3d(0, 0, 0) rotate(0deg) scale(1); }
 }
 
 @keyframes dock-impact-center {
-    0% { transform: translate3d(0, 0, 0) scale(1); }
-    28% { transform: translate3d(0, 6.5px, 0) scale(0.99, 0.98); }
-    62% { transform: translate3d(0, -2.5px, 0) scale(1.006, 1.008); }
+    0% { transform: translate3d(0, 4.5px, 0) scale(0.993, 0.986); }
+    24% { transform: translate3d(0, 6.5px, 0) scale(0.99, 0.98); }
+    60% { transform: translate3d(0, -2px, 0) scale(1.005, 1.006); }
     100% { transform: translate3d(0, 0, 0) scale(1); }
 }
 
 @keyframes dock-impact-right {
-    0% { transform: translate3d(0, 0, 0) rotate(0deg); }
-    28% { transform: translate3d(2px, 6px, 0) rotate(1.05deg) scale(0.992); }
-    62% { transform: translate3d(-1px, -2px, 0) rotate(-0.32deg) scale(1.005); }
+    0% { transform: translate3d(1.5px, 4.5px, 0) rotate(0.85deg) scale(0.994); }
+    24% { transform: translate3d(2px, 6px, 0) rotate(1.05deg) scale(0.992); }
+    60% { transform: translate3d(-1px, -1.5px, 0) rotate(-0.25deg) scale(1.004); }
     100% { transform: translate3d(0, 0, 0) rotate(0deg) scale(1); }
 }
 
 .dock-impact-left {
-    animation: dock-impact-left 260ms cubic-bezier(0.22, 1.45, 0.36, 1);
+    animation: dock-impact-left 240ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 .dock-impact-center {
-    animation: dock-impact-center 260ms cubic-bezier(0.22, 1.45, 0.36, 1);
+    animation: dock-impact-center 240ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 .dock-impact-right {
-    animation: dock-impact-right 280ms cubic-bezier(0.22, 1.45, 0.36, 1);
+    animation: dock-impact-right 250ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 /* 槽位撞击时的星芒粒子扩散 */

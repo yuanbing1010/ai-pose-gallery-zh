@@ -1,4 +1,5 @@
 import { createFileRoute, Link } from '@tanstack/react-router'
+import { motion } from 'motion/react'
 import {
   ArrowRightIcon,
   DicesIcon,
@@ -9,12 +10,24 @@ import {
   SparklesIcon,
   UserRoundIcon,
 } from 'lucide-react'
+import { StyleWheelDeck } from '@/components/guide/StyleWheelDeck'
 import { Button } from '@/components/ui/button'
+import { getVisualStylePresets } from '@/lib/stylePresets'
 
 export const Route = createFileRoute('/guide')({
-  staticData: { title: '使用指南与免责声明' },
+  staticData: { title: '使用指南' },
   component: GuidePage,
 })
+
+const EASE_OUT = [0.22, 1, 0.36, 1] as const
+const STYLE_COUNT = getVisualStylePresets().length
+
+const STAT_MATRIX = [
+  { label: '人像参考', value: '1,499', to: '/portraits' as const },
+  { label: '服装穿搭', value: '3,224', to: '/costumes' as const },
+  { label: '动作姿势', value: '1,439', to: '/poses' as const },
+  { label: '成图画风', value: String(STYLE_COUNT), to: '/studio' as const },
+] as const
 
 const STEPS = [
   {
@@ -24,9 +37,10 @@ const STEPS = [
     icon: UserRoundIcon,
     title: '人像颜值库',
     count: '1,499 张',
-    summary: '按正脸 / 造型氛围、4 种发长与 51 种细分发型检索 CC0 人像参考，也可在合成台上传自定义面部图，锁定角色五官与发色特征。',
+    summary: '按正脸 / 造型氛围、4 种发长与 51 种细分发型筛选高清人像，也可在合成台上传照片锁定五官与发色。',
+    chips: ['正脸参考', '造型氛围', '51 款发型', '支持自传面部'],
     to: '/portraits' as const,
-    cta: '浏览人像卡',
+    cta: '前往人像库',
   },
   {
     code: '02',
@@ -35,88 +49,165 @@ const STEPS = [
     icon: ShirtIcon,
     title: '服装穿搭库',
     count: '3,224 套',
-    summary: '融合 ギア写实（1,407）、Shisei 中国历代多视角（57 套 / 227 视角）、ギア动漫（1,320）与 CharaDB 二次元（440），覆盖全品类穿搭剪裁与配饰。',
+    summary: '覆盖现实写真、动漫次元与中国历代服饰多视角卡组，点击单品标签即可一键筛选同款材质与色彩。',
+    chips: ['现实写真', '动漫次元', '中国历代', '多视角叠牌'],
     to: '/costumes' as const,
-    cta: '浏览服装卡',
+    cta: '前往服装库',
   },
   {
     code: '03',
     accent: '#D9381E',
     badgeClass: 'bg-[#D9381E]/12 text-[#D9381E] dark:text-[#FF7A59]',
     icon: PersonStandingIcon,
-    title: '动作姿势 & 13 画风合成',
+    title: '动作姿势库',
     count: '1,439 张',
-    summary: '覆盖 4 大动作体系与 5 种镜头视角，支持素体白模与深度图（Depth）一键切换；搭配 13 种可视化成图画风与自由细节描述，直连云端模型或本地 ComfyUI。',
+    summary: '覆盖多种人体动态与 5 种镜头视角，支持素体白模与深度图一键切换，快速锁定角色肢体动作与构图角度。',
+    chips: ['5 视角叠牌', '白模 / 深度切换', '站坐卧特写', '4 大动作体系'],
     to: '/poses' as const,
-    cta: '浏览姿势卡',
+    cta: '前往姿势库',
   },
 ] as const
 
 const LEGAL_RULES = [
   {
     no: '01',
-    title: '仅供学习与合法艺术创作',
-    body: '本图库与合成台仅用于人体结构研究、插画构图参考与技术交流。严禁用于制作传播违法违规、淫秽色情或暴力内容；严禁未经授权上传真实人物照片进行换脸或深伪合成。',
+    title: '仅限学习与合法艺术创作',
+    body: '本图库与合成台仅用于绘画构图、人体动态研究与艺术创作交流。严禁用于制作传播违法违规、低俗色情或暴力内容；严禁未经授权上传真实人物照片进行换脸或侵权合成。',
   },
   {
     no: '02',
-    title: '默认安全模式与年龄限制',
-    body: '图库包含部分 18+ 人体动态与性感穿搭参考，系统默认开启「安全模式 (SFW)」屏蔽敏感分类。未满 18 周岁的未成年人严禁关闭安全模式或访问相关内容。',
-  },
-  {
-    no: '03',
     title: '本地隐私与责任归属',
-    body: '本工作台为纯前端/本地工具，API Key 仅保存在浏览器本地，平台不收集、不存储任何用户上传图片或成图；使用者对其生成内容与行为独立承担全部法律责任。',
+    body: '您的角色配方、上传参考图与生成作品仅保留在当前浏览器本地，平台不收集、不存储个人图片与创作记录；使用者对其生成内容与行为独立承担全部法律责任。',
   },
 ] as const
 
-export function GuidePage() {
+function GuidePage() {
   return (
     <div className="space-y-5">
-      {/* 画册级顶栏引导卡 */}
-      <section className="ks-elevation relative overflow-hidden rounded-3xl border border-border bg-card p-5 sm:p-7">
-        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-          <div className="max-w-2xl space-y-2">
+      {/* 与三库完全一致的编辑杂志顶栏 + 右侧 1px 统计矩阵 */}
+      <motion.div
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.24, ease: EASE_OUT }}
+        className="flex flex-col justify-between gap-4 lg:flex-row lg:items-end"
+      >
+        <div className="space-y-1.5">
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <span className="inline-block h-px w-5 bg-foreground/40" aria-hidden="true" />
+            <span>CHARADECK 角色牌局 · 创作指南</span>
+          </div>
+          <h1 className="text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
+            使用指南与创作规范
+          </h1>
+          <p className="text-xs text-muted-foreground sm:text-sm">
+            盲盒获取灵感 · 三库精确挑卡 · 合成台多画风一键立绘
+          </p>
+        </div>
+
+        <div
+          aria-label="图库规模概览"
+          className="grid grid-cols-4 divide-x divide-border overflow-hidden rounded-xl border border-border bg-card"
+        >
+          {STAT_MATRIX.map((item) => (
+            <Link
+              key={item.label}
+              to={item.to}
+              className="px-3.5 py-2.5 text-center transition-colors hover:bg-muted/60 sm:px-5"
+            >
+              <div className="text-[11px] whitespace-nowrap text-muted-foreground">{item.label}</div>
+              <div className="mt-0.5 font-mono text-sm font-semibold tabular-nums text-foreground">
+                {item.value}
+              </div>
+            </Link>
+          ))}
+        </div>
+      </motion.div>
+
+      {/* 视觉主展台：左侧配方公式与直达按钮 + 右侧全画风动态轮盘 */}
+      <motion.section
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.28, delay: 0.04, ease: EASE_OUT }}
+        className="ks-elevation grid grid-cols-1 overflow-hidden rounded-[24px] border border-border bg-card lg:grid-cols-[1.08fr_1fr]"
+      >
+        <div className="flex flex-col justify-between gap-5 p-6 sm:p-8">
+          <div className="space-y-3">
             <div className="inline-flex items-center gap-2 rounded-full border border-border bg-[#FAF8F4] px-3 py-1 font-mono text-xs font-semibold text-muted-foreground dark:bg-muted/50">
               <span className="size-1.5 rounded-full bg-[#D9381E]" />
-              <span>GUIDE // 三合一角色参考与合成指南</span>
+              <span>3-IN-1 // 人像 + 服装 + 姿势</span>
             </div>
-            <h1 className="text-2xl font-extrabold tracking-tight sm:text-3xl">
-              从盲盒抽卡到角色立绘，三步完成创作闭环
-            </h1>
+            <h2 className="text-xl font-extrabold tracking-tight text-foreground sm:text-2xl">
+              像组卡组一样，三步完成角色立绘
+            </h2>
             <p className="text-sm leading-relaxed text-muted-foreground">
-              在首页撕开盲盒获取灵感，或在三大图库精确挑卡，最后在工作台选择 13 种直觉画风与 5 大 AI 引擎一键出图。
+              在首页撕开盲盒抽卡，或在三大图库挑出满意的五官、穿搭与动作，点击锁入底部配方坞，进入合成台即可挑选画风与画师出图。
             </p>
           </div>
 
-          <div className="flex shrink-0 flex-wrap items-center gap-2.5">
-            <Button variant="outline" className="h-10 rounded-full bg-card px-4 text-xs font-semibold" asChild>
-              <Link to="/">
-                <DicesIcon className="size-4 text-[#E5A918]" />
-                <span>去盲盒抽卡</span>
-              </Link>
-            </Button>
-            <Button
-              className="ks-keycap h-10 rounded-full border-0 bg-[#D9381E] px-5 text-xs font-bold text-white hover:bg-[#C23018]"
-              asChild
-            >
-              <Link to="/studio">
-                <SparklesIcon className="size-4" />
-                <span>进入 AI 合成台</span>
-              </Link>
-            </Button>
+          <div className="space-y-4">
+            {/* 实体凹槽公式条 */}
+            <div className="ks-recess flex flex-wrap items-center gap-2 rounded-2xl border border-border/75 p-2.5 text-xs">
+              <span className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-card px-2.5 py-1 font-semibold text-foreground shadow-2xs">
+                <span className="size-2 rounded-full bg-[#E5A918]" />
+                01 选人像
+              </span>
+              <span className="font-mono text-muted-foreground">+</span>
+              <span className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-card px-2.5 py-1 font-semibold text-foreground shadow-2xs">
+                <span className="size-2 rounded-full bg-[#19857B]" />
+                02 选穿搭
+              </span>
+              <span className="font-mono text-muted-foreground">+</span>
+              <span className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-card px-2.5 py-1 font-semibold text-foreground shadow-2xs">
+                <span className="size-2 rounded-full bg-[#D9381E]" />
+                03 选姿势
+              </span>
+              <ArrowRightIcon className="size-3.5 text-muted-foreground" />
+              <span className="inline-flex items-center gap-1 rounded-lg bg-foreground px-2.5 py-1 font-semibold text-background">
+                <SparklesIcon className="size-3" />
+                {STYLE_COUNT} 画风成图
+              </span>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2.5">
+              <Button
+                variant="outline"
+                className="h-10 rounded-full bg-card px-5 text-xs font-semibold transition-transform active:scale-[0.97]"
+                asChild
+              >
+                <Link to="/">
+                  <DicesIcon className="size-4 text-[#E5A918]" />
+                  <span>去首页抽盲盒</span>
+                </Link>
+              </Button>
+              <Button
+                className="ks-keycap h-10 rounded-full border-0 bg-[#D9381E] px-6 text-xs font-bold text-white transition-all hover:-translate-y-0.5 hover:bg-[#C23018] active:scale-[0.97]"
+                asChild
+              >
+                <Link to="/studio">
+                  <SparklesIcon className="size-4" />
+                  <span>进入角色合成台</span>
+                </Link>
+              </Button>
+            </div>
           </div>
         </div>
-      </section>
 
-      {/* 三轨卡片流程：可点击直达对应图库 */}
+        {/* 右侧：可拖动轮盘卡牌展台（动态读取全站全部画风） */}
+        <StyleWheelDeck />
+      </motion.section>
+
+      {/* 三轨卡片流程：统一高度与凹槽标签 */}
       <section className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-        {STEPS.map((step) => {
+        {STEPS.map((step, idx) => {
           const Icon = step.icon
           return (
-            <div
+            <motion.div
               key={step.code}
-              className="ks-elevation group relative flex flex-col justify-between overflow-hidden rounded-3xl border border-border bg-card p-5 transition-all hover:-translate-y-0.5"
+              initial={{ opacity: 0, y: 14 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.28, delay: 0.08 + idx * 0.05, ease: EASE_OUT }}
+              whileHover={{ y: -3 }}
+              className="ks-elevation group relative flex flex-col justify-between overflow-hidden rounded-[22px] border border-border bg-card p-5 transition-colors hover:border-foreground/25"
             >
               <span
                 aria-hidden="true"
@@ -135,6 +226,19 @@ export function GuidePage() {
                 </div>
                 <h2 className="mt-3 text-base font-extrabold tracking-tight">{step.title}</h2>
                 <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">{step.summary}</p>
+
+                <div className="ks-recess mt-3.5 rounded-xl border border-border/75 p-2">
+                  <div className="flex flex-wrap gap-1.5">
+                    {step.chips.map((chip) => (
+                      <span
+                        key={chip}
+                        className="rounded-md border border-border/80 bg-card px-2 py-0.5 text-[11px] font-medium text-foreground shadow-2xs"
+                      >
+                        {chip}
+                      </span>
+                    ))}
+                  </div>
+                </div>
               </div>
 
               <div className="mt-4 border-t border-border/70 pt-3">
@@ -143,86 +247,72 @@ export function GuidePage() {
                   className="inline-flex items-center gap-1.5 text-xs font-semibold text-foreground transition-colors hover:text-[#D9381E]"
                 >
                   <span>{step.cta}</span>
-                  <ArrowRightIcon className="size-3.5 transition-transform group-hover:translate-x-0.5" />
+                  <ArrowRightIcon className="size-3.5 transition-transform group-hover:translate-x-1" />
                 </Link>
               </div>
-            </div>
+            </motion.div>
           )
         })}
       </section>
 
-      {/* 合规底线 + 数据版权矩阵 */}
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <section className="ks-elevation rounded-3xl border border-border bg-card p-5">
-          <div className="mb-3 flex items-center gap-2">
+      {/* 底部编排：1px 分隔画册版本页脚（使用规范 + 来源归属） */}
+      <motion.footer
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.28, delay: 0.2, ease: EASE_OUT }}
+        className="grid grid-cols-1 divide-y divide-border overflow-hidden rounded-[22px] border border-border bg-card lg:grid-cols-2 lg:divide-x lg:divide-y-0"
+      >
+        <section className="space-y-3 p-5">
+          <div className="flex items-center gap-2">
             <ShieldCheckIcon className="size-4 text-[#116E65] dark:text-[#4FD1C5]" />
-            <h2 className="text-base font-extrabold tracking-tight">免责声明与合规规范</h2>
+            <h2 className="text-sm font-extrabold tracking-tight">使用规范与免责声明</h2>
           </div>
-          <div className="space-y-2.5">
+          <div className="space-y-2.5 text-xs leading-relaxed text-muted-foreground">
             {LEGAL_RULES.map((rule) => (
-              <div
-                key={rule.no}
-                className="rounded-2xl border border-border/80 bg-[#FAF8F4] p-3.5 dark:bg-muted/25"
-              >
-                <div className="flex items-center gap-2">
-                  <span className="font-mono text-xs font-bold text-[#D9381E]">{rule.no}</span>
-                  <h3 className="text-xs font-bold text-foreground">{rule.title}</h3>
-                </div>
-                <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{rule.body}</p>
-              </div>
+              <p key={rule.no}>
+                <span className="mr-1.5 font-mono font-bold text-[#D9381E]">{rule.no}</span>
+                <strong className="mr-1 text-foreground">{rule.title}：</strong>
+                {rule.body}
+              </p>
             ))}
           </div>
         </section>
 
-        <section className="ks-elevation rounded-3xl border border-border bg-card p-5">
-          <div className="mb-3 flex items-center gap-2">
+        <section className="space-y-3 p-5">
+          <div className="flex items-center gap-2">
             <LayersIcon className="size-4 text-[#B88300] dark:text-[#E5A918]" />
-            <h2 className="text-base font-extrabold tracking-tight">数据来源与开源边界</h2>
+            <h2 className="text-sm font-extrabold tracking-tight">参考素材来源说明</h2>
           </div>
-          <div className="space-y-2.5">
-            <div className="rounded-2xl border border-border/80 bg-[#FAF8F4] p-3.5 dark:bg-muted/25">
-              <div className="text-xs font-bold text-foreground">原作者图库归属（ギア / @giaaibusi）</div>
-              <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                原有姿势（白模与 Depth）、写实服装（1,407）、动漫服装（1,320）与人像库（1,499）数据源自原作者公开站点，其中人像库遵循{' '}
-                <strong className="text-[#116E65] dark:text-[#4FD1C5]">CC0 1.0 协议</strong>；本仓库仅作中文本地化与前端工程学习存档，严禁将原始图片打包转售或付费分发。
-              </p>
-            </div>
-
-            <div className="rounded-2xl border border-border/80 bg-[#FAF8F4] p-3.5 dark:bg-muted/25">
-              <div className="text-xs font-bold text-foreground">中国历代服饰（Shisei）与二次元（CharaDB）</div>
-              <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                57 套中国历代多视角服装源自 Shisei；440 套二次元服装源自{' '}
-                <a
-                  className="font-semibold underline hover:text-foreground"
-                  href="https://charadb-2fi.pages.dev/"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  たき AI · CharaDB
-                </a>
-                （标签遵循 CC0，图片在线加载，禁止用于真人/未成年人或二次分发，详见{' '}
-                <a
-                  className="font-semibold underline hover:text-foreground"
-                  href="https://github.com/taki-ttt/charadb/blob/main/LICENSE"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  原作者 LICENSE
-                </a>
-                ）。
-              </p>
-            </div>
-
-            <div className="rounded-2xl border border-border/80 bg-[#FAF8F4] p-3.5 dark:bg-muted/25">
-              <div className="text-xs font-bold text-foreground">前端代码与 ComfyUI 插件开源协议</div>
-              <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                前端应用代码（<code>src/</code>）、ComfyUI 自定义节点（<code>comfyui_plugin/</code>）与维护脚本以{' '}
-                <strong className="text-foreground">MIT 协议</strong> 开源；图库图片与原始元数据不在此 MIT 协议覆盖范围内。
-              </p>
-            </div>
+          <div className="space-y-2.5 text-xs leading-relaxed text-muted-foreground">
+            <p>
+              <strong className="mr-1 text-foreground">ギア（@giaaibusi）：</strong>
+              基础人体动态（白模与深度图）、写实服装（1,407）、动漫服装（1,320）与人像参考（1,499）源自原作者公开图集并作中文本地化整理；仅限学习与艺术创作参考，严禁将原始图片打包转售或付费分发。
+            </p>
+            <p>
+              <strong className="mr-1 text-foreground">Shisei &amp; CharaDB：</strong>
+              57 套中国历代多视角服饰源自 Shisei（仅作造型参考，非专业历史复原）；440 套二次元穿搭源自{' '}
+              <a
+                className="font-semibold text-foreground underline hover:opacity-80"
+                href="https://charadb-2fi.pages.dev/"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                たき AI · CharaDB
+              </a>
+              （仅作绘画参考，禁止用于真人、未成年人或二次分发，详见{' '}
+              <a
+                className="font-semibold text-foreground underline hover:opacity-80"
+                href="https://github.com/taki-ttt/charadb/blob/main/LICENSE"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                原作者条款
+              </a>
+              ）。
+            </p>
           </div>
         </section>
-      </div>
+      </motion.footer>
     </div>
   )
 }

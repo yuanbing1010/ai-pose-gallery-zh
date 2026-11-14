@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { AnimatePresence, motion } from 'motion/react'
 import { DicesIcon, SparklesIcon, Volume2Icon, VolumeXIcon, XIcon } from 'lucide-react'
 import { poseThumbPath, referenceImageUrl } from '@/lib/recipeImages'
 import { cn } from '@/lib/utils'
@@ -247,10 +248,8 @@ interface FlyingCardClone {
   from: { left: number; top: number; width: number; height: number }
   to: { left: number; top: number; width: number; height: number }
   duration: number
-  hitAt: number
   apexLift: number
   swayX: number
-  easing: string
 }
 
 export function PackStage({
@@ -287,9 +286,15 @@ export function PackStage({
   const flyTimersRef = useRef<number[]>([])
   const pendingPackRef = useRef<{ pack: DrawnPack; written: Set<'portrait' | 'costume' | 'pose'> } | null>(null)
   const onSynthesizeRef = useRef(onSynthesize)
+  const onSynthesizeSlotRef = useRef(onSynthesizeSlot)
+  const onRedrawRef = useRef(onRedraw)
+  const drawnRef = useRef(drawn)
   useEffect(() => {
     onSynthesizeRef.current = onSynthesize
-  }, [onSynthesize])
+    onSynthesizeSlotRef.current = onSynthesizeSlot
+    onRedrawRef.current = onRedraw
+    drawnRef.current = drawn
+  }, [onSynthesize, onSynthesizeSlot, onRedraw, drawn])
 
   useEffect(() => {
     mutedRef.current = muted
@@ -317,7 +322,7 @@ export function PackStage({
         kindLabel: '人像',
         dotColor: '#E5A918',
         title: drawn.portrait.发型名称,
-        img: `/${drawn.portrait.缩略图}`,
+        img: referenceImageUrl(drawn.portrait.缩略图),
       },
       {
         slotKey: 'costume' as const,
@@ -331,7 +336,7 @@ export function PackStage({
         kindLabel: '姿势',
         dotColor: '#D9381E',
         title: drawn.pose.姿势名称,
-        img: `/${poseThumbPath(drawn.pose)}`,
+        img: referenceImageUrl(poseThumbPath(drawn.pose)),
       },
     ]
     return seededShuffle(
@@ -373,9 +378,9 @@ export function PackStage({
         `launch:${packSeed}:${drawn.portrait.id}:${drawn.pose.id}`
       )
       const flightProfiles = [
-        { duration: 470, hitAt: 450, apexLift: 32, swayX: -28, easing: 'cubic-bezier(0.22, 0.92, 0.36, 1)' },
-        { duration: 710, hitAt: 690, apexLift: 88, swayX: 24, easing: 'cubic-bezier(0.28, 0.78, 0.34, 1)' },
-        { duration: 960, hitAt: 940, apexLift: 148, swayX: 56, easing: 'cubic-bezier(0.32, 0.7, 0.24, 1.03)' },
+        { duration: 420, apexLift: 36, swayX: -24 },
+        { duration: 630, apexLift: 86, swayX: 22 },
+        { duration: 840, apexLift: 140, swayX: 48 },
       ]
       const clones: FlyingCardClone[] = []
 
@@ -410,18 +415,41 @@ export function PackStage({
       })
 
       setFlyingClones(clones)
+    })
+  }
 
-      // 各自按自身弧线速度先后砸入槽位：每一张落地立刻触发写入、单次底座震颤、火花与递增音阶
-      clones.forEach((c, idx) => {
-        const isFinal = idx === clones.length - 1
-        const hitTimer = window.setTimeout(() => {
+  // 与显示器帧率完全同步的 rAF 抛物线引擎：卡牌在槽位落座的同一帧立即触发写入与底座撞击抖动
+  useEffect(() => {
+    const layer = flyLayerRef.current
+    if (!layer || !flyingClones.length) return
+    const items = [...layer.querySelectorAll<HTMLElement>('[data-fly-idx]')]
+    const landed = new Set<number>()
+    const packSnapshot = drawnRef.current
+    const startAt = performance.now()
+    let raf = 0
+
+    const step = (now: number) => {
+      const elapsed = now - startAt
+      let pendingCount = 0
+
+      items.forEach((el) => {
+        const idx = Number(el.dataset.flyIdx)
+        const c = flyingClones[idx]
+        if (!c || landed.has(idx)) return
+
+        const u = Math.min(1, elapsed / c.duration)
+        if (u >= 1) {
+          landed.add(idx)
+          el.style.opacity = '0'
+          const isFinal = idx === flyingClones.length - 1
+
           if (pendingPackRef.current) {
             pendingPackRef.current.written.add(c.slotKey)
           }
-          if (onSynthesizeSlot) {
-            onSynthesizeSlot(c.slotKey, drawn)
+          if (onSynthesizeSlotRef.current) {
+            onSynthesizeSlotRef.current(c.slotKey, packSnapshot)
           } else if (isFinal) {
-            onSynthesize(drawn)
+            onSynthesizeRef.current(packSnapshot)
           }
 
           window.dispatchEvent(
@@ -430,73 +458,50 @@ export function PackStage({
             })
           )
           sfxRef.current?.land(idx)
+
           if (isFinal) {
             pendingPackRef.current = null
-            const fullChime = window.setTimeout(() => sfxRef.current?.dockFull(), 85)
-            flyTimersRef.current.push(fullChime)
+            const fullChime = window.setTimeout(() => sfxRef.current?.dockFull(), 80)
+            const doneAt = window.setTimeout(() => {
+              setFlyingClones([])
+              onRedrawRef.current()
+            }, 380)
+            flyTimersRef.current.push(fullChime, doneAt)
           }
-        }, c.hitAt)
-        flyTimersRef.current.push(hitTimer)
+          return
+        }
+
+        pendingCount += 1
+        const fromCx = c.from.left + c.from.width / 2
+        const fromCy = c.from.top + c.from.height / 2
+        const toCx = c.to.left + 26
+        const toCy = c.to.top + c.to.height / 2
+        const dx = toCx - fromCx
+        const dy = toCy - fromCy
+        const endScale = Math.max(0.14, 30 / Math.max(1, c.from.width))
+        const bank = (idx - 1) * 16
+
+        // 水平平滑推进，垂直先跃起再加速砸入槽位，在 u=1 落座瞬间保持俯冲速度
+        const easeX = 1 - (1 - u) * (1 - u)
+        const easeY = u * u * (1.28 - 0.28 * u)
+        const arcLift = Math.sin(Math.PI * u) * c.apexLift
+        const sway = Math.sin(Math.PI * u) * c.swayX
+        const tx = dx * easeX + sway
+        const ty = dy * easeY - arcLift
+        const rot = Math.sin(Math.PI * u) * bank
+        const sc = 1 + (endScale - 1) * (u * u)
+
+        el.style.transform = `translate3d(${tx.toFixed(1)}px, ${ty.toFixed(1)}px, 0) rotateZ(${rot.toFixed(1)}deg) scale(${sc.toFixed(3)})`
+        el.style.opacity = u > 0.92 ? (1 - ((u - 0.92) / 0.08) * 0.25).toFixed(2) : '1'
       })
 
-      // 最慢的一张落地并点亮满槽充能后，清空飞卡层并滑入下一包
-      const lastHit = clones[clones.length - 1]?.hitAt ?? 940
-      const doneAt = window.setTimeout(() => {
-        setFlyingClones([])
-        onRedraw()
-      }, lastHit + 440)
-      flyTimersRef.current.push(doneAt)
-    })
-  }
+      if (pendingCount > 0) {
+        raf = requestAnimationFrame(step)
+      }
+    }
 
-  // 对同时起飞的克隆卡应用 WAAPI 异速异弧抛物线动画
-  useEffect(() => {
-    const layer = flyLayerRef.current
-    if (!layer || !flyingClones.length) return
-    const items = [...layer.querySelectorAll<HTMLElement>('[data-fly-idx]')]
-    items.forEach((el) => {
-      const idx = Number(el.dataset.flyIdx)
-      const c = flyingClones[idx]
-      if (!c) return
-      const fromCx = c.from.left + c.from.width / 2
-      const fromCy = c.from.top + c.from.height / 2
-      const toCx = c.to.left + 26
-      const toCy = c.to.top + c.to.height / 2
-      const dx = toCx - fromCx
-      const dy = toCy - fromCy
-      const endScale = Math.max(0.14, 30 / Math.max(1, c.from.width))
-      const bank = (idx - 1) * 16
-      el.animate(
-        [
-          { transform: 'translate3d(0, 0, 0) rotateZ(0deg) scale(1)', opacity: 1 },
-          {
-            transform: `translate3d(${(dx * 0.08 + c.swayX * 0.45).toFixed(1)}px, ${(-c.apexLift * 0.55).toFixed(1)}px, 0) rotateZ(${(-bank * 0.7).toFixed(1)}deg) scale(1.06)`,
-            opacity: 1,
-            offset: 0.18,
-          },
-          {
-            transform: `translate3d(${(dx * 0.44 + c.swayX).toFixed(1)}px, ${(dy * 0.22 - c.apexLift).toFixed(1)}px, 0) rotateZ(${bank}deg) scale(0.84)`,
-            opacity: 1,
-            offset: 0.48,
-          },
-          {
-            transform: `translate3d(${(dx * 0.94).toFixed(1)}px, ${(dy * 0.94).toFixed(1)}px, 0) rotateZ(${(bank * 0.2).toFixed(1)}deg) scale(${(endScale * 1.16).toFixed(3)})`,
-            opacity: 0.98,
-            offset: 0.89,
-          },
-          {
-            transform: `translate3d(${dx.toFixed(1)}px, ${dy.toFixed(1)}px, 0) rotateZ(0deg) scale(${endScale.toFixed(3)})`,
-            opacity: 0,
-          },
-        ],
-        {
-          duration: c.duration,
-          delay: 0,
-          easing: c.easing,
-          fill: 'forwards',
-        }
-      )
-    })
+    raf = requestAnimationFrame(step)
+    return () => cancelAnimationFrame(raf)
   }, [flyingClones])
 
   // 核心 60fps 物理引擎：可任意位置停住的手撕物理 + 彩虹光线喷涌 + 连续一体的 3D 卡牌飞出与悬浮检视
@@ -1446,6 +1451,7 @@ export function PackStage({
 
       for (const c of cards) if (c.phase === 'orbit') orbit(c)
       const hot = pointer.in ? aimed() : null
+      stage.style.cursor = hot ? 'pointer' : ''
       for (const c of cards) {
         const p = c.p
         const since = t - openedAt
@@ -1549,6 +1555,7 @@ export function PackStage({
     raf = requestAnimationFrame(frame)
 
     return () => {
+      stage.style.cursor = ''
       window.clearTimeout(settleTimer)
       window.clearTimeout(wasDragResetTimer)
       cancelAnimationFrame(raf)
@@ -1586,30 +1593,49 @@ export function PackStage({
 
       {/* 顶部导视与实时抽卡结果标签（开包前后动态切换） */}
       <div className="pointer-events-none relative z-20 flex w-full flex-col items-center gap-1.5 pt-1 text-center">
-        {phase === 'sealed' ? (
-          <>
-            <span className="inline-flex items-center gap-1.5 rounded-full border border-black/10 bg-white/75 px-3 py-0.5 font-mono text-xs font-semibold text-foreground/80 backdrop-blur-md dark:border-white/15 dark:bg-white/10">
-              <span className="size-1.5 animate-pulse rounded-full bg-[#D9381E]" />
-              <span>3-IN-1 角色配方盲盒 · 6,162+ 中文参考卡</span>
-            </span>
-            <p className="text-xs text-muted-foreground sm:text-sm">
-              沿顶部铝箔横向划开，或轻点两次直接拆封今日角色配方
-            </p>
-          </>
-        ) : (
-          <div className="flex flex-wrap items-center justify-center gap-1.5">
-            {cardSpecs.map((spec) => (
-              <span
-                key={spec.slotKey}
-                className="inline-flex max-w-[14rem] items-center gap-1.5 rounded-full border border-black/10 bg-white/85 px-2.5 py-1 text-xs font-medium text-foreground shadow-2xs backdrop-blur-md dark:border-white/15 dark:bg-white/10"
-              >
-                <span className="size-2 shrink-0 rounded-full" style={{ backgroundColor: spec.dotColor }} />
-                <span className="shrink-0 font-mono text-muted-foreground">{spec.kindLabel}</span>
-                <span className="truncate font-semibold">{spec.title}</span>
+        <AnimatePresence mode="wait">
+          {phase === 'sealed' ? (
+            <motion.div
+              key="sealed-header"
+              initial={{ opacity: 0, y: -4 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -4 }}
+              transition={{ duration: 0.18 }}
+              className="flex flex-col items-center gap-1.5"
+            >
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-black/10 bg-white/75 px-3 py-0.5 font-mono text-xs font-semibold text-foreground/80 backdrop-blur-md dark:border-white/15 dark:bg-white/10">
+                <span className="size-1.5 animate-pulse rounded-full bg-[#D9381E]" />
+                <span>3-IN-1 角色配方盲盒 · 6,162+ 中文参考卡</span>
               </span>
-            ))}
-          </div>
-        )}
+              <p className="text-xs text-muted-foreground sm:text-sm">
+                沿顶部铝箔横向划开，或轻点两次直接拆封今日角色配方
+              </p>
+            </motion.div>
+          ) : (
+            <motion.div
+              key="opened-header"
+              initial={{ opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -4 }}
+              transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
+              className="flex flex-wrap items-center justify-center gap-1.5"
+            >
+              {cardSpecs.map((spec, idx) => (
+                <motion.span
+                  key={spec.slotKey}
+                  initial={{ opacity: 0, scale: 0.9, y: 4 }}
+                  animate={{ opacity: 1, scale: 1, y: 0 }}
+                  transition={{ duration: 0.22, delay: idx * 0.04, ease: [0.22, 1, 0.36, 1] }}
+                  className="inline-flex max-w-[14rem] items-center gap-1.5 rounded-full border border-black/10 bg-white/85 px-2.5 py-1 text-xs font-medium text-foreground shadow-2xs backdrop-blur-md dark:border-white/15 dark:bg-white/10"
+                >
+                  <span className="size-2 shrink-0 rounded-full" style={{ backgroundColor: spec.dotColor }} />
+                  <span className="shrink-0 font-mono text-muted-foreground">{spec.kindLabel}</span>
+                  <span className="truncate font-semibold">{spec.title}</span>
+                </motion.span>
+              ))}
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
 
       {/* 右上角静音与关闭按钮 */}
@@ -1619,7 +1645,7 @@ export function PackStage({
           aria-label={muted ? '开启音效' : '静音'}
           aria-pressed={muted}
           onClick={onToggleMute}
-          className="flex size-9 items-center justify-center rounded-full border border-black/10 bg-white/75 text-[#141414] backdrop-blur-md transition-colors hover:bg-white dark:border-white/15 dark:bg-white/10 dark:text-white dark:hover:bg-white/20"
+          className="flex size-9 items-center justify-center rounded-full border border-black/10 bg-white/75 text-[#141414] backdrop-blur-md transition-all hover:bg-white active:scale-95 dark:border-white/15 dark:bg-white/10 dark:text-white dark:hover:bg-white/20"
         >
           {muted ? <VolumeXIcon className="size-4" /> : <Volume2Icon className="size-4" />}
         </button>
@@ -1649,7 +1675,7 @@ export function PackStage({
             <span className="hp-lips">
               <i ref={bodyLipRef} className="hp-lip" />
             </span>
-            <b className="hp-mark">POSE</b>
+            <b className="hp-mark">CHARA</b>
             <span className="hp-series">Cobalt</span>
             <div className="hp-orb">
               <div className="hp-orb-core">
@@ -1663,17 +1689,17 @@ export function PackStage({
                 </span>
               </div>
             </div>
-            <span className="hp-foot hp-l">角色配方盲盒</span>
+            <span className="hp-foot hp-l">角色牌局盲盒</span>
             <span className="hp-foot hp-r">3 cards</span>
           </div>
 
           <div ref={backSkinRef} className="hp-skin hp-back" aria-hidden="true">
             <i className="hp-fin" />
-            <b className="hp-mark hp-sm">POSE.DECK</b>
+            <b className="hp-mark hp-sm">CHARADECK</b>
             <p className="hp-blurb">
-              人像 · 服装 · 姿势
+              角色牌局 · CHARADECK
               <br />
-              三合一角色配方包
+              人像 · 服装 · 姿势三合一包
             </p>
           </div>
 
@@ -1691,27 +1717,35 @@ export function PackStage({
 
       {/* 底部操作栏：未开包占位防跳动，开包后提供「再抽一包」与「立即合成」 */}
       <div className="relative z-30 flex min-h-11 flex-wrap items-center justify-center gap-3 pb-1">
-        {phase === 'opened' && (
-          <>
-            <button
-              type="button"
-              onClick={onRedraw}
-              className="inline-flex h-10 items-center gap-2 rounded-full border border-black/15 bg-white px-5 text-xs font-semibold text-[#141414] shadow-sm transition-all hover:bg-zinc-100 active:scale-[0.97] dark:border-white/15 dark:bg-white/10 dark:text-white dark:hover:bg-white/20"
+        <AnimatePresence>
+          {phase === 'opened' && (
+            <motion.div
+              initial={{ opacity: 0, y: 10, scale: 0.94 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 6, scale: 0.94 }}
+              transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
+              className="flex flex-wrap items-center justify-center gap-3"
             >
-              <DicesIcon className="size-3.5" />
-              <span>再抽一包</span>
-            </button>
+              <button
+                type="button"
+                onClick={onRedraw}
+                className="inline-flex h-10 items-center gap-2 rounded-full border border-black/15 bg-white px-5 text-xs font-semibold text-[#141414] shadow-sm transition-all hover:bg-zinc-100 active:scale-[0.97] dark:border-white/15 dark:bg-white/10 dark:text-white dark:hover:bg-white/20"
+              >
+                <DicesIcon className="size-3.5" />
+                <span>再抽一包</span>
+              </button>
 
-            <button
-              type="button"
-              onClick={handleSynthesizeClick}
-              className="ks-keycap inline-flex h-10 items-center gap-2 rounded-full bg-[#D9381E] px-6 text-xs font-semibold text-white shadow-md transition-all hover:-translate-y-0.5 hover:bg-[#C23018] active:scale-[0.97]"
-            >
-              <SparklesIcon className="size-3.5" />
-              <span>立即合成</span>
-            </button>
-          </>
-        )}
+              <button
+                type="button"
+                onClick={handleSynthesizeClick}
+                className="ks-keycap inline-flex h-10 items-center gap-2 rounded-full bg-[#D9381E] px-6 text-xs font-semibold text-white shadow-md transition-all hover:-translate-y-0.5 hover:bg-[#C23018] active:scale-[0.97]"
+              >
+                <SparklesIcon className="size-3.5" />
+                <span>立即合成</span>
+              </button>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
 
       {/* 飞入底部 RecipeDock 槽位的跨层飞行克隆层 */}

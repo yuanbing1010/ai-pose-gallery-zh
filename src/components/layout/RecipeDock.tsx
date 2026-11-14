@@ -14,7 +14,6 @@ import {
 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { costumesQuery, portraitsQuery, posesQuery } from '@/api/gallery'
-import { workflowIdentity } from '@/lib/comfyWorkflowParameters'
 import { poseThumbPath, referenceImageUrl } from '@/lib/recipeImages'
 import { cn } from '@/lib/utils'
 import { useStudio } from '@/store/studioStore'
@@ -56,7 +55,6 @@ export function RecipeDock() {
   const { pathname } = useLocation()
   const {
     recipe,
-    apiConfig,
     isGenerating,
     setPortrait,
     setCostume,
@@ -78,26 +76,20 @@ export function RecipeDock() {
     pose: 0,
   })
   const [ctaIgniteKey, setCtaIgniteKey] = useState(0)
+  const [diceSpin, setDiceSpin] = useState(0)
 
   const extraCount = (recipe.extraImages || []).length
-  const workflowImages =
-    apiConfig.activeProvider === 'comfyui' &&
-    recipe.workflowImagesIdentity === workflowIdentity(apiConfig.comfyuiParams.workflowJson)
-      ? Object.values(recipe.workflowImages || {})
-      : []
-
   const coreSlotsFilled = [recipe.portrait, recipe.costume, recipe.pose].filter(Boolean).length
-  const count = coreSlotsFilled + extraCount + workflowImages.length
+  const hasAnyItem = coreSlotsFilled > 0 || extraCount > 0
   const isFullReady = coreSlotsFilled === 3
 
-  // 监听单张卡落地撞击事件：不清空已有卡，每飞落一张即刻独立抖动 + 火花迸发
+  // 监听单张卡落地撞击事件：每选中/飞落一张即刻独立抖动 + 星芒迸发
   useEffect(() => {
     const onImpact = (e: Event) => {
       const detail = (e as CustomEvent<{ slot?: CoreSlot; index?: number; isFinal?: boolean }>).detail
       const slot = detail?.slot
       if (!slot) return
 
-      // 1. 触发对应槽位 Q 弹 + 星芒粒子迸发
       const slotEl = document.querySelector<HTMLElement>(`[data-dock-slot="${slot}"]`)
       if (slotEl) {
         slotEl.classList.remove('hp-slot-pop')
@@ -107,7 +99,6 @@ export function RecipeDock() {
       }
       setSparkKeys((prev) => ({ ...prev, [slot]: prev[slot] + 1 }))
 
-      // 2. 触发整条悬浮块根据落点左/中/右微倾震颤一次
       const glass = dockGlassRef.current
       if (glass) {
         const cls =
@@ -125,7 +116,6 @@ export function RecipeDock() {
         }, 300)
       }
 
-      // 3. 第 3 张（压轴最后一张）落地时，点燃「立即合成」按钮唤醒波纹
       if (detail?.isFinal) {
         setCtaIgniteKey((k) => k + 1)
       }
@@ -138,7 +128,6 @@ export function RecipeDock() {
     }
   }, [])
 
-  // 当通过其他途径（如点击悬浮栏「随机」或在图库凑齐第 3 张）填满 3/3 时，也触发觉醒波纹
   useEffect(() => {
     if (isFullReady && !prevReadyRef.current) {
       setCtaIgniteKey((k) => k + 1)
@@ -167,6 +156,7 @@ export function RecipeDock() {
   }
 
   const handleRandom = async () => {
+    setDiceSpin((s) => s + 1)
     const [posesRes, costumes, portraits] = await Promise.all([
       qc.ensureQueryData(posesQuery),
       qc.ensureQueryData(costumesQuery),
@@ -221,15 +211,27 @@ export function RecipeDock() {
             >
               <SlotSparkBurst slot="portrait" burstKey={sparkKeys.portrait} />
               {recipe.portrait ? (
-                <>
-                  <img
-                    src={referenceImageUrl(recipe.portrait.缩略图)}
-                    alt={recipe.portrait.标题}
-                    className="size-7 shrink-0 rounded-md object-cover ring-1 ring-[#E5A918]/50"
-                  />
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-xs font-semibold text-foreground">{recipe.portrait.发型名称}</div>
-                  </div>
+                <motion.div
+                  key={recipe.portrait.id}
+                  initial={{ opacity: 0.5, scale: 0.92 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  transition={{ duration: 0.12, ease: [0.22, 1, 0.36, 1] }}
+                  className="flex min-w-0 flex-1 items-center gap-2"
+                >
+                  <Link
+                    to="/portraits"
+                    title="前往人像库更换"
+                    className="flex min-w-0 flex-1 items-center gap-2 transition-opacity hover:opacity-80"
+                  >
+                    <img
+                      src={referenceImageUrl(recipe.portrait.缩略图)}
+                      alt={recipe.portrait.标题}
+                      className="size-7 shrink-0 rounded-md object-cover ring-1 ring-[#E5A918]/50"
+                    />
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-xs font-semibold text-foreground">{recipe.portrait.发型名称}</div>
+                    </div>
+                  </Link>
                   <button
                     type="button"
                     aria-label="清除人像参考图"
@@ -238,7 +240,7 @@ export function RecipeDock() {
                   >
                     <XIcon className="size-3.5" />
                   </button>
-                </>
+                </motion.div>
               ) : (
                 <Link
                   to="/portraits"
@@ -261,15 +263,27 @@ export function RecipeDock() {
             >
               <SlotSparkBurst slot="costume" burstKey={sparkKeys.costume} />
               {recipe.costume ? (
-                <>
-                  <img
-                    src={referenceImageUrl(recipe.costume.缩略图)}
-                    alt={recipe.costume.服装名称}
-                    className="size-7 shrink-0 rounded-md object-cover ring-1 ring-[#19857B]/50"
-                  />
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-xs font-semibold text-foreground">{recipe.costume.服装名称}</div>
-                  </div>
+                <motion.div
+                  key={recipe.costume.id}
+                  initial={{ opacity: 0.5, scale: 0.92 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  transition={{ duration: 0.12, ease: [0.22, 1, 0.36, 1] }}
+                  className="flex min-w-0 flex-1 items-center gap-2"
+                >
+                  <Link
+                    to="/costumes"
+                    title="前往服装库更换"
+                    className="flex min-w-0 flex-1 items-center gap-2 transition-opacity hover:opacity-80"
+                  >
+                    <img
+                      src={referenceImageUrl(recipe.costume.缩略图)}
+                      alt={recipe.costume.服装名称}
+                      className="size-7 shrink-0 rounded-md object-cover ring-1 ring-[#19857B]/50"
+                    />
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-xs font-semibold text-foreground">{recipe.costume.服装名称}</div>
+                    </div>
+                  </Link>
                   <button
                     type="button"
                     aria-label="清除服装参考图"
@@ -278,7 +292,7 @@ export function RecipeDock() {
                   >
                     <XIcon className="size-3.5" />
                   </button>
-                </>
+                </motion.div>
               ) : (
                 <Link
                   to="/costumes"
@@ -301,28 +315,41 @@ export function RecipeDock() {
             >
               <SlotSparkBurst slot="pose" burstKey={sparkKeys.pose} />
               {recipe.pose ? (
-                <>
-                  <img
-                    src={referenceImageUrl(poseThumbPath(recipe.pose))}
-                    alt={recipe.pose.姿势名称}
-                    className="size-7 shrink-0 rounded-md object-cover ring-1 ring-[#D9381E]/50"
-                  />
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-xs font-semibold text-foreground" title={recipe.pose.姿势名称}>
-                      {recipe.pose.姿势名称}
+                <motion.div
+                  key={`${recipe.pose.id}-${Boolean(recipe.pose.useDepth)}`}
+                  initial={{ opacity: 0.5, scale: 0.92 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  transition={{ duration: 0.12, ease: [0.22, 1, 0.36, 1] }}
+                  className="flex min-w-0 flex-1 items-center gap-2"
+                >
+                  <Link
+                    to="/poses"
+                    title="前往姿势库更换"
+                    className="flex min-w-0 flex-1 items-center gap-2 transition-opacity hover:opacity-80"
+                  >
+                    <img
+                      src={referenceImageUrl(poseThumbPath(recipe.pose))}
+                      alt={recipe.pose.姿势名称}
+                      className="size-7 shrink-0 rounded-md object-cover ring-1 ring-[#D9381E]/50"
+                    />
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-xs font-semibold text-foreground" title={recipe.pose.姿势名称}>
+                        {recipe.pose.姿势名称}
+                      </div>
                     </div>
-                    {recipe.pose.source !== 'upload' && (
-                      <button
-                        type="button"
-                        onClick={toggleRecipePoseDepth}
-                        className="inline-flex items-center gap-1 text-xs leading-none text-muted-foreground hover:text-foreground"
-                      >
-                        <span className={!recipe.pose.useDepth ? 'font-semibold text-foreground' : ''}>白模</span>
-                        <span>/</span>
-                        <span className={recipe.pose.useDepth ? 'font-semibold text-[#D9381E]' : ''}>深度</span>
-                      </button>
-                    )}
-                  </div>
+                  </Link>
+                  {recipe.pose.source !== 'upload' && (
+                    <button
+                      type="button"
+                      onClick={toggleRecipePoseDepth}
+                      title="切换白模或深度图"
+                      className="inline-flex shrink-0 items-center gap-0.5 rounded-md bg-muted/70 px-1.5 py-0.5 text-[11px] leading-none text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                    >
+                      <span className={!recipe.pose.useDepth ? 'font-semibold text-foreground' : ''}>白</span>
+                      <span>/</span>
+                      <span className={recipe.pose.useDepth ? 'font-semibold text-[#D9381E]' : ''}>深</span>
+                    </button>
+                  )}
                   <button
                     type="button"
                     aria-label="清除姿势参考图"
@@ -331,7 +358,7 @@ export function RecipeDock() {
                   >
                     <XIcon className="size-3.5" />
                   </button>
-                </>
+                </motion.div>
               ) : (
                 <Link
                   to="/poses"
@@ -352,10 +379,17 @@ export function RecipeDock() {
               onClick={handleRandom}
               className="inline-flex h-8 items-center gap-1.5 rounded-full border border-border bg-card px-3.5 text-xs font-medium text-foreground transition-colors hover:bg-muted active:scale-[0.97]"
             >
-              <DicesIcon className="size-3.5 text-muted-foreground" />
+              <motion.span
+                key={diceSpin}
+                animate={{ rotate: diceSpin ? 360 : 0 }}
+                transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
+                className="inline-flex items-center"
+              >
+                <DicesIcon className="size-3.5 text-muted-foreground" />
+              </motion.span>
               <span>随机</span>
             </button>
-            {count > 0 && (
+            {hasAnyItem && (
               <button
                 type="button"
                 aria-label="清空参考图"
@@ -395,12 +429,14 @@ export function RecipeDock() {
                 {isGenerating ? (
                   <>
                     <LoaderCircleIcon className="size-3.5 animate-spin" />
-                    <span>生成中…</span>
+                    <span>绘制中…</span>
                   </>
                 ) : (
                   <>
                     <SparklesIcon className={cn('size-3.5', isFullReady && 'animate-pulse')} />
-                    <span>立即合成 ({count}/3)</span>
+                    <span>
+                      立即合成 ({coreSlotsFilled}/3{extraCount > 0 ? ` +${extraCount}` : ''})
+                    </span>
                     {isFullReady && <ArrowRightIcon className="size-3.5 transition-transform group-hover:translate-x-0.5" />}
                   </>
                 )}

@@ -7,7 +7,7 @@ import {
   ZoomInIcon,
 } from 'lucide-react'
 import Stack from '@/components/cards/Stack'
-import { ShowcaseDialog } from '@/components/common/ShowcaseDialog'
+import { ShowcaseDialog, ShowcaseStageTabs, type ShowcaseStageTabItem } from '@/components/common/ShowcaseDialog'
 import { ZoomViewport } from '@/components/common/ZoomViewport'
 import { GlowCard3D } from '@/components/costumes/GlowCard3D'
 import { getCostumeAccent } from '@/lib/cardAccents'
@@ -34,7 +34,7 @@ export interface CostumeDetailModalProps {
 }
 
 const SOURCE_DISPLAY: Record<string, string> = {
-  shisei: 'Shisei · 中国历代 (CC0)',
+  shisei: 'Shisei · 中国历代',
   charadb: 'たき AI · CharaDB',
   'gia-anime': 'ギア · 动漫服装',
   gia: 'ギア（@giaaibusi）· 写实',
@@ -64,6 +64,12 @@ export function CostumeDetailModal({
 
   const views = item.views || []
   const hasMultiViews = views.length > 1
+  const effectiveStageMode = stageMode === 'stack' && !hasMultiViews ? '3d' : stageMode
+  const stageTabItems: ShowcaseStageTabItem<'3d' | 'stack' | 'zoom'>[] = [
+    { id: '3d', label: '3D 卡牌', icon: BoxIcon },
+    ...(hasMultiViews ? [{ id: 'stack' as const, label: '叠牌视角', icon: LayersIcon }] : []),
+    { id: 'zoom', label: '细节缩放', icon: ZoomInIcon },
+  ]
   const activeViewIdx = hasMultiViews
     ? Math.max(0, views.findIndex((v) => v.id === (selectedViewId || 'front')))
     : 0
@@ -102,7 +108,6 @@ export function CostumeDetailModal({
       categoryLabel={item.分类}
       secondaryTag={styleKind}
       title={item.服装名称}
-      subtitle={`${item.id} · ${sourceLabel}`}
       picked={picked}
       pickLabel={picked ? '已在配方中（点击移除）' : '锁入角色配方'}
       onTogglePick={onTogglePick}
@@ -117,46 +122,15 @@ export function CostumeDetailModal({
       }
       externalLabel={isHotlinkSource ? '原作者站点' : '新窗口打开'}
       stageTopLeft={
-        <div className="inline-flex items-center gap-1 rounded-full bg-black/60 p-1 ring-1 ring-white/15 backdrop-blur-md">
-          <button
-            type="button"
-            onClick={() => setStageMode('3d')}
-            className={cn(
-              'inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-medium transition-colors',
-              stageMode === '3d' ? 'bg-white text-black' : 'text-zinc-300 hover:text-white'
-            )}
-          >
-            <BoxIcon className="size-3.5" />
-            <span>3D 卡牌</span>
-          </button>
-          {hasMultiViews && (
-            <button
-              type="button"
-              onClick={() => setStageMode('stack')}
-              className={cn(
-                'inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-medium transition-colors',
-                stageMode === 'stack' ? 'bg-white text-black' : 'text-zinc-300 hover:text-white'
-              )}
-            >
-              <LayersIcon className="size-3.5" />
-              <span>叠牌视角</span>
-            </button>
-          )}
-          <button
-            type="button"
-            onClick={() => setStageMode('zoom')}
-            className={cn(
-              'inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-medium transition-colors',
-              stageMode === 'zoom' ? 'bg-white text-black' : 'text-zinc-300 hover:text-white'
-            )}
-          >
-            <ZoomInIcon className="size-3.5" />
-            <span>细节缩放</span>
-          </button>
-        </div>
+        <ShowcaseStageTabs
+          layoutId="costume-stage-tab"
+          value={effectiveStageMode}
+          onChange={setStageMode}
+          items={stageTabItems}
+        />
       }
       stageContent={
-        stageMode === 'zoom' ? (
+        effectiveStageMode === 'zoom' ? (
           <div className="w-full pt-2">
             <ZoomViewport
               imageUrl={referenceImageUrl(item.预览图 || item.原图)}
@@ -164,7 +138,7 @@ export function CostumeDetailModal({
               className="min-h-0 h-[56dvh] rounded-2xl border border-white/12 bg-[#161620] p-3"
             />
           </div>
-        ) : stageMode === 'stack' && hasMultiViews ? (
+        ) : effectiveStageMode === 'stack' && hasMultiViews ? (
           <div className="h-[360px] w-[270px] pl-3 pt-2 sm:h-[420px] sm:w-[315px]">
             <Stack
               key={item.id}
@@ -242,7 +216,7 @@ export function CostumeDetailModal({
         )
       }
       stageFooter={
-        stageMode !== 'zoom' ? (
+        effectiveStageMode !== 'zoom' ? (
           <>
             {totalCount > 1 && (
               <span className="rounded-full bg-black/55 px-3 py-1 font-mono text-xs font-medium tabular-nums text-zinc-300 ring-1 ring-white/12 backdrop-blur-md">
@@ -250,7 +224,7 @@ export function CostumeDetailModal({
               </span>
             )}
             <p className="text-xs text-zinc-400">
-              {stageMode === 'stack'
+              {effectiveStageMode === 'stack'
                 ? '点击或拖拽牌面丝滑切换多视角'
                 : '悬停倾斜 · 按住拖拽旋转 · 左右箭头切牌'}
             </p>
@@ -314,7 +288,7 @@ export function CostumeDetailModal({
           )}
 
           <div className="space-y-2.5">
-            <div className="text-xs font-medium tracking-wide text-zinc-400">藏品档案</div>
+            <div className="text-xs font-medium tracking-wide text-zinc-400">服装档案</div>
             <dl className="grid grid-cols-[64px_1fr] gap-y-2 rounded-2xl bg-white/[0.04] p-3.5 text-xs ring-1 ring-white/[0.06]">
               <dt className="text-zinc-500">编号</dt>
               <dd className="font-mono text-zinc-200">{item.id}</dd>
@@ -329,7 +303,7 @@ export function CostumeDetailModal({
 
           {item.source === 'shisei' && (
             <div className="space-y-1 text-xs text-zinc-400">
-              <p>Shisei / wquguru · CC0 · AI 生成服装参考，并非专业复原。</p>
+              <p>Shisei / wquguru · 历代服饰参考，并非专业历史复原。</p>
               <div className="flex flex-wrap gap-x-3 gap-y-1" aria-label="Shisei 来源与许可">
                 <a className="underline hover:text-zinc-200" href={SHISEI_SOURCE_URLS.repository} target="_blank" rel="noopener noreferrer">
                   原仓库
@@ -338,7 +312,7 @@ export function CostumeDetailModal({
                   条目目录
                 </a>
                 <a className="underline hover:text-zinc-200" href={SHISEI_SOURCE_URLS.license} target="_blank" rel="noopener noreferrer">
-                  CC0 许可
+                  来源许可
                 </a>
               </div>
             </div>

@@ -36,7 +36,7 @@ export const navGroups: NavGroup[] = [
   {
     label: 'SYSTEM // 配置与说明',
     items: [
-      { code: '05', title: '使用说明与免责声明', to: '/guide', icon: BookOpenIcon, badge: '[DOC]' },
+      { code: '05', title: '使用指南', to: '/guide', icon: BookOpenIcon, badge: '[DOC]' },
     ],
   },
 ]
