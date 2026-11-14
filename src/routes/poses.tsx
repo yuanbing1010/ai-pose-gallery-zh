@@ -441,6 +441,7 @@ function PosesPage() {
               <GalleryHoloCard
                 key={group.key}
                 title={group.name}
+                index={gIdx % 60}
                 picked={picked}
                 flipped={isFlipped}
                 accent={accent}

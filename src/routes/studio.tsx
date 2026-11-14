@@ -23,11 +23,9 @@ import {
   ArrowRightIcon,
   CheckCircle2Icon,
   CircleAlertIcon,
-  CopyIcon,
   DicesIcon,
   DownloadIcon,
   EyeIcon,
-  FileTextIcon,
   GripVerticalIcon,
   ImagesIcon,
   ImagePlusIcon,
@@ -35,13 +33,13 @@ import {
   LinkIcon,
   LoaderCircleIcon,
   PersonStandingIcon,
-  RotateCcwIcon,
   ShirtIcon,
   SlidersHorizontalIcon,
   SparklesIcon,
   Trash2Icon,
   UploadIcon,
   UserRoundIcon,
+  WandSparklesIcon,
   XIcon,
   ZoomInIcon,
 } from 'lucide-react'
@@ -53,8 +51,15 @@ import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable'
-import { Textarea } from '@/components/ui/textarea'
 import { useIsMobile } from '@/hooks/use-mobile'
+import {
+  buildAspectRatioPatches,
+  getStudioArtist,
+  readCurrentAspectRatio,
+  STUDIO_ARTISTS,
+  STUDIO_ASPECT_RATIOS,
+  type StudioAspectRatio,
+} from '@/lib/artists'
 import { validateReferenceCombinations, workflowIdentity } from '@/lib/comfyWorkflowParameters'
 import { selectCostumeView } from '@/lib/costumeSources'
 import type { RandomScope, ReferenceSlot } from '@/lib/randomRecipe'
@@ -65,7 +70,6 @@ import {
   buildRecipePrompt,
   fileToDataUrl,
   parseComfyWorkflowNodes,
-  PROVIDER_META,
   stitchRecipeCanvas,
   STYLE_PRESETS,
 } from '@/services/aiGenerator'
@@ -110,7 +114,7 @@ function SortableExtraPill({
       ref={setNodeRef}
       style={style}
       className={cn(
-        'flex h-8 shrink-0 items-center gap-1.5 rounded-lg border bg-card pr-1 pl-1 transition-all',
+        'flex h-7 shrink-0 items-center gap-1.5 rounded-lg border bg-card pr-1 pl-1 transition-all',
         isDragging ? 'border-[#E5A918] opacity-95 shadow-md' : 'border-border/80'
       )}
     >
@@ -123,7 +127,7 @@ function SortableExtraPill({
       >
         <GripVerticalIcon className="size-3" />
       </button>
-      <img src={img.url} alt={img.name} className="size-6 shrink-0 rounded-md border border-border object-cover" />
+      <img src={img.url} alt={img.name} className="size-5 shrink-0 rounded border border-border object-cover" />
       <input
         type="text"
         value={img.name}
@@ -153,8 +157,6 @@ function StudioPage() {
     recipe,
     apiConfig,
     history,
-    customPrompt,
-    setCustomPrompt,
     previewUrl,
     setPreviewUrl,
     isGenerating,
@@ -170,6 +172,10 @@ function StudioPage() {
     updateExtraImageName,
     reorderExtraImages,
     updateApiConfig,
+    updateGeminiParams,
+    updateGptParams,
+    updateQwenParams,
+    updateDoubaoParams,
     randomizeRecipe,
     randomizeSlot,
     removeHistoryItem,
@@ -205,10 +211,12 @@ function StudioPage() {
 
   const [sceneNote, setSceneNote] = useState('')
   const [hoveredStyleKey, setHoveredStyleKey] = useState<string | null>(null)
-  const [promptModalOpen, setPromptModalOpen] = useState(false)
   const [galleryModalOpen, setGalleryModalOpen] = useState(false)
 
   const activeProvider = apiConfig.activeProvider
+  const activeArtist = getStudioArtist(activeProvider)
+  const activeRatio = readCurrentAspectRatio(apiConfig)
+
   const activeWorkflowImages =
     activeProvider === 'comfyui' &&
     recipe.workflowImagesIdentity === workflowIdentity(apiConfig.comfyuiParams.workflowJson)
@@ -220,13 +228,6 @@ function StudioPage() {
   const hasAnyRef = hasStitchRefs || activeWorkflowImages.length > 0
   const coreCount = [recipe.portrait, recipe.costume, recipe.pose].filter(Boolean).length
 
-  const defaultPrompt = buildRecipePrompt(recipe, apiConfig.stylePreset, activeWorkflowImages, {
-    prefix: apiConfig.defaultPromptPrefix,
-    suffix: apiConfig.defaultPromptSuffix,
-  })
-  const syncedPrompt = hasAnyRef ? mergeSceneNote(defaultPrompt, sceneNote) : defaultPrompt
-  const prompt = customPrompt ?? syncedPrompt
-
   const [extraUrlInput, setExtraUrlInput] = useState('')
   const [urlModalOpen, setUrlModalOpen] = useState(false)
   const [stitchModalUrl, setStitchModalUrl] = useState<string | null>(null)
@@ -237,6 +238,14 @@ function StudioPage() {
     () => parseComfyWorkflowNodes(apiConfig.comfyuiParams.workflowJson),
     [apiConfig.comfyuiParams.workflowJson]
   )
+
+  const handleSelectAspectRatio = (ratio: StudioAspectRatio) => {
+    const patches = buildAspectRatioPatches(ratio)
+    updateGeminiParams(patches.gemini)
+    updateGptParams(patches.gpt)
+    updateQwenParams(patches.qwen)
+    updateDoubaoParams(patches.doubao)
+  }
 
   const handleSlotUpload = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -386,6 +395,22 @@ function StudioPage() {
     }
   }
 
+  const handleApplyHistoryRecipe = (item: GenerationHistoryItem) => {
+    if (!item.snapshot?.recipe) {
+      toast.info('该作品未保存配方快照')
+      return
+    }
+    const snap = item.snapshot
+    setPortrait(snap.recipe.portrait ?? null)
+    setCostume(snap.recipe.costume ?? null)
+    setPose(snap.recipe.pose ?? null)
+    if (snap.settings?.stylePreset && snap.settings.stylePreset in STYLE_PRESETS) {
+      updateApiConfig({ stylePreset: snap.settings.stylePreset })
+    }
+    setGalleryModalOpen(false)
+    toast.success('已套用该作品的角色配方')
+  }
+
   const handleGenerate = () => {
     if (activeProvider === 'comfyui') {
       const cp = apiConfig.comfyuiParams
@@ -408,24 +433,31 @@ function StudioPage() {
       requestAnimationFrame(() => referenceErrorsRef.current?.focus())
       return
     }
-    void startGeneration(prompt)
+
+    // 完整指令在后台按当前配方 + 画风 + 补充细节实时组装，不对外暴露可乱改模板
+    const basePrompt = buildRecipePrompt(recipe, apiConfig.stylePreset, activeWorkflowImages, {
+      prefix: apiConfig.defaultPromptPrefix,
+      suffix: apiConfig.defaultPromptSuffix,
+    })
+    const finalPrompt = hasAnyRef ? mergeSceneNote(basePrompt, sceneNote) : basePrompt
+    void startGeneration(finalPrompt)
   }
 
-  const activeStyleKey = apiConfig.stylePreset in STYLE_PRESETS ? apiConfig.stylePreset : 'realistic'
+  const activeStyleKey = apiConfig.stylePreset in STYLE_PRESETS ? apiConfig.stylePreset : 'none'
   const viewfinderStyleKey = hoveredStyleKey && hoveredStyleKey in STYLE_PRESETS ? hoveredStyleKey : activeStyleKey
   const styleInfo = STYLE_PRESETS[viewfinderStyleKey]
   const styleVisual = getStyleVisualMeta(viewfinderStyleKey)
   const recentHistory = history.slice(0, 10)
-  const promptModified = customPrompt !== null || sceneNote.trim().length > 0
+  const previewArtist = previewResult ? getStudioArtist(previewResult.provider) : activeArtist
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-2.5 md:overflow-hidden">
+    <div className="flex min-h-0 flex-1 flex-col gap-2 md:overflow-hidden">
       {/* 极简控制台单行顶栏 */}
       <header className="flex shrink-0 flex-wrap items-center justify-between gap-2">
         <div className="flex min-w-0 items-baseline gap-2.5">
           <h1 className="truncate text-lg font-extrabold tracking-tight sm:text-xl">AI 角色合成工作台</h1>
           <span className="hidden text-xs text-muted-foreground xl:inline">
-            三轨卡带混搭 · 13 种风格直选 · 一键生成立绘
+            角色配方 · 挑选画师 · 设定画风与画幅
           </span>
         </div>
 
@@ -436,7 +468,7 @@ function StudioPage() {
               variant="outline"
               size="sm"
               onClick={() => setGalleryModalOpen(true)}
-              className="h-8 rounded-full bg-card px-3 text-xs font-medium"
+              className="h-7 rounded-full bg-card px-3 text-xs font-medium"
             >
               <ImagesIcon className="size-3.5 text-[#E5A918]" />
               <span>作品集 ({history.length})</span>
@@ -444,12 +476,11 @@ function StudioPage() {
           )}
           <Link
             to="/settings"
-            className="inline-flex h-8 items-center gap-1.5 rounded-full border border-border bg-card px-3 text-xs font-medium text-muted-foreground shadow-2xs transition-colors hover:border-foreground/30 hover:text-foreground"
+            title="接口与密钥配置"
+            className="inline-flex h-7 items-center gap-1.5 rounded-full border border-border bg-card px-2.5 text-xs font-medium text-muted-foreground shadow-2xs transition-colors hover:border-foreground/30 hover:text-foreground"
           >
-            <SlidersHorizontalIcon className="size-3.5 text-[#116E65] dark:text-[#4FD1C5]" />
-            <span>{PROVIDER_META[activeProvider].shortName}</span>
-            <span className="text-border">|</span>
-            <span className="font-mono font-semibold text-foreground">{coreCount}/3</span>
+            <SlidersHorizontalIcon className="size-3.5" />
+            <span>配置</span>
           </Link>
         </div>
       </header>
@@ -459,9 +490,9 @@ function StudioPage() {
         orientation={isMobile ? 'vertical' : 'horizontal'}
         className="min-h-0 w-full flex-1 gap-3 md:gap-0"
       >
-        {/* 左栏：1. 紧凑卡带式配方轨 + 2. 13画风矩阵与发射区 */}
+        {/* 左栏：1. 角色配方 → 2. 选择画师 → 3. 成图画风 → 4. 画面尺寸与细节 */}
         <ResizablePanel
-          defaultSize={isMobile ? '100%' : '56%'}
+          defaultSize={isMobile ? '100%' : '57%'}
           minSize={isMobile ? '30%' : '38%'}
           className="min-w-0 md:flex md:min-h-0 md:flex-col md:pr-2.5"
         >
@@ -469,7 +500,7 @@ function StudioPage() {
             initial={{ opacity: 0, y: 6 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.18 }}
-            className="flex min-h-0 min-w-0 flex-1 flex-col gap-2.5"
+            className="flex min-h-0 min-w-0 flex-1 flex-col gap-2"
             onDragOver={(e) => {
               e.preventDefault()
               setIsDragging(true)
@@ -477,14 +508,14 @@ function StudioPage() {
             onDragLeave={() => setIsDragging(false)}
             onDrop={handleDropFiles}
           >
-            {/* 1. 角色配方卡带轨（紧凑 · 简洁 · 炫酷） */}
+            {/* 1. 角色配方卡带轨 */}
             <section
               data-impeccable-ignore="nested-cards"
-              className="ks-elevation shrink-0 rounded-2xl border border-border bg-card p-3"
+              className="ks-elevation shrink-0 rounded-2xl border border-border bg-card p-2.5"
             >
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex items-center gap-2">
-                  <h2 className="text-xs font-extrabold tracking-tight sm:text-sm">1. 角色配方卡带</h2>
+                  <h2 className="text-xs font-extrabold tracking-tight sm:text-sm">1. 角色配方</h2>
                   <span className="rounded-md bg-muted px-1.5 py-0.5 font-mono text-xs font-semibold text-muted-foreground">
                     {coreCount}/3
                   </span>
@@ -494,10 +525,10 @@ function StudioPage() {
                     type="button"
                     variant="outline"
                     size="sm"
-                    className="h-7 rounded-full px-2.5 text-xs"
+                    className="h-6.5 rounded-full px-2.5 text-xs"
                     onClick={handleRandom}
                   >
-                    <DicesIcon className="size-3.5 text-[#E5A918]" />
+                    <DicesIcon className="size-3 text-[#E5A918]" />
                     <span>全随机</span>
                   </Button>
                   {hasAnyRef && hasStitchRefs && (
@@ -505,10 +536,10 @@ function StudioPage() {
                       type="button"
                       variant="outline"
                       size="sm"
-                      className="h-7 rounded-full px-2.5 text-xs"
+                      className="h-6.5 rounded-full px-2.5 text-xs"
                       onClick={handleOpenStitchModal}
                     >
-                      <LayoutGridIcon className="size-3.5" />
+                      <LayoutGridIcon className="size-3" />
                       <span>拼图</span>
                     </Button>
                   )}
@@ -531,27 +562,24 @@ function StudioPage() {
                   ref={referenceErrorsRef}
                   role="alert"
                   tabIndex={-1}
-                  className="mt-2 rounded-xl border border-destructive bg-destructive/10 px-3 py-2 text-xs text-destructive focus-visible:outline-2"
+                  className="mt-1.5 rounded-xl border border-destructive bg-destructive/10 px-3 py-1.5 text-xs text-destructive focus-visible:outline-2"
                 >
                   请先选择或上传：{missingReferences.join('、')}。
                 </div>
               )}
 
               {/* 实体凹槽轨道：3 枚横向卡带 */}
-              <div className="ks-recess mt-2 grid grid-cols-1 gap-1.5 rounded-xl border border-border/75 p-1.5 sm:grid-cols-3">
+              <div className="ks-recess mt-1.5 grid grid-cols-1 gap-1.5 rounded-xl border border-border/75 p-1.5 sm:grid-cols-3">
                 {/* 01 人像卡带 */}
                 <div
                   className={cn(
-                    'ks-paper-keycap dark:ks-keycap group relative flex h-[78px] min-w-0 items-center gap-2 overflow-hidden rounded-lg border bg-card p-1.5 transition-all hover:-translate-y-0.5',
+                    'ks-paper-keycap dark:ks-keycap group relative flex h-[72px] min-w-0 items-center gap-2 overflow-hidden rounded-lg border bg-card p-1.5 transition-all hover:-translate-y-0.5',
                     showReferenceErrors && missingReferences.includes('人像')
                       ? 'border-destructive ring-1 ring-destructive'
                       : 'border-border/80 hover:border-[#E5A918]/60'
                   )}
                 >
-                  <span
-                    aria-hidden="true"
-                    className="absolute inset-y-1.5 left-0 w-0.5 rounded-r bg-[#E5A918]"
-                  />
+                  <span aria-hidden="true" className="absolute inset-y-1.5 left-0 w-0.5 rounded-r bg-[#E5A918]" />
                   {recipe.portrait ? (
                     <button
                       type="button"
@@ -560,7 +588,7 @@ function StudioPage() {
                         const item = recipe.portrait
                         if (item) setZoomImageUrl(referenceImageUrl(item.原图 || item.缩略图))
                       }}
-                      className="relative h-full w-12 shrink-0 cursor-zoom-in overflow-hidden rounded-md border border-border/80 bg-muted/30"
+                      className="relative h-full w-11 shrink-0 cursor-zoom-in overflow-hidden rounded-md border border-border/80 bg-muted/30"
                     >
                       <img
                         src={referenceImageUrl(recipe.portrait.缩略图)}
@@ -572,17 +600,15 @@ function StudioPage() {
                     <Link
                       to="/portraits"
                       aria-label="前往人像库选图"
-                      className="flex h-full w-12 shrink-0 flex-col items-center justify-center rounded-md border border-dashed border-border bg-muted/30 text-[#B88300] transition-colors hover:border-[#E5A918] hover:bg-muted/60 dark:text-[#E5A918]"
+                      className="flex h-full w-11 shrink-0 flex-col items-center justify-center rounded-md border border-dashed border-border bg-muted/30 text-[#B88300] transition-colors hover:border-[#E5A918] hover:bg-muted/60 dark:text-[#E5A918]"
                     >
                       <UserRoundIcon className="size-4" />
                     </Link>
                   )}
 
-                  <div className="flex h-full min-w-0 flex-1 flex-col justify-between py-0.5">
+                  <div className="flex h-full min-w-0 flex-1 flex-col justify-between">
                     <div className="flex items-center justify-between gap-1">
-                      <span className="font-mono text-xs font-bold text-[#B88300] dark:text-[#E5A918]">
-                        01 人像
-                      </span>
+                      <span className="font-mono text-xs font-bold text-[#B88300] dark:text-[#E5A918]">01 人像</span>
                       <div className="flex items-center gap-0.5">
                         <button
                           type="button"
@@ -661,16 +687,13 @@ function StudioPage() {
                 {/* 02 服装卡带 */}
                 <div
                   className={cn(
-                    'ks-paper-keycap dark:ks-keycap group relative flex h-[78px] min-w-0 items-center gap-2 overflow-hidden rounded-lg border bg-card p-1.5 transition-all hover:-translate-y-0.5',
+                    'ks-paper-keycap dark:ks-keycap group relative flex h-[72px] min-w-0 items-center gap-2 overflow-hidden rounded-lg border bg-card p-1.5 transition-all hover:-translate-y-0.5',
                     showReferenceErrors && missingReferences.includes('服装')
                       ? 'border-destructive ring-1 ring-destructive'
                       : 'border-border/80 hover:border-[#19857B]/60'
                   )}
                 >
-                  <span
-                    aria-hidden="true"
-                    className="absolute inset-y-1.5 left-0 w-0.5 rounded-r bg-[#19857B]"
-                  />
+                  <span aria-hidden="true" className="absolute inset-y-1.5 left-0 w-0.5 rounded-r bg-[#19857B]" />
                   {recipe.costume ? (
                     <button
                       type="button"
@@ -679,7 +702,7 @@ function StudioPage() {
                         const item = recipe.costume
                         if (item) setZoomImageUrl(referenceImageUrl(item.预览图 || item.原图 || item.缩略图))
                       }}
-                      className="relative h-full w-12 shrink-0 cursor-zoom-in overflow-hidden rounded-md border border-border/80 bg-white dark:bg-zinc-900"
+                      className="relative h-full w-11 shrink-0 cursor-zoom-in overflow-hidden rounded-md border border-border/80 bg-white dark:bg-zinc-900"
                     >
                       <img
                         src={referenceImageUrl(recipe.costume.缩略图)}
@@ -691,17 +714,15 @@ function StudioPage() {
                     <Link
                       to="/costumes"
                       aria-label="前往服装库选图"
-                      className="flex h-full w-12 shrink-0 flex-col items-center justify-center rounded-md border border-dashed border-border bg-muted/30 text-[#116E65] transition-colors hover:border-[#19857B] hover:bg-muted/60 dark:text-[#4FD1C5]"
+                      className="flex h-full w-11 shrink-0 flex-col items-center justify-center rounded-md border border-dashed border-border bg-muted/30 text-[#116E65] transition-colors hover:border-[#19857B] hover:bg-muted/60 dark:text-[#4FD1C5]"
                     >
                       <ShirtIcon className="size-4" />
                     </Link>
                   )}
 
-                  <div className="flex h-full min-w-0 flex-1 flex-col justify-between py-0.5">
+                  <div className="flex h-full min-w-0 flex-1 flex-col justify-between">
                     <div className="flex items-center justify-between gap-1">
-                      <span className="font-mono text-xs font-bold text-[#116E65] dark:text-[#4FD1C5]">
-                        02 服装
-                      </span>
+                      <span className="font-mono text-xs font-bold text-[#116E65] dark:text-[#4FD1C5]">02 服装</span>
                       <div className="flex items-center gap-0.5">
                         {recipe.costume && costumeViews.length > 0 && (
                           <select
@@ -800,16 +821,13 @@ function StudioPage() {
                 {/* 03 姿势卡带 */}
                 <div
                   className={cn(
-                    'ks-paper-keycap dark:ks-keycap group relative flex h-[78px] min-w-0 items-center gap-2 overflow-hidden rounded-lg border bg-card p-1.5 transition-all hover:-translate-y-0.5',
+                    'ks-paper-keycap dark:ks-keycap group relative flex h-[72px] min-w-0 items-center gap-2 overflow-hidden rounded-lg border bg-card p-1.5 transition-all hover:-translate-y-0.5',
                     showReferenceErrors && missingReferences.includes('姿势')
                       ? 'border-destructive ring-1 ring-destructive'
                       : 'border-border/80 hover:border-[#D9381E]/60'
                   )}
                 >
-                  <span
-                    aria-hidden="true"
-                    className="absolute inset-y-1.5 left-0 w-0.5 rounded-r bg-[#D9381E]"
-                  />
+                  <span aria-hidden="true" className="absolute inset-y-1.5 left-0 w-0.5 rounded-r bg-[#D9381E]" />
                   {recipe.pose ? (
                     <button
                       type="button"
@@ -818,7 +836,7 @@ function StudioPage() {
                         const item = recipe.pose
                         if (item) setZoomImageUrl(referenceImageUrl(poseImagePath(item)))
                       }}
-                      className="relative h-full w-12 shrink-0 cursor-zoom-in overflow-hidden rounded-md border border-border/80 bg-white dark:bg-zinc-900"
+                      className="relative h-full w-11 shrink-0 cursor-zoom-in overflow-hidden rounded-md border border-border/80 bg-white dark:bg-zinc-900"
                     >
                       <img
                         src={referenceImageUrl(poseThumbPath(recipe.pose))}
@@ -830,17 +848,15 @@ function StudioPage() {
                     <Link
                       to="/poses"
                       aria-label="前往姿势库选图"
-                      className="flex h-full w-12 shrink-0 flex-col items-center justify-center rounded-md border border-dashed border-border bg-muted/30 text-[#D9381E] transition-colors hover:border-[#D9381E] hover:bg-muted/60 dark:text-[#FF7A59]"
+                      className="flex h-full w-11 shrink-0 flex-col items-center justify-center rounded-md border border-dashed border-border bg-muted/30 text-[#D9381E] transition-colors hover:border-[#D9381E] hover:bg-muted/60 dark:text-[#FF7A59]"
                     >
                       <PersonStandingIcon className="size-4" />
                     </Link>
                   )}
 
-                  <div className="flex h-full min-w-0 flex-1 flex-col justify-between py-0.5">
+                  <div className="flex h-full min-w-0 flex-1 flex-col justify-between">
                     <div className="flex items-center justify-between gap-1">
-                      <span className="font-mono text-xs font-bold text-[#D9381E] dark:text-[#FF7A59]">
-                        03 姿势
-                      </span>
+                      <span className="font-mono text-xs font-bold text-[#D9381E] dark:text-[#FF7A59]">03 姿势</span>
                       <div className="flex items-center gap-0.5">
                         {recipe.pose && recipe.pose.source !== 'upload' && (
                           <button
@@ -942,11 +958,11 @@ function StudioPage() {
                 </div>
               </div>
 
-              {/* 附图极简捷径条（拖拽排序 / Ctrl+V 粘贴 / URL） */}
+              {/* 附图极简捷径条 */}
               <div
                 onClick={() => extraImages.length === 0 && fileInputRef.current?.click()}
                 className={cn(
-                  'mt-2 flex min-h-9 items-center justify-between gap-2 rounded-xl border border-dashed px-2.5 py-1 transition-colors',
+                  'mt-1.5 flex min-h-8 items-center justify-between gap-2 rounded-xl border border-dashed px-2.5 py-1 transition-colors',
                   isDragging
                     ? 'border-[#E5A918] bg-muted text-foreground'
                     : extraImages.length === 0
@@ -1011,58 +1027,146 @@ function StudioPage() {
               </div>
             </section>
 
-            {/* 2. 成图画风 7×2 矩阵 + 一行描述 + 朱砂红发射键 */}
+            {/* 控制台主区：2. 选择画师 + 3. 成图画风 + 4. 画幅尺寸与细节 + 生成按钮 */}
             <section
               data-impeccable-ignore="nested-cards"
-              className="ks-elevation flex min-h-0 flex-1 flex-col justify-between gap-2.5 rounded-2xl border border-border bg-card p-3"
+              className="ks-elevation flex min-h-0 flex-1 flex-col justify-between gap-2 rounded-2xl border border-border bg-card p-2.5"
             >
-              <StylePresetSelector
-                value={apiConfig.stylePreset}
-                onChange={(v) => updateApiConfig({ stylePreset: v })}
-                onHoverChange={setHoveredStyleKey}
-              />
+              {/* 2. 选择画师（创意代号，隐藏底层模型技术词） */}
+              <div className="space-y-1.5">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-xs font-extrabold tracking-tight text-foreground sm:text-sm">2. 选择画师</span>
+                  <div className="flex min-w-0 max-w-full items-center gap-1.5 rounded-full border border-border/80 bg-[#FAF8F4] px-2.5 py-0.5 text-xs dark:bg-muted/50">
+                    <span
+                      className="size-1.5 shrink-0 rounded-full"
+                      style={{ backgroundColor: activeArtist.accent }}
+                    />
+                    <span className="shrink-0 font-semibold text-foreground">{activeArtist.name}</span>
+                    <span className="text-muted-foreground/50">·</span>
+                    <span className="truncate text-muted-foreground">{activeArtist.bio}</span>
+                  </div>
+                </div>
 
+                <div role="radiogroup" aria-label="选择画师" className="grid grid-cols-2 gap-1.5 sm:grid-cols-5">
+                  {STUDIO_ARTISTS.map((artist) => {
+                    const selected = activeProvider === artist.id
+                    const needsKey = artist.requiresKey && !apiConfig.providers[artist.id]?.apiKey?.trim()
+                    return (
+                      <button
+                        key={artist.id}
+                        type="button"
+                        role="radio"
+                        aria-checked={selected}
+                        aria-label={`${artist.name}（${artist.specialty}）：${artist.bio}`}
+                        onClick={() => updateApiConfig({ activeProvider: artist.id })}
+                        className={cn(
+                          'relative flex min-w-0 flex-col items-start justify-center rounded-xl border px-2.5 py-1.5 text-left transition-all active:scale-[0.98]',
+                          selected
+                            ? 'border-foreground bg-foreground text-background shadow-xs'
+                            : 'border-border/80 bg-[#FAF8F4] text-foreground hover:border-foreground/40 dark:bg-muted/35'
+                        )}
+                      >
+                        <div className="flex w-full items-center justify-between gap-1">
+                          <div className="flex min-w-0 items-center gap-1.5">
+                            <span
+                              className="size-2 shrink-0 rounded-full"
+                              style={{ backgroundColor: artist.accent }}
+                            />
+                            <span className="truncate text-xs font-bold leading-tight">{artist.name}</span>
+                          </div>
+                          {needsKey && (
+                            <span
+                              title="需在右上角「配置」中填写该画师密钥"
+                              className={cn(
+                                'size-1.5 shrink-0 rounded-full',
+                                selected ? 'bg-[#E5A918]' : 'bg-[#E5A918]/75'
+                              )}
+                            />
+                          )}
+                        </div>
+                        <span
+                          className={cn(
+                            'mt-0.5 truncate text-xs leading-tight',
+                            selected ? 'text-background/75' : 'text-muted-foreground'
+                          )}
+                        >
+                          {artist.specialty}
+                        </span>
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+
+              {/* 3. 成图画风（跟随原图默认 + 13 种风格样张 7×2 矩阵） */}
+              <div className="border-t border-border/70 pt-2">
+                <StylePresetSelector
+                  value={apiConfig.stylePreset}
+                  onChange={(v) => updateApiConfig({ stylePreset: v })}
+                  onHoverChange={setHoveredStyleKey}
+                />
+              </div>
+
+              {/* 4. 画幅尺寸 + 细节补充 + 立即生成按钮 */}
               <div className="space-y-2 border-t border-border/70 pt-2">
-                <div className="flex items-center gap-2">
-                  <div className="relative min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="shrink-0 text-xs font-extrabold tracking-tight text-foreground sm:text-sm">
+                    4. 画幅与细节
+                  </span>
+
+                  {activeProvider === 'comfyui' ? (
+                    <span className="rounded-lg border border-border/80 bg-[#FAF8F4] px-2.5 py-1 text-xs text-muted-foreground dark:bg-muted/35">
+                      尺寸由本地工作流节点控制
+                    </span>
+                  ) : (
+                    <div
+                      role="group"
+                      aria-label="选择成图画幅比例"
+                      className="inline-flex flex-wrap items-center gap-1 rounded-xl border border-border/80 bg-[#FAF8F4] p-0.5 dark:bg-muted/35"
+                    >
+                      {STUDIO_ASPECT_RATIOS.map((opt) => {
+                        const selected = activeRatio === opt.id
+                        return (
+                          <button
+                            key={opt.id}
+                            type="button"
+                            aria-pressed={selected}
+                            title={opt.hint}
+                            onClick={() => handleSelectAspectRatio(opt.id)}
+                            className={cn(
+                              'rounded-lg px-2 py-1 font-mono text-xs font-semibold transition-colors',
+                              selected
+                                ? 'bg-foreground text-background shadow-2xs'
+                                : 'text-muted-foreground hover:text-foreground'
+                            )}
+                          >
+                            {opt.label}
+                          </button>
+                        )
+                      })}
+                    </div>
+                  )}
+
+                  <div className="relative min-w-[180px] flex-1">
                     <Input
                       id="studio-scene-note"
                       aria-label="补充画面细节"
                       value={sceneNote}
-                      disabled={customPrompt !== null}
                       onChange={(e) => setSceneNote(e.target.value)}
-                      placeholder={
-                        customPrompt !== null
-                          ? '当前已手动锁定完整指令（点右侧按钮查看或恢复同步）'
-                          : '补充场景、光影或动作细节（可选，如：樱花树下逆光微笑…）'
-                      }
-                      className="h-9 rounded-xl bg-[#FAF8F4] pr-2 text-xs dark:bg-muted/30"
+                      placeholder="补充场景、光影或动作细节（可选，如：樱花树下逆光微笑…）"
+                      className="h-8 rounded-xl bg-[#FAF8F4] pr-7 text-xs dark:bg-muted/30"
                     />
+                    {sceneNote && (
+                      <button
+                        type="button"
+                        aria-label="清空补充细节"
+                        onClick={() => setSceneNote('')}
+                        className="absolute top-1/2 right-2 -translate-y-1/2 rounded-full p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+                      >
+                        <XIcon className="size-3" />
+                      </button>
+                    )}
                   </div>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setPromptModalOpen(true)}
-                    className="h-9 shrink-0 rounded-xl bg-[#FAF8F4] px-2.5 text-xs dark:bg-muted/30"
-                  >
-                    <FileTextIcon className="size-3.5" />
-                    <span>{customPrompt !== null ? '已锁定指令' : '完整指令'}</span>
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    title="复制当前完整提示词"
-                    aria-label="复制当前完整提示词"
-                    onClick={() => {
-                      void navigator.clipboard.writeText(prompt)
-                      toast.success('已复制画面描述')
-                    }}
-                    className="h-9 shrink-0 rounded-xl bg-[#FAF8F4] px-2.5 text-xs dark:bg-muted/30"
-                  >
-                    <CopyIcon className="size-3.5" />
-                  </Button>
                 </div>
 
                 <Button
@@ -1073,7 +1177,7 @@ function StudioPage() {
                   {isGenerating ? (
                     <>
                       <LoaderCircleIcon className="size-4 animate-spin" />
-                      <span>正在生成角色图…</span>
+                      <span>{activeArtist.name}正在绘制作品…</span>
                     </>
                   ) : (
                     <>
@@ -1091,7 +1195,7 @@ function StudioPage() {
 
         {/* 右栏：暗房取景监视器 + 成图胶片底片条 */}
         <ResizablePanel
-          defaultSize={isMobile ? '100%' : '44%'}
+          defaultSize={isMobile ? '100%' : '43%'}
           minSize={isMobile ? '30%' : '28%'}
           className="min-w-0 md:flex md:min-h-0 md:flex-col md:pl-2.5"
         >
@@ -1099,11 +1203,11 @@ function StudioPage() {
             initial={{ opacity: 0, y: 6 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.18, delay: 0.04 }}
-            className="flex min-h-0 min-w-0 flex-1 flex-col gap-2.5"
+            className="flex min-h-0 min-w-0 flex-1 flex-col gap-2"
           >
             <section
               data-impeccable-ignore="nested-cards"
-              className="ks-elevation flex min-h-0 flex-1 flex-col rounded-2xl border border-border bg-card p-3"
+              className="ks-elevation flex min-h-0 flex-1 flex-col rounded-2xl border border-border bg-card p-2.5"
             >
               <div className="mb-2 flex shrink-0 flex-wrap items-center justify-between gap-2">
                 <div className="flex items-center gap-2">
@@ -1128,7 +1232,7 @@ function StudioPage() {
                             : 'bg-muted-foreground/50'
                       )}
                     />
-                    {isGenerating ? '绘制中' : previewUrl ? '已成图' : '待命'}
+                    {isGenerating ? '绘制中' : previewUrl ? `${previewArtist.name} · 成图` : '待命'}
                   </span>
                 </div>
 
@@ -1178,7 +1282,7 @@ function StudioPage() {
                       <LoaderCircleIcon className="size-6 animate-spin" />
                     </div>
                     <div className="space-y-1">
-                      <div className="text-sm font-bold">正在绘制角色作品…</div>
+                      <div className="text-sm font-bold">{activeArtist.name}正在绘制角色作品…</div>
                       {generationProgress && (
                         <div className="w-56 max-w-full space-y-1.5 pt-1">
                           <div className="text-xs text-foreground/80">{generationProgress.message}</div>
@@ -1227,7 +1331,7 @@ function StudioPage() {
                     />
                   </button>
                 ) : (
-                  /* 待命舞台：卡带扇形合成预览 + 放大版悬停/选中画风样张 */
+                  /* 待命舞台：卡带扇形合成预览 + 放大版画风/跟随原图相框 */
                   <div className="flex w-full max-w-md flex-col items-center gap-4 text-center">
                     <div className="flex items-center justify-center gap-3 sm:gap-4">
                       <div className="flex items-center -space-x-2.5">
@@ -1277,24 +1381,33 @@ function StudioPage() {
 
                       <ArrowRightIcon className="size-4 shrink-0 text-muted-foreground/70" />
 
-                      {/* 目标画风高清预览相框（随左侧悬停实时预览放大版） */}
-                      <div className="relative size-28 shrink-0 overflow-hidden rounded-2xl border-2 border-[#D9381E]/85 bg-card shadow-md sm:size-32">
-                        {styleVisual.preview && (
-                          <img
-                            src={styleVisual.preview}
-                            alt={styleInfo.label}
-                            className="h-full w-full object-cover"
-                          />
+                      {/* 目标画风预览相框 */}
+                      <div className="relative flex size-28 shrink-0 flex-col items-center justify-center overflow-hidden rounded-2xl border-2 border-[#D9381E]/85 bg-card shadow-md sm:size-32">
+                        {styleVisual.preview ? (
+                          <>
+                            <img
+                              src={styleVisual.preview}
+                              alt={styleInfo.label}
+                              className="h-full w-full object-cover object-top"
+                            />
+                            <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 via-black/45 to-transparent px-2 pt-4 pb-1.5 text-center">
+                              <span className="block truncate text-xs font-bold text-white">{styleVisual.shortLabel}</span>
+                            </div>
+                          </>
+                        ) : (
+                          <div className="flex h-full w-full flex-col items-center justify-center gap-1.5 border border-dashed border-border/80 bg-muted/20 p-2 text-center">
+                            <WandSparklesIcon className="size-6 text-[#D9381E]" />
+                            <span className="text-xs font-bold text-foreground">{styleVisual.shortLabel}</span>
+                            <span className="text-xs text-muted-foreground">按原图直出</span>
+                          </div>
                         )}
-                        <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 via-black/45 to-transparent px-2 pt-4 pb-1.5 text-center">
-                          <span className="block truncate text-xs font-bold text-white">{styleVisual.shortLabel}</span>
-                        </div>
                       </div>
                     </div>
 
                     <div className="space-y-1">
                       <div className="text-sm font-bold text-foreground">
-                        {hasAnyRef ? `${styleInfo.label} · 合成就绪` : '请先挑选参考图或随机配装'}
+                        {activeArtist.name} · {styleVisual.shortLabel}
+                        {activeProvider !== 'comfyui' && ` · ${activeRatio}`}
                       </div>
                       <p className="text-xs text-muted-foreground">
                         {styleVisual.tagline || '支持从三大图库混搭，或拖拽 / 粘贴本地参考图'}
@@ -1328,7 +1441,7 @@ function StudioPage() {
                 )}
               </div>
 
-              {/* 底部胶片底片条：不撑高页面，随时切换成图或打开全部作品集弹窗 */}
+              {/* 底部胶片底片条 */}
               {recentHistory.length > 0 && (
                 <div className="mt-2 flex shrink-0 items-center gap-2 border-t border-border/70 pt-2">
                   <div className="no-scrollbar flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto py-0.5">
@@ -1396,63 +1509,7 @@ function StudioPage() {
         </ResizablePanel>
       </ResizablePanelGroup>
 
-      {/* 完整生成指令编辑弹窗（避免撑高主工作台） */}
-      <Dialog open={promptModalOpen} onOpenChange={setPromptModalOpen}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader className="flex flex-row flex-wrap items-center justify-between gap-2 pr-8">
-            <DialogTitle className="text-base">完整生成指令</DialogTitle>
-            <div className="flex items-center gap-1.5">
-              <span
-                className={cn(
-                  'rounded-full px-2 py-0.5 text-xs font-medium',
-                  customPrompt !== null
-                    ? 'bg-[#E5A918]/15 text-[#9A6B00] dark:text-[#E5A918]'
-                    : 'bg-[#116E65]/12 text-[#116E65] dark:text-[#4FD1C5]'
-                )}
-              >
-                {customPrompt !== null ? '已手动锁定' : '随配方自动同步'}
-              </span>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                disabled={!promptModified}
-                className="h-7 rounded-lg text-xs"
-                onClick={() => {
-                  setCustomPrompt(null)
-                  setSceneNote('')
-                  toast.success('已恢复自动同步描述')
-                }}
-              >
-                <RotateCcwIcon className="size-3.5" />
-                恢复默认
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="h-7 rounded-lg text-xs"
-                onClick={() => {
-                  void navigator.clipboard.writeText(prompt)
-                  toast.success('已复制画面描述')
-                }}
-              >
-                <CopyIcon className="size-3.5" />
-                复制
-              </Button>
-            </div>
-          </DialogHeader>
-          <Textarea
-            aria-label="完整生成指令"
-            value={prompt}
-            onChange={(e) => setCustomPrompt(e.target.value)}
-            rows={10}
-            className="rounded-xl bg-background text-xs leading-relaxed"
-          />
-        </DialogContent>
-      </Dialog>
-
-      {/* 全部作品集弹窗（不占主页面高度） */}
+      {/* 全部作品集弹窗 */}
       <Dialog open={galleryModalOpen} onOpenChange={setGalleryModalOpen}>
         <DialogContent className="max-h-[90dvh] w-[95vw] max-w-4xl overflow-y-auto p-4 sm:max-w-4xl">
           <DialogHeader className="flex flex-row flex-wrap items-center justify-between gap-3 pr-8">
@@ -1469,77 +1526,75 @@ function StudioPage() {
             <div className="py-12 text-center text-xs text-muted-foreground">暂无生成作品</div>
           ) : (
             <div className="mt-2 grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
-              {history.map((h) => (
-                <div
-                  key={h.id}
-                  className="group flex flex-col justify-between overflow-hidden rounded-2xl border border-border/70 bg-[#FAF8F4] p-2 shadow-2xs dark:bg-muted/30"
-                >
-                  <div className="relative aspect-3/4 overflow-hidden rounded-xl bg-muted/20">
-                    <button
-                      type="button"
-                      aria-label={`查看生成记录：${h.recipeSummary}`}
-                      onClick={() => {
-                        setPreviewUrl(h.imageUrl)
-                        setZoomImageUrl(h.imageUrl)
-                      }}
-                      className="block h-full w-full cursor-zoom-in"
-                    >
-                      <img
-                        src={h.imageUrl}
-                        alt={h.recipeSummary}
-                        className="h-full w-full object-cover transition group-hover:scale-105"
-                      />
-                      <span className="absolute bottom-1.5 left-1.5 max-w-[calc(100%-12px)] truncate rounded-full bg-black/75 px-2 py-0.5 font-mono text-xs text-white">
-                        {new Date(h.createdAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}
-                      </span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        removeHistoryItem(h.id)
-                      }}
-                      title="删除此作品"
-                      className="absolute top-1.5 right-1.5 rounded-full bg-black/70 p-1 text-white opacity-85 transition hover:bg-destructive hover:opacity-100"
-                    >
-                      <XIcon className="size-3" />
-                    </button>
-                  </div>
-
-                  <div className="mt-2 space-y-1.5 px-0.5">
-                    <div className="truncate text-xs font-bold">{h.recipeSummary}</div>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="h-8 w-full rounded-xl bg-card text-xs"
-                      onClick={() => setComparisonResult(h)}
-                    >
-                      对比参考
-                    </Button>
-                    <div className="grid grid-cols-2 gap-1.5">
+              {history.map((h) => {
+                const histArtist = getStudioArtist(h.provider)
+                return (
+                  <div
+                    key={h.id}
+                    className="group flex flex-col justify-between overflow-hidden rounded-2xl border border-border/70 bg-[#FAF8F4] p-2 shadow-2xs dark:bg-muted/30"
+                  >
+                    <div className="relative aspect-3/4 overflow-hidden rounded-xl bg-muted/20">
                       <button
                         type="button"
+                        aria-label={`查看生成记录：${h.recipeSummary}`}
                         onClick={() => {
-                          setCustomPrompt(h.prompt)
-                          setGalleryModalOpen(false)
-                          setPromptModalOpen(true)
-                          toast.success('已恢复该图描述词')
+                          setPreviewUrl(h.imageUrl)
+                          setZoomImageUrl(h.imageUrl)
                         }}
-                        className="flex h-7 items-center justify-center rounded-lg bg-muted text-xs font-semibold text-foreground transition hover:bg-muted/70"
+                        className="block h-full w-full cursor-zoom-in"
                       >
-                        复用描述
+                        <img
+                          src={h.imageUrl}
+                          alt={h.recipeSummary}
+                          className="h-full w-full object-cover transition group-hover:scale-105"
+                        />
+                        <span className="absolute bottom-1.5 left-1.5 max-w-[calc(100%-12px)] truncate rounded-full bg-black/75 px-2 py-0.5 font-mono text-xs text-white">
+                          {histArtist.name}
+                        </span>
                       </button>
-                      <a
-                        href={h.imageUrl}
-                        download={`character-${h.id}.png`}
-                        className="flex h-7 items-center justify-center rounded-lg bg-[#D9381E] text-xs font-bold text-white transition hover:bg-[#C23018]"
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          removeHistoryItem(h.id)
+                        }}
+                        title="删除此作品"
+                        className="absolute top-1.5 right-1.5 rounded-full bg-black/70 p-1 text-white opacity-85 transition hover:bg-destructive hover:opacity-100"
                       >
-                        下载
-                      </a>
+                        <XIcon className="size-3" />
+                      </button>
+                    </div>
+
+                    <div className="mt-2 space-y-1.5 px-0.5">
+                      <div className="truncate text-xs font-bold">{h.recipeSummary}</div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-8 w-full rounded-xl bg-card text-xs"
+                        onClick={() => setComparisonResult(h)}
+                      >
+                        对比参考
+                      </Button>
+                      <div className="grid grid-cols-2 gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => handleApplyHistoryRecipe(h)}
+                          className="flex h-7 items-center justify-center rounded-lg bg-muted text-xs font-semibold text-foreground transition hover:bg-muted/70"
+                        >
+                          套用配方
+                        </button>
+                        <a
+                          href={h.imageUrl}
+                          download={`character-${h.id}.png`}
+                          className="flex h-7 items-center justify-center rounded-lg bg-[#D9381E] text-xs font-bold text-white transition hover:bg-[#C23018]"
+                        >
+                          下载
+                        </a>
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                )
+              })}
             </div>
           )}
         </DialogContent>

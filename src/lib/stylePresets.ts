@@ -20,6 +20,10 @@ export interface StyleVisualMeta {
 }
 
 export const STYLE_VISUAL_META: Record<string, StyleVisualMeta> = {
+  none: {
+    shortLabel: '跟随原图',
+    tagline: '不叠加预设画风，忠实跟随参考图原本质感',
+  },
   realistic: {
     shortLabel: '写实写真',
     tagline: '85mm 人像镜头 · 自然柔光与真实肌理',
@@ -31,17 +35,17 @@ export const STYLE_VISUAL_META: Record<string, StyleVisualMeta> = {
     preview: filmImg,
   },
   semi_real: {
-    shortLabel: '2.5D 原画',
+    shortLabel: '2.5D原画',
     tagline: '半写实厚涂 · 华丽戏剧光影与布料质感',
     preview: semiRealImg,
   },
   anime: {
-    shortLabel: '二次元插画',
+    shortLabel: '二次元',
     tagline: '赛璐璐与厚涂结合 · 色彩通透干净',
     preview: animeImg,
   },
   cel_anime: {
-    shortLabel: '新海诚动画',
+    shortLabel: '新海诚风',
     tagline: '清澈天空 · 体积光与发丝高光',
     preview: celAnimeImg,
   },
@@ -51,7 +55,7 @@ export const STYLE_VISUAL_META: Record<string, StyleVisualMeta> = {
     preview: ghibliImg,
   },
   anime_90s: {
-    shortLabel: '90年代日漫',
+    shortLabel: '90日漫',
     tagline: '复古赛璐璐 · 暖调怀旧质感与线条',
     preview: anime90sImg,
   },
@@ -66,12 +70,12 @@ export const STYLE_VISUAL_META: Record<string, StyleVisualMeta> = {
     preview: mangaImg,
   },
   disney: {
-    shortLabel: '迪士尼动画',
+    shortLabel: '迪士尼',
     tagline: '3D 动画电影 · 灵动眼神与暖金逆光',
     preview: disneyImg,
   },
   render3d: {
-    shortLabel: '3D 次世代',
+    shortLabel: '3D渲染',
     tagline: 'UE5 / Octane · 次表面散射与电影布光',
     preview: render3dImg,
   },

@@ -98,6 +98,10 @@ export const PROVIDER_META: Record<
 }
 
 export const STYLE_PRESETS: Record<string, { label: string; prompt: string }> = {
+  none: {
+    label: '无预设（跟随参考图）',
+    prompt: '',
+  },
   realistic: {
     label: '写实人像写真',
     prompt: '写实商业摄影级质感，85mm 人像镜头，自然柔和光影，真实肌肤纹理与织物细节，8k 高清画质。',

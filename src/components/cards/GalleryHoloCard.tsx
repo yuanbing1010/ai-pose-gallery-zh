@@ -12,6 +12,7 @@ const PARALLAX_TITLE_STYLE = {
 
 export interface GalleryHoloCardProps {
   title: string
+  index?: number
   picked: boolean
   flipped: boolean
   accent: CardAccent
@@ -26,6 +27,7 @@ export interface GalleryHoloCardProps {
 
 export function GalleryHoloCard({
   title,
+  index = 0,
   picked,
   flipped,
   accent,
@@ -38,7 +40,10 @@ export function GalleryHoloCard({
   backExtra,
 }: GalleryHoloCardProps) {
   return (
-    <div className={cn('break-inside-avoid transition-transform duration-300', accent.tilt)}>
+    <div
+      style={{ '--enter-index': index } as CSSProperties}
+      className={cn('md-tile-enter break-inside-avoid transition-transform duration-300', accent.tilt)}
+    >
       <TiltedCard
         containerWidth="100%"
         containerHeight="auto"

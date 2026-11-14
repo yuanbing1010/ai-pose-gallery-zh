@@ -246,7 +246,11 @@ interface FlyingCardClone {
   alt: string
   from: { left: number; top: number; width: number; height: number }
   to: { left: number; top: number; width: number; height: number }
-  delay: number
+  duration: number
+  hitAt: number
+  apexLift: number
+  swayX: number
+  easing: string
 }
 
 export function PackStage({
@@ -364,14 +368,20 @@ export function PackStage({
     pendingPackRef.current = { pack: drawn, written: new Set() }
 
     requestAnimationFrame(() => {
-      const launchOrder = seededShuffle(
+      const landingOrder = seededShuffle(
         [0, 1, 2],
         `launch:${packSeed}:${drawn.portrait.id}:${drawn.pose.id}`
       )
+      const flightProfiles = [
+        { duration: 470, hitAt: 450, apexLift: 32, swayX: -28, easing: 'cubic-bezier(0.22, 0.92, 0.36, 1)' },
+        { duration: 710, hitAt: 690, apexLift: 88, swayX: 24, easing: 'cubic-bezier(0.28, 0.78, 0.34, 1)' },
+        { duration: 960, hitAt: 940, apexLift: 148, swayX: 56, easing: 'cubic-bezier(0.32, 0.7, 0.24, 1.03)' },
+      ]
       const clones: FlyingCardClone[] = []
 
-      launchOrder.forEach((cardIdx, orderIdx) => {
+      landingOrder.forEach((cardIdx, rank) => {
         const spec = cardSpecs[cardIdx]
+        const profile = flightProfiles[rank] ?? flightProfiles[2]
         const targetEl = document.querySelector<HTMLElement>(`[data-dock-slot="${spec.slotKey}"]`)
         const from = fromRects[cardIdx]
         if (!targetEl || !from || from.width < 10) return
@@ -383,7 +393,7 @@ export function PackStage({
           alt: spec.title,
           from,
           to: { left: tr.left, top: tr.top, width: tr.width, height: tr.height },
-          delay: orderIdx * 270,
+          ...profile,
         })
       })
 
@@ -394,22 +404,17 @@ export function PackStage({
         return
       }
 
-      // 逐张在起飞瞬间隐藏舞台原卡，避免三张卡同时消失
-      clones.forEach((c, idx) => {
-        const cardIdx = launchOrder[idx]
-        const hideAt = window.setTimeout(() => {
-          const el = cardEls[cardIdx]
-          if (el) el.style.opacity = '0'
-        }, c.delay)
-        flyTimersRef.current.push(hideAt)
+      // 3 张卡一起同时起飞，舞台静止卡同步交棒给飞行克隆层
+      cardEls.forEach((el) => {
+        el.style.opacity = '0'
       })
 
       setFlyingClones(clones)
 
-      // 每张卡砸进槽位的那一毫秒：单独写入该槽位（不清空其他槽位）+ 独立触发一次悬浮块震颤 + 火花 + 音效
+      // 各自按自身弧线速度先后砸入槽位：每一张落地立刻触发写入、单次底座震颤、火花与递增音阶
       clones.forEach((c, idx) => {
         const isFinal = idx === clones.length - 1
-        const hitAt = window.setTimeout(() => {
+        const hitTimer = window.setTimeout(() => {
           if (pendingPackRef.current) {
             pendingPackRef.current.written.add(c.slotKey)
           }
@@ -430,21 +435,21 @@ export function PackStage({
             const fullChime = window.setTimeout(() => sfxRef.current?.dockFull(), 85)
             flyTimersRef.current.push(fullChime)
           }
-        }, 445 + c.delay)
-        flyTimersRef.current.push(hitAt)
+        }, c.hitAt)
+        flyTimersRef.current.push(hitTimer)
       })
 
-      // 全部落地并看到满槽充能点亮后，清空飞卡层并滑入下一包
-      const maxDelay = clones[clones.length - 1]?.delay ?? 540
+      // 最慢的一张落地并点亮满槽充能后，清空飞卡层并滑入下一包
+      const lastHit = clones[clones.length - 1]?.hitAt ?? 940
       const doneAt = window.setTimeout(() => {
         setFlyingClones([])
         onRedraw()
-      }, maxDelay + 920)
+      }, lastHit + 440)
       flyTimersRef.current.push(doneAt)
     })
   }
 
-  // 对飞入克隆节点应用 WAAPI 错落蓄力 + 高抛重力加速入袋动画 (480ms 干脆落袋)
+  // 对同时起飞的克隆卡应用 WAAPI 异速异弧抛物线动画
   useEffect(() => {
     const layer = flyLayerRef.current
     if (!layer || !flyingClones.length) return
@@ -460,25 +465,24 @@ export function PackStage({
       const dx = toCx - fromCx
       const dy = toCy - fromCy
       const endScale = Math.max(0.14, 30 / Math.max(1, c.from.width))
-      const bank = (idx - 1) * 14
-      const apexLift = [54, 78, 46][idx % 3] ?? 56
+      const bank = (idx - 1) * 16
       el.animate(
         [
           { transform: 'translate3d(0, 0, 0) rotateZ(0deg) scale(1)', opacity: 1 },
           {
-            transform: `translate3d(${(-dx * 0.03).toFixed(1)}px, -24px, 0) rotateZ(${(-bank * 0.65).toFixed(1)}deg) scale(1.07)`,
+            transform: `translate3d(${(dx * 0.08 + c.swayX * 0.45).toFixed(1)}px, ${(-c.apexLift * 0.55).toFixed(1)}px, 0) rotateZ(${(-bank * 0.7).toFixed(1)}deg) scale(1.06)`,
             opacity: 1,
-            offset: 0.14,
+            offset: 0.18,
           },
           {
-            transform: `translate3d(${(dx * 0.34).toFixed(1)}px, ${(dy * 0.16 - apexLift).toFixed(1)}px, 0) rotateZ(${bank}deg) scale(0.84)`,
+            transform: `translate3d(${(dx * 0.44 + c.swayX).toFixed(1)}px, ${(dy * 0.22 - c.apexLift).toFixed(1)}px, 0) rotateZ(${bank}deg) scale(0.84)`,
             opacity: 1,
-            offset: 0.42,
+            offset: 0.48,
           },
           {
             transform: `translate3d(${(dx * 0.94).toFixed(1)}px, ${(dy * 0.94).toFixed(1)}px, 0) rotateZ(${(bank * 0.2).toFixed(1)}deg) scale(${(endScale * 1.16).toFixed(3)})`,
             opacity: 0.98,
-            offset: 0.88,
+            offset: 0.89,
           },
           {
             transform: `translate3d(${dx.toFixed(1)}px, ${dy.toFixed(1)}px, 0) rotateZ(0deg) scale(${endScale.toFixed(3)})`,
@@ -486,9 +490,9 @@ export function PackStage({
           },
         ],
         {
-          duration: 480,
-          delay: c.delay,
-          easing: 'cubic-bezier(0.26, 0.85, 0.38, 1)',
+          duration: c.duration,
+          delay: 0,
+          easing: c.easing,
           fill: 'forwards',
         }
       )
@@ -1054,11 +1058,16 @@ export function PackStage({
       pack.classList.add('hp-held', 'hp-hurt')
     }
 
-    const finishTear = (response: number) => {
+    const finishTear = (response: number, target = 1) => {
       tear.p.set(response)
-      tear.p.to = 1
-      tear.th.to = rand(14, 30)
-      tear.ph.to = -rand(20, 44)
+      tear.p.to = target
+      if (target >= 1) {
+        tear.th.to = rand(14, 30)
+        tear.ph.to = -rand(20, 44)
+      } else {
+        tear.th.to = rand(8, 15)
+        tear.ph.to = -rand(10, 18)
+      }
     }
 
     const triggerOpen = () => {
@@ -1276,7 +1285,14 @@ export function PackStage({
       if (state !== 'idle') return
       if (!tear.p.to) tear.dir = Math.random() < 0.5 ? -1 : 1
       startTear()
-      finishTear(tear.p.to ? 0.18 : 0.55)
+      // 首次轻点撕开一半露出一缕彩虹光；再次点击彻底撕开拆封
+      if (tear.p.to < 0.45) {
+        finishTear(0.28, 0.52)
+        const relax = window.setTimeout(() => pack.classList.remove('hp-held', 'hp-tug'), 220)
+        flyTimersRef.current.push(relax)
+      } else {
+        finishTear(0.2, 1)
+      }
     }
 
     const onStagePointerMove = (e: PointerEvent) => {

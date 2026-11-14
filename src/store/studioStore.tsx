@@ -69,7 +69,7 @@ const DEFAULT_API_CONFIG: ApiConfig = {
   activeProvider: 'gemini',
   imagePassMode: 'url',
   useProxy: false,
-  stylePreset: 'realistic',
+  stylePreset: 'none',
   defaultPromptPrefix: '',
   defaultPromptSuffix: '',
   sendStitchedSheet: false,

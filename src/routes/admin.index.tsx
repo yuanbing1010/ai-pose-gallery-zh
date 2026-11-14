@@ -975,7 +975,7 @@ function AdminHomePage() {
                     size="sm"
                     onClick={() => {
                       updateApiConfig({
-                        stylePreset: 'realistic',
+                        stylePreset: 'none',
                         defaultPromptPrefix: '',
                         defaultPromptSuffix: '',
                       })
