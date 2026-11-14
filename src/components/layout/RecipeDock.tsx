@@ -1,24 +1,53 @@
 import { useQueryClient } from '@tanstack/react-query'
 import { Link, useLocation } from '@tanstack/react-router'
-import { CopyIcon, DicesIcon, LoaderCircleIcon, PersonStandingIcon, ShirtIcon, SparklesIcon, Trash2Icon, UserRoundIcon, XIcon } from 'lucide-react'
-import { toast } from '@/lib/notifications'
+import { motion } from 'motion/react'
+import {
+  DicesIcon,
+  LoaderCircleIcon,
+  PersonStandingIcon,
+  ShirtIcon,
+  SparklesIcon,
+  Trash2Icon,
+  UserRoundIcon,
+  XIcon,
+} from 'lucide-react'
 import { costumesQuery, portraitsQuery, posesQuery } from '@/api/gallery'
 import { poseThumbPath, referenceImageUrl } from '@/lib/recipeImages'
 import { workflowIdentity } from '@/lib/comfyWorkflowParameters'
-import { Button } from '@/components/ui/button'
-import { buildRecipePrompt } from '@/services/aiGenerator'
 import { useStudio } from '@/store/studioStore'
 
 export function RecipeDock() {
   const { pathname } = useLocation()
-  const { recipe, apiConfig, isGenerating, setPortrait, setCostume, setPose, toggleRecipePoseDepth, clearRecipe, randomizeRecipe } = useStudio()
+  const {
+    recipe,
+    apiConfig,
+    isGenerating,
+    setPortrait,
+    setCostume,
+    setPose,
+    toggleRecipePoseDepth,
+    clearRecipe,
+    randomizeRecipe,
+  } = useStudio()
   const qc = useQueryClient()
   const extraCount = (recipe.extraImages || []).length
-  const workflowImages = apiConfig.activeProvider === 'comfyui' && recipe.workflowImagesIdentity === workflowIdentity(apiConfig.comfyuiParams.workflowJson) ? Object.values(recipe.workflowImages || {}) : []
-  const count = [recipe.portrait, recipe.costume, recipe.pose].filter(Boolean).length + extraCount + workflowImages.length
+  const workflowImages =
+    apiConfig.activeProvider === 'comfyui' &&
+    recipe.workflowImagesIdentity === workflowIdentity(apiConfig.comfyuiParams.workflowJson)
+      ? Object.values(recipe.workflowImages || {})
+      : []
+  const count =
+    [recipe.portrait, recipe.costume, recipe.pose].filter(Boolean).length +
+    extraCount +
+    workflowImages.length
+  const coreSlotsFilled = [recipe.portrait, recipe.costume, recipe.pose].filter(Boolean).length
 
-  // 在合成台、设置页、指南页隐藏底部悬浮栏，避免与页面内组件重复
-  if (pathname.startsWith('/studio') || pathname.startsWith('/settings') || pathname.startsWith('/guide')) {
+  if (
+    pathname.startsWith('/studio') ||
+    pathname.startsWith('/settings') ||
+    pathname.startsWith('/guide') ||
+    pathname.startsWith('/admin')
+  ) {
     return null
   }
 
@@ -35,154 +64,207 @@ export function RecipeDock() {
     })
   }
 
-  const handleCopyPrompt = async () => {
-    const text = buildRecipePrompt(recipe, apiConfig.stylePreset, workflowImages)
-    await navigator.clipboard.writeText(text)
-    toast.success('已复制提示词')
-  }
-
   return (
-    <div className="sticky bottom-[max(0.75rem,env(safe-area-inset-bottom))] z-30 mx-auto mt-4 w-full max-w-5xl [@media(max-height:30rem)]:static">
-      <div className="flex flex-col gap-2 rounded-2xl border border-border/80 bg-card/95 p-2 shadow-lg backdrop-blur-md @3xl/main:flex-row @3xl/main:items-center @3xl/main:justify-between sm:px-3.5 sm:py-2.5">
-        <div className="grid min-w-0 max-w-full flex-1 grid-cols-3 gap-1.5 sm:gap-2">
-          {/* Slot 1: Portrait */}
-          <div className="relative flex min-w-0 flex-col items-start gap-1.5 rounded-xl bg-muted/80 p-1.5 @md/main:flex-row @md/main:items-center sm:gap-2 sm:p-2">
-            {recipe.portrait ? (
-              <>
-                <img
-                  src={referenceImageUrl(recipe.portrait.缩略图)}
-                  alt={recipe.portrait.标题}
-                  className="h-8 w-7 shrink-0 rounded-md object-cover sm:h-10 sm:w-8"
-                />
-                <div className="min-w-0 max-w-full flex-1">
-                  <div className="truncate text-[11px] font-medium sm:text-xs">{recipe.portrait.发型名称}</div>
-                </div>
-                <button
-                  type="button"
-                  aria-label="清除人像参考图"
-                  onClick={() => setPortrait(null)}
-                  className="absolute top-1 right-1 shrink-0 rounded-full p-0.5 text-muted-foreground hover:text-foreground @md/main:static"
-                >
-                  <XIcon className="size-3" />
-                </button>
-              </>
-            ) : (
-              <Link to="/portraits" className="flex min-w-0 max-w-full flex-1 items-center gap-1.5 text-muted-foreground hover:text-foreground">
-                <div className="flex h-8 w-7 shrink-0 items-center justify-center rounded-md bg-background/80 sm:h-10 sm:w-8">
-                  <UserRoundIcon className="size-3.5" />
-                </div>
-                <span className="truncate text-[11px] sm:text-xs">人像</span>
-              </Link>
-            )}
-          </div>
-
-          {/* Slot 2: Costume */}
-          <div className="relative flex min-w-0 flex-col items-start gap-1.5 rounded-xl bg-muted/80 p-1.5 @md/main:flex-row @md/main:items-center sm:gap-2 sm:p-2">
-            {recipe.costume ? (
-              <>
-                <img
-                  src={referenceImageUrl(recipe.costume.缩略图)}
-                  alt={recipe.costume.服装名称}
-                  className="h-8 w-7 shrink-0 rounded-md object-cover sm:h-10 sm:w-8"
-                />
-                <div className="min-w-0 max-w-full flex-1">
-                  <div className="truncate text-[11px] font-medium sm:text-xs">{recipe.costume.服装名称}</div>
-                </div>
-                <button
-                  type="button"
-                  aria-label="清除服装参考图"
-                  onClick={() => setCostume(null)}
-                  className="absolute top-1 right-1 shrink-0 rounded-full p-0.5 text-muted-foreground hover:text-foreground @md/main:static"
-                >
-                  <XIcon className="size-3" />
-                </button>
-              </>
-            ) : (
-              <Link to="/costumes" className="flex min-w-0 max-w-full flex-1 items-center gap-1.5 text-muted-foreground hover:text-foreground">
-                <div className="flex h-8 w-7 shrink-0 items-center justify-center rounded-md bg-background/80 sm:h-10 sm:w-8">
-                  <ShirtIcon className="size-3.5" />
-                </div>
-                <span className="truncate text-[11px] sm:text-xs">服装</span>
-              </Link>
-            )}
-          </div>
-
-          {/* Slot 3: Pose */}
-          <div className="relative flex min-w-0 flex-col items-start gap-1.5 rounded-xl bg-muted/80 p-1.5 @md/main:flex-row @md/main:items-center sm:gap-2 sm:p-2">
-            {recipe.pose ? (
-              <>
-                <img
-                  src={referenceImageUrl(poseThumbPath(recipe.pose))}
-                  alt={recipe.pose.姿势名称}
-                  className="h-8 w-7 shrink-0 rounded-md object-cover sm:h-10 sm:w-8"
-                />
-                <div className="min-w-0 max-w-full flex-1">
-                  <div className="truncate text-[11px] font-medium sm:text-xs" title={recipe.pose.姿势名称}>{recipe.pose.姿势名称}</div>
-                  {recipe.pose.source !== 'upload' && (
-                    <button
-                      type="button"
-                      onClick={toggleRecipePoseDepth}
-                      className="mt-0.5 inline-flex items-center gap-1 rounded bg-background/80 px-1 py-0.5 text-[10px] leading-none text-muted-foreground hover:text-foreground"
-                    >
-                      <span className={!recipe.pose.useDepth ? 'font-semibold text-foreground' : ''}>白模</span>
-                      <span>/</span>
-                      <span className={recipe.pose.useDepth ? 'font-semibold text-primary' : ''}>深度</span>
-                    </button>
-                  )}
-                </div>
-                <button
-                  type="button"
-                  aria-label="清除姿势参考图"
-                  onClick={() => setPose(null)}
-                  className="absolute top-1 right-1 shrink-0 rounded-full p-0.5 text-muted-foreground hover:text-foreground @md/main:static"
-                >
-                  <XIcon className="size-3" />
-                </button>
-              </>
-            ) : (
-              <Link to="/poses" className="flex min-w-0 max-w-full flex-1 items-center gap-1.5 text-muted-foreground hover:text-foreground">
-                <div className="flex h-8 w-7 shrink-0 items-center justify-center rounded-md bg-background/80 sm:h-10 sm:w-8">
-                  <PersonStandingIcon className="size-3.5" />
-                </div>
-                <span className="truncate text-[11px] sm:text-xs">姿势</span>
-              </Link>
-            )}
-          </div>
+    <motion.div
+      initial={{ opacity: 0, scale: 0.985 }}
+      animate={{ opacity: 1, scale: 1 }}
+      transition={{ duration: 0.22, ease: [0.2, 0.8, 0.2, 1] }}
+      className={
+        pathname === '/'
+          ? 'z-30 mx-auto w-full max-w-4xl shrink-0 px-3 pb-3'
+          : 'sticky bottom-[max(0.85rem,env(safe-area-inset-bottom))] z-30 mx-auto mt-2 w-full max-w-4xl px-3 [@media(max-height:30rem)]:static'
+      }
+    >
+      <div
+        data-impeccable-ignore="nested-cards"
+        className="md-glass relative overflow-hidden rounded-[22px] p-2 text-foreground sm:px-3 sm:py-2"
+      >
+        {/* 底部极细进度线 */}
+        <div className="pointer-events-none absolute inset-x-6 bottom-0 h-[1.5px] overflow-hidden bg-border">
+          <motion.div
+            animate={{ width: `${(coreSlotsFilled / 3) * 100}%` }}
+            transition={{ duration: 0.22, ease: [0.2, 0.8, 0.2, 1] }}
+            className="h-full bg-foreground"
+          />
         </div>
 
-        <div className="flex flex-wrap items-center justify-end gap-1.5">
-          <Button variant="outline" size="sm" className="h-8 px-2.5 text-xs" onClick={handleRandom}>
-            <DicesIcon className="size-3.5" />
-            随机
-          </Button>
-          {count > 0 && (
-            <>
-              <Button variant="outline" size="sm" className="h-8 px-2.5 text-xs" aria-label="复制提示词" onClick={handleCopyPrompt}>
-                <CopyIcon className="size-3.5" />
-                <span className="hidden md:inline">复制词</span>
-              </Button>
-              <Button variant="ghost" size="icon" className="size-8" aria-label="清空参考图" onClick={clearRecipe}>
+        <div className="flex flex-col gap-2 @3xl/main:flex-row @3xl/main:items-center @3xl/main:justify-between">
+          <div className="grid min-w-0 flex-1 grid-cols-3 gap-1.5 rounded-2xl bg-muted/75 p-1 sm:gap-2">
+            {/* Slot 1: Portrait */}
+            <div
+              data-dock-slot="portrait"
+              className={`relative flex min-w-0 items-center gap-2 rounded-xl px-2.5 py-1.5 transition-colors ${
+                recipe.portrait
+                  ? 'border border-border bg-card shadow-xs'
+                  : 'hover:bg-card/70'
+              }`}
+            >
+              {recipe.portrait ? (
+                <>
+                  <img
+                    src={referenceImageUrl(recipe.portrait.缩略图)}
+                    alt={recipe.portrait.标题}
+                    className="size-7 shrink-0 rounded-md object-cover ring-1 ring-border"
+                  />
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-xs font-semibold text-foreground">{recipe.portrait.发型名称}</div>
+                  </div>
+                  <button
+                    type="button"
+                    aria-label="清除人像参考图"
+                    onClick={() => setPortrait(null)}
+                    className="shrink-0 rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+                  >
+                    <XIcon className="size-3.5" />
+                  </button>
+                </>
+              ) : (
+                <Link
+                  to="/portraits"
+                  className="flex min-w-0 flex-1 items-center gap-2 py-0.5 text-muted-foreground hover:text-foreground"
+                >
+                  <div className="flex size-6 shrink-0 items-center justify-center rounded-md bg-card text-foreground ring-1 ring-border">
+                    <UserRoundIcon className="size-3.5" />
+                  </div>
+                  <span className="truncate text-xs font-medium">1. 选人像</span>
+                </Link>
+              )}
+            </div>
+
+            {/* Slot 2: Costume */}
+            <div
+              data-dock-slot="costume"
+              className={`relative flex min-w-0 items-center gap-2 rounded-xl px-2.5 py-1.5 transition-colors ${
+                recipe.costume
+                  ? 'border border-border bg-card shadow-xs'
+                  : 'hover:bg-card/70'
+              }`}
+            >
+              {recipe.costume ? (
+                <>
+                  <img
+                    src={referenceImageUrl(recipe.costume.缩略图)}
+                    alt={recipe.costume.服装名称}
+                    className="size-7 shrink-0 rounded-md object-cover ring-1 ring-border"
+                  />
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-xs font-semibold text-foreground">{recipe.costume.服装名称}</div>
+                  </div>
+                  <button
+                    type="button"
+                    aria-label="清除服装参考图"
+                    onClick={() => setCostume(null)}
+                    className="shrink-0 rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+                  >
+                    <XIcon className="size-3.5" />
+                  </button>
+                </>
+              ) : (
+                <Link
+                  to="/costumes"
+                  className="flex min-w-0 flex-1 items-center gap-2 py-0.5 text-muted-foreground hover:text-foreground"
+                >
+                  <div className="flex size-6 shrink-0 items-center justify-center rounded-md bg-card text-foreground ring-1 ring-border">
+                    <ShirtIcon className="size-3.5" />
+                  </div>
+                  <span className="truncate text-xs font-medium">2. 选穿搭</span>
+                </Link>
+              )}
+            </div>
+
+            {/* Slot 3: Pose */}
+            <div
+              data-dock-slot="pose"
+              className={`relative flex min-w-0 items-center gap-2 rounded-xl px-2.5 py-1.5 transition-colors ${
+                recipe.pose
+                  ? 'border border-border bg-card shadow-xs'
+                  : 'hover:bg-card/70'
+              }`}
+            >
+              {recipe.pose ? (
+                <>
+                  <img
+                    src={referenceImageUrl(poseThumbPath(recipe.pose))}
+                    alt={recipe.pose.姿势名称}
+                    className="size-7 shrink-0 rounded-md object-cover ring-1 ring-border"
+                  />
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-xs font-semibold text-foreground" title={recipe.pose.姿势名称}>
+                      {recipe.pose.姿势名称}
+                    </div>
+                    {recipe.pose.source !== 'upload' && (
+                      <button
+                        type="button"
+                        onClick={toggleRecipePoseDepth}
+                        className="inline-flex items-center gap-1 text-[11px] leading-none text-muted-foreground hover:text-foreground"
+                      >
+                        <span className={!recipe.pose.useDepth ? 'font-semibold text-foreground' : ''}>白模</span>
+                        <span>/</span>
+                        <span className={recipe.pose.useDepth ? 'font-semibold text-[#D9381E]' : ''}>深度</span>
+                      </button>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    aria-label="清除姿势参考图"
+                    onClick={() => setPose(null)}
+                    className="shrink-0 rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+                  >
+                    <XIcon className="size-3.5" />
+                  </button>
+                </>
+              ) : (
+                <Link
+                  to="/poses"
+                  className="flex min-w-0 flex-1 items-center gap-2 py-0.5 text-muted-foreground hover:text-foreground"
+                >
+                  <div className="flex size-6 shrink-0 items-center justify-center rounded-md bg-card text-foreground ring-1 ring-border">
+                    <PersonStandingIcon className="size-3.5" />
+                  </div>
+                  <span className="truncate text-xs font-medium">3. 选姿势</span>
+                </Link>
+              )}
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center justify-end gap-1.5">
+            <button
+              type="button"
+              onClick={handleRandom}
+              className="inline-flex h-8 items-center gap-1.5 rounded-full border border-border bg-card px-3.5 text-xs font-medium text-foreground transition-colors hover:bg-muted active:scale-[0.97]"
+            >
+              <DicesIcon className="size-3.5 text-muted-foreground" />
+              <span>随机</span>
+            </button>
+            {count > 0 && (
+              <button
+                type="button"
+                aria-label="清空参考图"
+                onClick={clearRecipe}
+                className="inline-flex size-8 items-center justify-center rounded-full border border-border bg-card text-muted-foreground transition-colors hover:bg-destructive/15 hover:text-destructive active:scale-[0.97]"
+              >
                 <Trash2Icon className="size-3.5" />
-              </Button>
-            </>
-          )}
-          <Button size="sm" className="h-8 px-3 text-xs" asChild>
-            <Link to="/studio">
+              </button>
+            )}
+            <Link
+              to="/studio"
+              className="inline-flex h-8 items-center gap-1.5 rounded-full bg-primary px-4 text-xs font-semibold text-primary-foreground transition-all hover:opacity-90 active:scale-[0.97]"
+            >
               {isGenerating ? (
                 <>
                   <LoaderCircleIcon className="size-3.5 animate-spin" />
-                  生成中…
+                  <span>生成中…</span>
                 </>
               ) : (
                 <>
                   <SparklesIcon className="size-3.5" />
-                  合成 ({count})
+                  <span>立即合成 ({count}/3)</span>
                 </>
               )}
             </Link>
-          </Button>
+          </div>
         </div>
       </div>
-    </div>
+    </motion.div>
   )
 }

@@ -152,7 +152,12 @@ export const STYLE_PRESETS: Record<string, { label: string; prompt: string }> = 
 // 用自然语言逐项描述（人物 / 服装 / 姿势），实测比堆砌要点更能让多图编辑模型还原服装、避免照搬人体模型线条
 const PHOTO_STYLES = new Set(['realistic', 'fashion', 'film'])
 
-export function buildRecipePrompt(recipe: RecipeState, stylePreset = 'realistic', workflowImages: ExtraReferenceImage[] = []): string {
+export function buildRecipePrompt(
+  recipe: RecipeState,
+  stylePreset = 'realistic',
+  workflowImages: ExtraReferenceImage[] = [],
+  promptOverrides?: { prefix?: string; suffix?: string }
+): string {
   const styleInfo = STYLE_PRESETS[stylePreset] ?? STYLE_PRESETS.realistic
   const isPhoto = PHOTO_STYLES.has(stylePreset)
   const faceless = !recipe.portrait && !workflowImages.some((image) => image.role === 'character_sheet') && Boolean(recipe.costume && recipe.pose)
@@ -219,6 +224,7 @@ export function buildRecipePrompt(recipe: RecipeState, stylePreset = 'realistic'
   }
 
   const lines = [
+    ...(promptOverrides?.prefix?.trim() ? [promptOverrides.prefix.trim()] : []),
     `请根据${workflowImages.some((image) => image.role === 'character_sheet') ? '提供的角色设定参考' : `提供的 ${idx - 1} 张参考图`}，生成一张完整的${faceless ? '人物穿搭展示图' : isPhoto ? '真实人物照片' : '人物图像'}：`,
     ...clauses,
   ]
@@ -226,6 +232,9 @@ export function buildRecipePrompt(recipe: RecipeState, stylePreset = 'realistic'
     lines.push(`• 风格：${styleInfo.prompt} ${faceless ? '人物比例协调，手部自然，脸部无五官，光影统一。' : '人物比例协调，手部与五官自然，光影统一。'}`)
   }
   lines.push('画面中没有任何文字、标志或水印。')
+  if (promptOverrides?.suffix?.trim()) {
+    lines.push(promptOverrides.suffix.trim())
+  }
   return lines.join('\n')
 }
 

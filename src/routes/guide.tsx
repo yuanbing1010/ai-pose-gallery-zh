@@ -11,57 +11,56 @@ export const Route = createFileRoute('/guide')({
 function GuidePage() {
   return (
     <>
-      <PageHeader title="使用指南与免责声明" />
+      <PageHeader code="GUIDE & LEGAL" title="使用指南与免责声明" />
 
       <Section title="角色合成流程" className="@lg/section:grid-cols-3">
-        <div className="rounded-2xl bg-background p-4">
-          <Badge>1. 人像</Badge>
-          <h3 className="mt-2 text-sm font-semibold">人像颜值库 (1,499)</h3>
-          <p className="mt-1 text-xs text-muted-foreground">
+        <div className="rounded-2xl border border-border bg-card p-4">
+          <Badge className="bg-[#D9381E] text-white">1. 人像</Badge>
+          <h3 className="mt-2.5 text-sm font-bold">人像颜值库 (1,499)</h3>
+          <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
             挑选五官与发型参考，或在合成台直接上传自定义人像图，锁定角色面部特征。
           </p>
         </div>
 
-        <div className="rounded-2xl bg-background p-4">
-          <Badge>2. 服装</Badge>
-          <h3 className="mt-2 text-sm font-semibold">服装穿搭库 (3,224)</h3>
-          <p className="mt-1 text-xs text-muted-foreground">
+        <div className="rounded-2xl border border-border bg-card p-4">
+          <Badge className="bg-[#E5A918] text-zinc-950">2. 服装</Badge>
+          <h3 className="mt-2.5 text-sm font-bold">服装穿搭库 (3,224)</h3>
+          <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
             按全部 / 现实 / 二次元及来源、分类、标签挑选；含ギア写实 1,407 套、Shisei 中国历代 57 套（227 视角）、ギア动漫 1,320 套与 CharaDB 二次元 440 套。
           </p>
         </div>
 
-        <div className="rounded-2xl bg-background p-4">
-          <Badge>3. 姿势 + 附图</Badge>
-          <h3 className="mt-2 text-sm font-semibold">动作姿势库 (1,439)</h3>
-          <p className="mt-1 text-xs text-muted-foreground">
-            挑选 5 视角 3D 素体白模或深度图（Depth），结合云端 API 或本地 ComfyUI 一键生成角色立绘。
+        <div className="rounded-2xl border border-border bg-card p-4">
+          <Badge className="bg-[#116E65] text-white">3. 姿势 + 附图</Badge>
+          <h3 className="mt-2.5 text-sm font-bold">动作姿势库 (1,439)</h3>
+          <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
+            挑选 5 视角 3D 素体白模或深度图（Depth），结合自由搭配的画面描述词与画风预设，一键生成完整角色立绘。
           </p>
         </div>
       </Section>
 
       <Section title="免责声明与合规使用规范（必读）" className="@lg/section:grid-cols-1">
-        <div className="space-y-2.5 rounded-2xl bg-background p-4 text-xs leading-relaxed text-muted-foreground">
+        <div className="space-y-3 rounded-2xl border border-border/60 bg-background/80 p-4 text-xs leading-relaxed text-muted-foreground">
           <p>
             <strong className="text-foreground">1. 仅供学习与合法艺术创作（严禁违法）：</strong>
-            本项目（含网页工作台、本地 ComfyUI 插件与工作流模板）
+            本图库与角色合成工作台
             <strong className="text-foreground">仅供个人学习、人体结构研究、插画构图参考与技术交流使用</strong>
             。严禁使用本工具生成、制作或传播任何违反法律法规、淫秽色情、暴力违禁内容，严禁未经他人明确授权上传真实人物照片进行换脸或深伪合成（Deepfake）等侵犯他人肖像权、隐私权与名誉权的行为。
           </p>
           <p>
-            <strong className="text-foreground">2. NSFW（18+）敏感内容提示：</strong>
-            图库中包含部分成人向 3D 素体姿势（全身单人・性感系、双人缠绵）与内衣/性感穿搭参考，旨在服务绘画与动作设计练习。系统默认开启「安全模式 (SFW)」屏蔽上述分类，
-            <strong className="text-rose-600 dark:text-rose-400">未满 18 周岁的未成年人严禁关闭安全模式或访问相关内容</strong>。
+            <strong className="text-foreground">2. 适用范围与未成年人保护：</strong>
+            本图库定位为绘画人体结构、穿搭剪裁与角色造型参考，禁止用于制作、传播任何违禁或低俗内容。未满 18 周岁的未成年人请在监护人指导下合理使用本创作工具。
           </p>
           <p>
             <strong className="text-foreground">3. 隐私保护与使用者责任归属：</strong>
-            本工作台为纯前端本地应用，所有 AI 生图请求均由使用者自行配置的云端 API Key 或使用者本机 ComfyUI 环境直接执行，平台不收集、不存储任何用户上传的图片或生成结果。
+            本工作台为纯前端本地创作工具，平台不收集、不存储任何用户上传的图片或生成结果。
             <strong className="text-foreground">因使用者违规使用或不当传播所产生的一切法律责任，均由使用者本人独立承担，与本项目及维护者无关。</strong>
           </p>
         </div>
       </Section>
 
       <Section title="数据来源与版权说明" className="@lg/section:grid-cols-1">
-        <div className="space-y-2.5 rounded-2xl bg-background p-4 text-xs leading-relaxed text-muted-foreground">
+        <div className="space-y-3 rounded-2xl border border-border/60 bg-background/80 p-4 text-xs leading-relaxed text-muted-foreground">
           <p>
             <strong className="text-foreground">• 原作者版权归属：</strong>
             本仓库原有姿势（<code>ai-pose-gallery.pages.dev</code>、<code>ai-pose-depth-gallery.pages.dev</code>）、现实服装（<code>ai-costume-gallery.pages.dev</code>）、人像（<code>ai-portrait-gallery.pages.dev</code>）参考图与原始元数据源自原作者{' '}
@@ -73,7 +72,7 @@ function GuidePage() {
           </p>
           <p>
             <strong className="text-foreground">• 使用与分发限制：</strong>
-            人像库遵循 <strong className="text-emerald-600 dark:text-emerald-400">CC0 1.0 协议</strong>；原有姿势库与现实服装库免费供个人学习与 AI 生图参考使用，
+            人像库遵循 <strong className="text-emerald-700 dark:text-emerald-400">CC0 1.0 协议</strong>；原有姿势库与现实服装库免费供个人学习与 AI 生图参考使用，
             <strong className="text-foreground">严禁将本图库原始图片打包转售或用于付费分发</strong>。
           </p>
         </div>

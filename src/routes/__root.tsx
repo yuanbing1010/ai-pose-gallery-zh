@@ -1,9 +1,7 @@
 import type { QueryClient } from '@tanstack/react-query'
-import { createRootRouteWithContext, Outlet } from '@tanstack/react-router'
-import { AppHeader } from '@/components/layout/AppHeader'
-import { AppSidebar } from '@/components/layout/AppSidebar'
+import { createRootRouteWithContext, Outlet, useLocation } from '@tanstack/react-router'
 import { RecipeDock } from '@/components/layout/RecipeDock'
-import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar'
+import { ShowcaseNavbar } from '@/components/layout/ShowcaseNavbar'
 import { Toaster } from '@/components/ui/sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
 
@@ -12,20 +10,50 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
 })
 
 function RootLayout() {
+  const pathname = useLocation({ select: (l) => l.pathname })
+
+  // 管理端（/admin/login 与 /admin）是独立系统，拥有独立的瑞士极简布局
+  if (pathname.startsWith('/admin')) {
+    return (
+      <TooltipProvider>
+        <Outlet />
+        <Toaster />
+      </TooltipProvider>
+    )
+  }
+
+  const isHome = pathname === '/'
+
+  // 用户前端：全站统一的暖调柔光棚拍背景与可切换暗房模式
   return (
     <TooltipProvider>
-      <SidebarProvider>
-        <AppSidebar />
-        <SidebarInset>
-          <AppHeader />
-          <main className="@container/main flex min-w-0 flex-1 flex-col px-4 pt-4 pb-10 sm:px-6 md:px-8">
-            <div className="mx-auto flex min-w-0 w-full max-w-7xl flex-1 flex-col gap-4 md:gap-6">
-              <Outlet />
-            </div>
-            <RecipeDock />
-          </main>
-        </SidebarInset>
-      </SidebarProvider>
+      <div
+        className={
+          isHome
+            ? 'sk-grid-bg relative flex h-dvh flex-col overflow-hidden bg-background text-foreground'
+            : 'sk-grid-bg relative flex min-h-dvh flex-col bg-background text-foreground'
+        }
+      >
+        <ShowcaseNavbar />
+        <main
+          className={
+            isHome
+              ? '@container/main relative z-10 flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden'
+              : '@container/main relative z-10 flex min-w-0 flex-1 flex-col'
+          }
+        >
+          <div
+            className={
+              isHome
+                ? 'mx-auto flex min-h-0 min-w-0 w-full max-w-[1440px] flex-1 flex-col'
+                : 'mx-auto flex min-w-0 w-full max-w-[1440px] flex-1 flex-col gap-6 px-4 pt-6 pb-12 sm:px-6'
+            }
+          >
+            <Outlet />
+          </div>
+          <RecipeDock />
+        </main>
+      </div>
       <Toaster />
     </TooltipProvider>
   )

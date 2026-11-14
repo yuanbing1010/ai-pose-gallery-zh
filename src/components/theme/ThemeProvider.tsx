@@ -13,7 +13,7 @@ const ThemeContext = createContext<ThemeState | null>(null)
 
 function readTheme(): Theme {
   const v = localStorage.getItem(STORAGE_KEY)
-  return v === 'light' || v === 'dark' ? v : 'system'
+  return v === 'light' || v === 'dark' || v === 'system' ? v : 'light'
 }
 
 export function ThemeProvider({ children }: { children: ReactNode }) {

@@ -70,12 +70,12 @@ function ZoomSurface({ imageUrl, alt = '图片预览', children, contentWidth = 
     if (points.length === 1) return { ...points[0], distance: 0 }
     return { x: (points[0].x + points[1].x) / 2, y: (points[0].y + points[1].y) / 2, distance: Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y) }
   }
-  return <div className={cn('flex min-h-0 w-full flex-col gap-2', className)}>
+  return <div className={cn('flex min-h-0 w-full flex-col gap-2 text-foreground', className)}>
     <div className="flex shrink-0 flex-wrap items-center justify-center gap-2" aria-label="图片缩放控制">
-      <Button type="button" variant="outline" className="min-h-11 min-w-11" aria-label="缩小图片" disabled={view.zoom <= 1} onClick={() => zoomAt(current.current.zoom / 1.25)}><MinusIcon className="size-4" /></Button>
-      <span className="min-w-16 text-center text-sm tabular-nums" aria-live="polite">{Math.round(view.zoom * 100)}%</span>
-      <Button type="button" variant="outline" className="min-h-11 min-w-11" aria-label="放大图片" disabled={view.zoom >= 8} onClick={() => zoomAt(current.current.zoom * 1.25)}><PlusIcon className="size-4" /></Button>
-      <Button type="button" variant="outline" className="min-h-11" onClick={reset}><RotateCcwIcon className="size-4" />适应窗口</Button>
+      <Button type="button" variant="outline" className="min-h-11 min-w-11 text-foreground" aria-label="缩小图片" disabled={view.zoom <= 1} onClick={() => zoomAt(current.current.zoom / 1.25)}><MinusIcon className="size-4" /></Button>
+      <span className="min-w-16 text-center text-sm font-semibold text-foreground tabular-nums" aria-live="polite">{Math.round(view.zoom * 100)}%</span>
+      <Button type="button" variant="outline" className="min-h-11 min-w-11 text-foreground" aria-label="放大图片" disabled={view.zoom >= 8} onClick={() => zoomAt(current.current.zoom * 1.25)}><PlusIcon className="size-4" /></Button>
+      <Button type="button" variant="outline" className="min-h-11 text-foreground" onClick={reset}><RotateCcwIcon className="size-4" />适应窗口</Button>
     </div>
     <div ref={viewport} tabIndex={0} role="region" aria-label={`${alt}；加减键缩放，方向键移动，0 键复位`}
       className="relative min-h-0 flex-1 overflow-hidden rounded-lg bg-muted/60 outline-offset-2 focus-visible:outline-2 focus-visible:outline-ring"

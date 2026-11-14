@@ -1,4 +1,6 @@
 import { createContext, type ReactNode, useContext, useEffect, useEffectEvent, useRef, useState } from 'react'
+import { create } from 'zustand'
+import { arrayMove } from '@dnd-kit/sortable'
 import { toast } from '@/lib/notifications'
 import { isNsfwCostume, isNsfwPose } from '@/api/gallery'
 import {
@@ -54,6 +56,8 @@ const HISTORY_KEY = 'pose_atlas_history_v3'
 const TASK_KEY = 'pose_atlas_active_task_v1'
 type ActiveTask = { task?: ComfyTaskHandle; prompt: string; summary: string; unknown?: boolean; snapshot?: GenerationSnapshot }
 const SAFE_MODE_KEY = 'pose_atlas_safe_mode_v1'
+const UI_MODE_KEY = 'pose_atlas_ui_mode_v1'
+export type UiMode = 'showcase' | 'console'
 
 const COMFY_CONFIG_VERSION = 3
 
@@ -65,6 +69,8 @@ const DEFAULT_API_CONFIG: ApiConfig = {
   imagePassMode: 'url',
   useProxy: false,
   stylePreset: 'realistic',
+  defaultPromptPrefix: '',
+  defaultPromptSuffix: '',
   sendStitchedSheet: false,
   providers: {
     gemini: {
@@ -196,6 +202,8 @@ function mergeStoredConfig(raw: unknown): ApiConfig {
 }
 
 interface StudioContextValue {
+  uiMode: UiMode
+  setUiMode: (mode: UiMode) => void
   comfyConnection: ComfyConnectionState
   checkComfyConnection: (manual?: boolean) => Promise<void>
   setComfyConnectionVisible: (visible: boolean) => void
@@ -232,6 +240,7 @@ interface StudioContextValue {
   addExtraImage: (item: { name: string; url: string }) => void
   removeExtraImage: (id: string) => void
   updateExtraImageName: (id: string, name: string) => void
+  reorderExtraImages: (activeId: string, overId: string) => void
   setWorkflowImage: (nodeId: string, image: ExtraReferenceImage | null, identity: string) => void
   clearRecipe: () => void
   randomizeRecipe: (pools: { portraits?: PortraitItem[]; costumes?: CostumeItem[]; poses?: PoseItem[] }) => void
@@ -250,80 +259,185 @@ interface StudioContextValue {
 
 const StudioContext = createContext<StudioContextValue | null>(null)
 
+type Updater<T> = T | ((prev: T) => T)
+
+interface StudioZustandStore {
+  uiMode: UiMode
+  recipe: RecipeState
+  apiConfig: ApiConfig
+  history: GenerationHistoryItem[]
+  safeMode: boolean
+  poseDepthMode: boolean
+  customPrompt: string | null
+  previewUrl: string
+  isGenerating: boolean
+  generatingModel: string
+  generationProgress: GenerationProgress | null
+  generationError: string
+  activeTask: ActiveTask | null
+  idbHydrated: boolean
+  setUiMode: (mode: UiMode) => void
+  setRecipe: (updater: Updater<RecipeState>) => void
+  setApiConfig: (updater: Updater<ApiConfig>) => void
+  setHistory: (updater: Updater<GenerationHistoryItem[]>) => void
+  setSafeMode: (updater: Updater<boolean>) => void
+  setPoseDepthModeState: (updater: Updater<boolean>) => void
+  setCustomPrompt: (val: string | null) => void
+  setPreviewUrl: (updater: Updater<string>) => void
+  setIsGenerating: (val: boolean) => void
+  setGeneratingModel: (val: string) => void
+  setGenerationProgress: (val: GenerationProgress | null) => void
+  setGenerationError: (val: string) => void
+  setActiveTask: (val: ActiveTask | null) => void
+  setIdbHydrated: (val: boolean) => void
+}
+
+const initialRecipe = (): RecipeState => {
+  try {
+    const raw = localStorage.getItem(RECIPE_KEY)
+    if (!raw) return { portrait: null, costume: null, pose: null, extraImages: [] }
+    const parsed = JSON.parse(raw)
+    return {
+      portrait: parsed.portrait ?? null,
+      costume: parsed.costume ?? null,
+      pose: parsed.pose ?? null,
+      extraImages: Array.isArray(parsed.extraImages) ? parsed.extraImages : [],
+    }
+  } catch {
+    return { portrait: null, costume: null, pose: null, extraImages: [] }
+  }
+}
+
+const initialApiConfig = (): ApiConfig => {
+  try {
+    const raw = localStorage.getItem(CFG_KEY)
+    return raw ? mergeStoredConfig(JSON.parse(raw)) : DEFAULT_API_CONFIG
+  } catch {
+    return DEFAULT_API_CONFIG
+  }
+}
+
+const initialHistory = (): GenerationHistoryItem[] => {
+  try {
+    const raw = localStorage.getItem(HISTORY_KEY)
+    return raw ? JSON.parse(raw) : []
+  } catch {
+    return []
+  }
+}
+
+const initialSafeMode = (): boolean => {
+  try {
+    const raw = localStorage.getItem(SAFE_MODE_KEY)
+    return raw === null ? true : raw !== 'false'
+  } catch {
+    return true
+  }
+}
+
+const initialUiMode = (): UiMode => {
+  try {
+    const raw = localStorage.getItem(UI_MODE_KEY)
+    return raw === 'console' ? 'console' : 'showcase'
+  } catch {
+    return 'showcase'
+  }
+}
+
+// oxlint-disable-next-line react/only-export-components
+export const useStudioStore = create<StudioZustandStore>((set) => {
+  const rec = initialRecipe()
+  const hist = initialHistory()
+  return {
+    uiMode: initialUiMode(),
+    recipe: rec,
+    apiConfig: initialApiConfig(),
+    history: hist,
+    safeMode: initialSafeMode(),
+    poseDepthMode: Boolean(rec.pose?.useDepth),
+    customPrompt: null,
+    previewUrl: hist[0]?.imageUrl || '',
+    isGenerating: false,
+    generatingModel: '',
+    generationProgress: null,
+    generationError: '',
+    activeTask: null,
+    idbHydrated: false,
+    setUiMode: (uiMode) => set({ uiMode }),
+    setRecipe: (updater) =>
+      set((s) => ({ recipe: typeof updater === 'function' ? updater(s.recipe) : updater })),
+    setApiConfig: (updater) =>
+      set((s) => ({ apiConfig: typeof updater === 'function' ? updater(s.apiConfig) : updater })),
+    setHistory: (updater) =>
+      set((s) => ({ history: typeof updater === 'function' ? updater(s.history) : updater })),
+    setSafeMode: (updater) =>
+      set((s) => ({ safeMode: typeof updater === 'function' ? updater(s.safeMode) : updater })),
+    setPoseDepthModeState: (updater) =>
+      set((s) => ({ poseDepthMode: typeof updater === 'function' ? updater(s.poseDepthMode) : updater })),
+    setCustomPrompt: (customPrompt) => set({ customPrompt }),
+    setPreviewUrl: (updater) =>
+      set((s) => ({ previewUrl: typeof updater === 'function' ? updater(s.previewUrl) : updater })),
+    setIsGenerating: (isGenerating) => set({ isGenerating }),
+    setGeneratingModel: (generatingModel) => set({ generatingModel }),
+    setGenerationProgress: (generationProgress) => set({ generationProgress }),
+    setGenerationError: (generationError) => set({ generationError }),
+    setActiveTask: (activeTask) => set({ activeTask }),
+    setIdbHydrated: (idbHydrated) => set({ idbHydrated }),
+  }
+})
+
 export function StudioProvider({ children }: { children: ReactNode }) {
-  const [recipe, setRecipe] = useState<RecipeState>(() => {
-    try {
-      const raw = localStorage.getItem(RECIPE_KEY)
-      if (!raw) return { portrait: null, costume: null, pose: null, extraImages: [] }
-      const parsed = JSON.parse(raw)
-      return {
-        portrait: parsed.portrait ?? null,
-        costume: parsed.costume ?? null,
-        pose: parsed.pose ?? null,
-        extraImages: Array.isArray(parsed.extraImages) ? parsed.extraImages : [],
-      }
-    } catch {
-      return { portrait: null, costume: null, pose: null, extraImages: [] }
-    }
-  })
+  const {
+    uiMode,
+    recipe,
+    apiConfig,
+    history,
+    safeMode,
+    poseDepthMode,
+    customPrompt,
+    previewUrl,
+    isGenerating,
+    generatingModel,
+    generationProgress,
+    generationError,
+    activeTask,
+    idbHydrated,
+    setUiMode,
+    setRecipe,
+    setApiConfig,
+    setHistory,
+    setSafeMode,
+    setPoseDepthModeState,
+    setCustomPrompt,
+    setPreviewUrl,
+    setIsGenerating,
+    setGeneratingModel,
+    setGenerationProgress,
+    setGenerationError,
+    setActiveTask,
+    setIdbHydrated,
+  } = useStudioStore()
 
-  const [apiConfig, setApiConfig] = useState<ApiConfig>(() => {
+  useEffect(() => {
+    delete document.documentElement.dataset.uiMode
     try {
-      const raw = localStorage.getItem(CFG_KEY)
-      return raw ? mergeStoredConfig(JSON.parse(raw)) : DEFAULT_API_CONFIG
-    } catch {
-      return DEFAULT_API_CONFIG
-    }
-  })
-
-  const [history, setHistory] = useState<GenerationHistoryItem[]>(() => {
-    try {
-      const raw = localStorage.getItem(HISTORY_KEY)
-      return raw ? JSON.parse(raw) : []
-    } catch {
-      return []
-    }
-  })
+      localStorage.removeItem(UI_MODE_KEY)
+    } catch {}
+  }, [])
 
   const [comfyConnectionVisible, setComfyConnectionVisible] = useState(false)
   const { comfyConnection, checkComfyConnection } = useComfyConnection(apiConfig.providers.comfyui.baseUrl, apiConfig.providers.comfyui.apiKey, comfyConnectionVisible && apiConfig.activeProvider === 'comfyui')
 
-  const [safeMode, setSafeMode] = useState<boolean>(() => {
-    try {
-      const raw = localStorage.getItem(SAFE_MODE_KEY)
-      return raw === null ? true : raw !== 'false'
-    } catch {
-      return true
-    }
-  })
   const [ageGateOpen, setAgeGateOpen] = useState(false)
   const pendingUnlockCbRef = useRef<(() => void) | null>(null)
-  const [poseDepthMode, setPoseDepthModeState] = useState<boolean>(() => Boolean(recipe.pose?.useDepth))
   const randomContext = useRef({ recipe, safeMode, poseDepthMode })
   useEffect(() => { randomContext.current = { recipe, safeMode, poseDepthMode } }, [recipe, safeMode, poseDepthMode])
 
-  // 提升到根部 Provider 的生成状态，路由切换不会卸载或中断
-  const [customPrompt, setCustomPrompt] = useState<string | null>(null)
-  const [previewUrl, setPreviewUrl] = useState<string>(() => {
-    try {
-      const raw = localStorage.getItem(HISTORY_KEY)
-      const list = raw ? JSON.parse(raw) : []
-      return list[0]?.imageUrl || ''
-    } catch {
-      return ''
-    }
-  })
-  const [isGenerating, setIsGenerating] = useState(false)
-  const [generatingModel, setGeneratingModel] = useState('')
-  const [generationProgress, setGenerationProgress] = useState<GenerationProgress | null>(null)
-  const [generationError, setGenerationError] = useState('')
   const isGeneratingRef = useRef(false)
-  const [activeTask, setActiveTask] = useState<ActiveTask | null>(null)
   const activeTaskRef = useRef<ActiveTask | null>(null)
   const trackingRef = useRef<AbortController | null>(null)
   const historyRef = useRef(history)
   const historyWrites = useRef<Promise<void>>(Promise.resolve())
-  const [idbHydrated, setIdbHydrated] = useState(false)
 
   // 从 IndexedDB 异步恢复大容量历史记录与含附图的配方
   useEffect(() => {
@@ -359,7 +473,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     return () => {
       active = false
     }
-  }, [])
+  }, [setActiveTask, setHistory, setIdbHydrated, setPoseDepthModeState, setPreviewUrl, setRecipe])
 
   useEffect(() => {
     if (!idbHydrated) return
@@ -474,6 +588,17 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     }))
   }
 
+  const reorderExtraImages = (activeId: string, overId: string) => {
+    if (activeId === overId) return
+    setRecipe((r) => {
+      const list = r.extraImages || []
+      const oldIdx = list.findIndex((x) => x.id === activeId)
+      const newIdx = list.findIndex((x) => x.id === overId)
+      if (oldIdx < 0 || newIdx < 0) return r
+      return { ...r, extraImages: arrayMove(list, oldIdx, newIdx) }
+    })
+  }
+
   const setWorkflowImage = (nodeId: string, image: ExtraReferenceImage | null, identity: string) => {
     if (identity !== workflowIdentity(apiConfig.comfyuiParams.workflowJson)) return
     setRecipe((r) => {
@@ -500,7 +625,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       if (entries.length === kept.length && r.workflowImagesIdentity === identity) return r
       return { ...r, workflowImages: Object.fromEntries(kept), workflowImagesIdentity: identity }
     })
-  }, [activeComfyParams, idbHydrated])
+  }, [activeComfyParams, idbHydrated, setRecipe])
 
   const clearRecipe = () => {
     setRecipe({ portrait: null, costume: null, pose: null, extraImages: [] })
@@ -524,7 +649,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
         ? { ...posePool[Math.floor(Math.random() * posePool.length)], useDepth: poseDepthMode }
         : prev.pose,
     }))
-    toast.success(safeMode ? '已随机抽取一套角色配方（安全模式）' : '已随机抽取一套角色配方')
+    toast.success('已随机抽取一套角色配方')
   }
 
   const randomizeSlot = (slot: ReferenceSlot, scope: RandomScope, pools: ReferencePools, expectedId?: string | null) => {
@@ -679,7 +804,12 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     if (activeTaskRef.current) { toast.error('存在待确认任务，请先恢复或明确停止跟踪'); return }
     const recipeSnapshot = recipe
     const configSnapshot = apiConfig
-    const finalPrompt = overridePrompt ?? customPrompt ?? buildRecipePrompt(recipeSnapshot, configSnapshot.stylePreset, configSnapshot.activeProvider === 'comfyui' && recipeSnapshot.workflowImagesIdentity === workflowIdentity(configSnapshot.comfyuiParams.workflowJson) ? Object.values(recipeSnapshot.workflowImages || {}) : [])
+    const finalPrompt = overridePrompt ?? customPrompt ?? buildRecipePrompt(
+      recipeSnapshot,
+      configSnapshot.stylePreset,
+      configSnapshot.activeProvider === 'comfyui' && recipeSnapshot.workflowImagesIdentity === workflowIdentity(configSnapshot.comfyuiParams.workflowJson) ? Object.values(recipeSnapshot.workflowImages || {}) : [],
+      { prefix: configSnapshot.defaultPromptPrefix, suffix: configSnapshot.defaultPromptSuffix }
+    )
     let record: ActiveTask = { prompt: finalPrompt, summary: [recipeSnapshot.portrait?.发型名称, recipeSnapshot.costume?.服装名称, recipeSnapshot.pose?.姿势名称].filter(Boolean).join(' + ') || '自定义合成' }
     isGeneratingRef.current = true
     setIsGenerating(true)
@@ -722,6 +852,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
   return (
     <StudioContext.Provider
       value={{
+        uiMode, setUiMode,
         comfyConnection, checkComfyConnection, setComfyConnectionVisible,
         hydrated: idbHydrated,
         activeTask, resumeGeneration, stopTracking,
@@ -753,6 +884,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
         addExtraImage,
         removeExtraImage,
         updateExtraImageName,
+        reorderExtraImages,
         setWorkflowImage,
         clearRecipe,
         randomizeRecipe,

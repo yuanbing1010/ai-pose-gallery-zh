@@ -155,6 +155,8 @@ export interface ApiConfig {
   imagePassMode: ImagePassMode
   useProxy: boolean
   stylePreset: string
+  defaultPromptPrefix?: string
+  defaultPromptSuffix?: string
   sendStitchedSheet: boolean
   providers: Record<ImageProviderId, ProviderEndpointConfig>
   gptParams: GptParams

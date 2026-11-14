@@ -1,17 +1,32 @@
 import type { ReactNode } from 'react'
 
-// 统计卡片，样式参考 linux-do/cdk 的 DataCards
-export function StatCard({ title, value, icon, desc }: { title: string; value: ReactNode; icon: ReactNode; desc?: string }) {
+// 瑞士网格统计单元
+export function StatCard({
+  index,
+  title,
+  value,
+  icon,
+  desc,
+}: {
+  index?: string
+  title: string
+  value: ReactNode
+  icon?: ReactNode
+  desc?: string
+}) {
   return (
-    <div className="min-h-[96px] rounded-[20px] bg-muted px-4 py-3">
-      <div className="flex items-start justify-between gap-3">
-        <div className="truncate text-xs font-medium text-muted-foreground">{title}</div>
-        <div className="flex size-6 items-center justify-center rounded-full bg-background/70 text-muted-foreground [&_svg]:size-3.5">
-          {icon}
+    <div className="flex min-h-[96px] flex-col justify-between bg-background p-4 sm:p-5">
+      <div className="flex items-center justify-between gap-2">
+        <div className="truncate font-mono text-[11px] tracking-wider text-muted-foreground uppercase">
+          {index ? `${index} / ` : ''}
+          {title}
         </div>
+        {icon && <div className="text-muted-foreground/70 [&_svg]:size-3.5">{icon}</div>}
       </div>
-      <div className="mt-3 truncate text-2xl leading-none font-semibold tracking-[-0.03em]">{value}</div>
-      <div className="mt-2 truncate text-xs text-muted-foreground">{desc || '\u00a0'}</div>
+      <div className="mt-2 truncate font-mono text-2xl leading-none font-bold tracking-tight tabular-nums sm:text-3xl">
+        {value}
+      </div>
+      <div className="mt-2 truncate font-mono text-[11px] text-muted-foreground">{desc || '\u00a0'}</div>
     </div>
   )
 }
