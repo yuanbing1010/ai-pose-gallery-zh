@@ -98,17 +98,9 @@ export const PROVIDER_META: Record<
 }
 
 export const STYLE_PRESETS: Record<string, { label: string; prompt: string }> = {
-  none: {
-    label: '无预设（跟随参考图）',
-    prompt: '',
-  },
   realistic: {
     label: '写实人像写真',
     prompt: '写实商业摄影级质感，85mm 人像镜头，自然柔和光影，真实肌肤纹理与织物细节，8k 高清画质。',
-  },
-  fashion: {
-    label: '日韩杂志画报',
-    prompt: '日韩时尚穿搭杂志画报风格，干净极简摄影棚背景，高级色调，突出人物颜值与服装剪裁。',
   },
   film: {
     label: '复古胶片写真',
@@ -138,19 +130,11 @@ export const STYLE_PRESETS: Record<string, { label: string; prompt: string }> = 
     label: '3D 潮玩手办质感',
     prompt: '高品质 PVC 涂装完成品手办质感，柔和摄影棚柔光箱布光，精致材质高光与微距景深。',
   },
-  cyberpunk: {
-    label: '赛博朋克霓虹',
-    prompt: '赛博朋克科幻视觉风格，雨夜霓虹冷暖双色轮廓光，未来感材质反光与电影级氛围。',
-  },
-  concept_sheet: {
-    label: '角色设定集立绘（纯白底）',
-    prompt: '标准角色设定集全身立绘，纯白干净无杂物背景，均匀漫反射布光，清晰展示全身服装结构与配饰细节。',
-  },
 }
 
 // 按实际传入模型的图片顺序动态生成「图1 / 图2 / 图3...」明确指代，支持附加上传图片
 // 用自然语言逐项描述（人物 / 服装 / 姿势），实测比堆砌要点更能让多图编辑模型还原服装、避免照搬人体模型线条
-const PHOTO_STYLES = new Set(['realistic', 'fashion', 'film'])
+const PHOTO_STYLES = new Set(['realistic', 'film'])
 
 export function buildRecipePrompt(
   recipe: RecipeState,

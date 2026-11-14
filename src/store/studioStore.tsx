@@ -30,6 +30,7 @@ import {
   type ComfyTaskHandle,
   type GenerationProgress,
   PROVIDER_META,
+  STYLE_PRESETS,
   stitchRecipeCanvas,
 } from '@/services/aiGenerator'
 import type {
@@ -176,6 +177,7 @@ function mergeStoredConfig(raw: unknown): ApiConfig {
     { ...DEFAULT_API_CONFIG.comfyuiParams, configVersion: 1, ...obj.comfyuiParams }
   )
   const activeProvider = obj.activeProvider ?? DEFAULT_API_CONFIG.activeProvider
+  const stylePreset = obj.stylePreset && obj.stylePreset in STYLE_PRESETS ? obj.stylePreset : DEFAULT_API_CONFIG.stylePreset
   // v3 起服务端 CORS 代理默认关闭，仅在切换到 Qwen / Doubao 时自动关联开启
   const useProxy =
     storedVer < 3
@@ -185,6 +187,7 @@ function mergeStoredConfig(raw: unknown): ApiConfig {
     ...DEFAULT_API_CONFIG,
     ...obj,
     activeProvider,
+    stylePreset,
     useProxy,
     providers: {
       gemini: { ...DEFAULT_API_CONFIG.providers.gemini, ...obj.providers?.gemini },

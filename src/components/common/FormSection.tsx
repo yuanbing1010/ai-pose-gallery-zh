@@ -8,12 +8,14 @@ export function Section({
   actions,
   children,
   className,
+  outerClassName,
 }: {
   title: string
   desc?: string
   actions?: ReactNode
   children: ReactNode
   className?: string
+  outerClassName?: string
 }) {
   const cleanTitle = title
     .replace(/^\d+\s*\/\/\s*[A-Z_\s&]+·\s*/, '')
@@ -22,7 +24,10 @@ export function Section({
   return (
     <section
       data-impeccable-ignore="nested-cards"
-      className="@container/section ks-elevation min-w-0 rounded-3xl border border-border bg-card p-4 sm:p-6"
+      className={cn(
+        '@container/section ks-elevation min-w-0 rounded-3xl border border-border bg-card p-4 sm:p-6',
+        outerClassName
+      )}
     >
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0 [overflow-wrap:anywhere]">
@@ -31,7 +36,9 @@ export function Section({
         </div>
         {actions && <div className="flex max-w-full flex-wrap items-center gap-1.5 [&>div]:flex-wrap">{actions}</div>}
       </div>
-      <div className={cn('mt-4 grid min-w-0 gap-4 @lg/section:grid-cols-2', className)}>{children}</div>
+      <div className={cn('mt-4 grid min-w-0 grid-cols-1 gap-4 @lg/section:grid-cols-2 [&>*]:min-w-0', className)}>
+        {children}
+      </div>
     </section>
   )
 }
