@@ -1,11 +1,16 @@
 import animeImg from '@/assets/styles/anime.webp'
+import anime90sImg from '@/assets/styles/anime_90s.webp'
 import celAnimeImg from '@/assets/styles/cel_anime.webp'
 import chibiBoxImg from '@/assets/styles/chibi_box.webp'
+import claymationImg from '@/assets/styles/claymation.webp'
+import disneyImg from '@/assets/styles/disney.webp'
 import filmImg from '@/assets/styles/film.webp'
+import ghibliImg from '@/assets/styles/ghibli.webp'
 import mangaImg from '@/assets/styles/manga.webp'
 import realisticImg from '@/assets/styles/realistic.webp'
 import render3dImg from '@/assets/styles/render3d.webp'
 import semiRealImg from '@/assets/styles/semi_real.webp'
+import webtoonImg from '@/assets/styles/webtoon.webp'
 import { STYLE_PRESETS } from '@/services/aiGenerator'
 
 export interface StyleVisualMeta {
@@ -16,44 +21,69 @@ export interface StyleVisualMeta {
 
 export const STYLE_VISUAL_META: Record<string, StyleVisualMeta> = {
   realistic: {
-    shortLabel: '写实人像写真',
+    shortLabel: '写实写真',
     tagline: '85mm 人像镜头 · 自然柔光与真实肌理',
     preview: realisticImg,
   },
   film: {
-    shortLabel: '复古胶片写真',
+    shortLabel: '复古胶片',
     tagline: '35mm 富士胶片 · 暖调光晕与细腻颗粒',
     preview: filmImg,
   },
   semi_real: {
-    shortLabel: '2.5D 游戏原画',
+    shortLabel: '2.5D 原画',
     tagline: '半写实厚涂 · 华丽戏剧光影与布料质感',
     preview: semiRealImg,
   },
   anime: {
-    shortLabel: '日系二次元插画',
-    tagline: '赛璐璐平涂与厚涂结合 · 色彩通透干净',
+    shortLabel: '二次元插画',
+    tagline: '赛璐璐与厚涂结合 · 色彩通透干净',
     preview: animeImg,
   },
   cel_anime: {
-    shortLabel: '新海诚感动画电影',
-    tagline: '新海诚感清澈天空 · 体积光与发丝高光',
+    shortLabel: '新海诚动画',
+    tagline: '清澈天空 · 体积光与发丝高光',
     preview: celAnimeImg,
   },
+  ghibli: {
+    shortLabel: '吉卜力系',
+    tagline: '手绘水彩背景 · 温暖日光与治愈色彩',
+    preview: ghibliImg,
+  },
+  anime_90s: {
+    shortLabel: '90年代日漫',
+    tagline: '复古赛璐璐 · 暖调怀旧质感与线条',
+    preview: anime90sImg,
+  },
+  webtoon: {
+    shortLabel: '韩系网漫',
+    tagline: '清透水光肌 · 唯美柔光与利落勾线',
+    preview: webtoonImg,
+  },
   manga: {
-    shortLabel: '日式黑白漫画网点',
-    tagline: 'G笔利落线稿 · 45° 网点纸与高对比层次',
+    shortLabel: '黑白漫画',
+    tagline: 'G笔利落线稿 · 45° 网点纸高对比',
     preview: mangaImg,
   },
+  disney: {
+    shortLabel: '迪士尼动画',
+    tagline: '3D 动画电影 · 灵动眼神与暖金逆光',
+    preview: disneyImg,
+  },
   render3d: {
-    shortLabel: '3D 次世代渲染',
-    tagline: 'UE5 / Octane 渲染 · 次表面散射与电影布光',
+    shortLabel: '3D 次世代',
+    tagline: 'UE5 / Octane · 次表面散射与电影布光',
     preview: render3dImg,
   },
   chibi_box: {
-    shortLabel: '3D 潮玩手办',
-    tagline: 'PVC 涂装完成品 · 柔光箱微距景深',
+    shortLabel: '潮玩手办',
+    tagline: 'PVC 涂装质感 · 柔光箱微距景深',
     preview: chibiBoxImg,
+  },
+  claymation: {
+    shortLabel: '黏土定格',
+    tagline: '手工黏土肌理 · 毛毡织物与移轴微距',
+    preview: claymationImg,
   },
 }
 

@@ -23,6 +23,8 @@ function RootLayout() {
   }
 
   const isHome = pathname === '/'
+  const isStudio = pathname.startsWith('/studio')
+  const isLockedViewport = isHome || isStudio
 
   // 用户前端：全站统一的暖调柔光棚拍背景与可切换暗房模式
   return (
@@ -31,7 +33,9 @@ function RootLayout() {
         className={
           isHome
             ? 'sk-grid-bg relative flex h-dvh flex-col overflow-hidden bg-background text-foreground'
-            : 'sk-grid-bg relative flex min-h-dvh flex-col bg-background text-foreground'
+            : isStudio
+              ? 'sk-grid-bg relative flex min-h-dvh flex-col bg-background text-foreground md:h-dvh md:overflow-hidden'
+              : 'sk-grid-bg relative flex min-h-dvh flex-col bg-background text-foreground'
         }
       >
         <ShowcaseNavbar />
@@ -39,19 +43,23 @@ function RootLayout() {
           className={
             isHome
               ? '@container/main relative z-10 flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden'
-              : '@container/main relative z-10 flex min-w-0 flex-1 flex-col'
+              : isStudio
+                ? '@container/main relative z-10 flex min-w-0 flex-1 flex-col md:min-h-0 md:overflow-hidden'
+                : '@container/main relative z-10 flex min-w-0 flex-1 flex-col'
           }
         >
           <div
             className={
               isHome
                 ? 'mx-auto flex min-h-0 min-w-0 w-full max-w-[1440px] flex-1 flex-col'
-                : 'mx-auto flex min-w-0 w-full max-w-[1440px] flex-1 flex-col gap-6 px-4 pt-6 pb-12 sm:px-6'
+                : isStudio
+                  ? 'mx-auto flex min-w-0 w-full max-w-[1440px] flex-1 flex-col gap-2.5 px-4 py-2.5 sm:px-6 md:min-h-0 md:overflow-hidden'
+                  : 'mx-auto flex min-w-0 w-full max-w-[1440px] flex-1 flex-col gap-6 px-4 pt-6 pb-12 sm:px-6'
             }
           >
             <Outlet />
           </div>
-          <RecipeDock />
+          {!isLockedViewport && <RecipeDock />}
         </main>
       </div>
       <Toaster />

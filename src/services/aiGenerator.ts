@@ -118,9 +118,25 @@ export const STYLE_PRESETS: Record<string, { label: string; prompt: string }> = 
     label: '新海诚感动画电影',
     prompt: '动画电影级画面质感，清澈高饱和光影，细腻体积光与发丝高光，干净唯美的动漫色彩。',
   },
+  ghibli: {
+    label: '吉卜力系',
+    prompt: '吉卜力工作室经典手绘动画质感，通透的水彩手绘背景，柔和温暖的自然日光与微风吹拂发丝，治愈细腻的赛璐璐色彩。',
+  },
+  anime_90s: {
+    label: '90年代日漫',
+    prompt: '90 年代经典日本赛璐璐动画风格，温暖怀旧的复古胶片色彩与轻微赛璐璐噪点，利落的复古手绘线稿与经典高光阴影。',
+  },
+  webtoon: {
+    label: '韩系网漫',
+    prompt: '精致韩系彩漫 Webtoon 插画风格，清透水润光泽感肌肤与细腻发丝高光，现代唯美柔和色调与清晰流畅的描线。',
+  },
   manga: {
     label: '日式黑白漫画网点',
     prompt: '日本黑白漫画原稿风格，利落精准的G笔线稿，细腻漫画网点纸阴影与层次对比。',
+  },
+  disney: {
+    label: '迪士尼动画',
+    prompt: '迪士尼与皮克斯经典 3D 动画电影渲染风格，生动灵动的大眼与细腻微表情，柔和暖金逆光发丝与电影级次表面散射肌肤。',
   },
   render3d: {
     label: '3D 次世代角色渲染',
@@ -129,6 +145,10 @@ export const STYLE_PRESETS: Record<string, { label: string; prompt: string }> = 
   chibi_box: {
     label: '3D 潮玩手办质感',
     prompt: '高品质 PVC 涂装完成品手办质感，柔和摄影棚柔光箱布光，精致材质高光与微距景深。',
+  },
+  claymation: {
+    label: '黏土定格动画',
+    prompt: '手工黏土定格动画风格，细腻真实的手工黏土塑形与指压肌理、毛毡织物纹理，温暖柔光摄影棚微距景深与立体手工质感。',
   },
 }
 

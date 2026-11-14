@@ -12,7 +12,7 @@ import {
   useSensors,
 } from '@dnd-kit/core'
 import {
-  rectSortingStrategy,
+  horizontalListSortingStrategy,
   SortableContext,
   sortableKeyboardCoordinates,
   useSortable,
@@ -22,13 +22,14 @@ import { motion } from 'motion/react'
 import {
   ArrowRightIcon,
   CheckCircle2Icon,
-  ChevronDownIcon,
   CircleAlertIcon,
   CopyIcon,
   DicesIcon,
   DownloadIcon,
   EyeIcon,
+  FileTextIcon,
   GripVerticalIcon,
+  ImagesIcon,
   ImagePlusIcon,
   LayoutGridIcon,
   LinkIcon,
@@ -41,28 +42,24 @@ import {
   Trash2Icon,
   UploadIcon,
   UserRoundIcon,
-  WandSparklesIcon,
   XIcon,
   ZoomInIcon,
 } from 'lucide-react'
 import { type ChangeEvent, type DragEvent, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from '@/lib/notifications'
 import { costumesQuery, portraitsQuery, posesQuery } from '@/api/gallery'
-import { Section } from '@/components/common/FormSection'
-import { PageHeader } from '@/components/common/PageHeader'
 import { StylePresetSelector } from '@/components/studio/StylePresetSelector'
-import { getStyleVisualMeta } from '@/lib/stylePresets'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { validateReferenceCombinations, workflowIdentity } from '@/lib/comfyWorkflowParameters'
 import { selectCostumeView } from '@/lib/costumeSources'
 import type { RandomScope, ReferenceSlot } from '@/lib/randomRecipe'
 import { poseImagePath, poseThumbPath, referenceImageUrl, uploadedReferences } from '@/lib/recipeImages'
+import { getStyleVisualMeta } from '@/lib/stylePresets'
 import { cn } from '@/lib/utils'
 import {
   buildRecipePrompt,
@@ -91,7 +88,7 @@ function mergeSceneNote(basePrompt: string, sceneNote: string): string {
   return `${basePrompt}\n${clause}`
 }
 
-function SortableExtraImageItem({
+function SortableExtraPill({
   img,
   idx,
   onUpdateName,
@@ -113,8 +110,8 @@ function SortableExtraImageItem({
       ref={setNodeRef}
       style={style}
       className={cn(
-        'flex items-center gap-2 rounded-2xl border bg-[#FAF8F4] p-2 transition-all dark:bg-muted/35',
-        isDragging ? 'border-[#E5A918] opacity-95 shadow-lg' : 'border-border/80'
+        'flex h-8 shrink-0 items-center gap-1.5 rounded-lg border bg-card pr-1 pl-1 transition-all',
+        isDragging ? 'border-[#E5A918] opacity-95 shadow-md' : 'border-border/80'
       )}
     >
       <button
@@ -124,30 +121,24 @@ function SortableExtraImageItem({
         {...attributes}
         {...listeners}
       >
-        <GripVerticalIcon className="size-3.5" />
+        <GripVerticalIcon className="size-3" />
       </button>
-      <img
-        src={img.url}
-        alt={img.name}
-        className="h-11 w-9 shrink-0 rounded-xl border border-border object-cover"
+      <img src={img.url} alt={img.name} className="size-6 shrink-0 rounded-md border border-border object-cover" />
+      <input
+        type="text"
+        value={img.name}
+        onChange={(e) => onUpdateName(img.id, e.target.value)}
+        placeholder={`附图#${idx + 1}`}
+        aria-label={`附图 ${idx + 1} 备注`}
+        className="w-16 truncate bg-transparent text-xs font-medium outline-none focus:w-24 focus:underline"
       />
-      <div className="min-w-0 flex-1">
-        <div className="font-mono text-xs font-bold text-[#B88300] dark:text-[#E5A918]">附图 #{idx + 1}</div>
-        <input
-          type="text"
-          value={img.name}
-          onChange={(e) => onUpdateName(img.id, e.target.value)}
-          placeholder="备注(如:配饰/背景)"
-          className="w-full truncate bg-transparent text-xs font-medium outline-none focus:underline"
-        />
-      </div>
       <button
         type="button"
         aria-label={`删除附图 ${idx + 1}`}
         onClick={() => onRemove(img.id)}
-        className="rounded-full p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+        className="rounded-full p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
       >
-        <XIcon className="size-3.5" />
+        <XIcon className="size-3" />
       </button>
     </div>
   )
@@ -213,7 +204,9 @@ function StudioPage() {
   const referenceErrorsRef = useRef<HTMLDivElement | null>(null)
 
   const [sceneNote, setSceneNote] = useState('')
-  const [promptExpanded, setPromptExpanded] = useState(false)
+  const [hoveredStyleKey, setHoveredStyleKey] = useState<string | null>(null)
+  const [promptModalOpen, setPromptModalOpen] = useState(false)
+  const [galleryModalOpen, setGalleryModalOpen] = useState(false)
 
   const activeProvider = apiConfig.activeProvider
   const activeWorkflowImages =
@@ -235,7 +228,7 @@ function StudioPage() {
   const prompt = customPrompt ?? syncedPrompt
 
   const [extraUrlInput, setExtraUrlInput] = useState('')
-  const [showUrlInput, setShowUrlInput] = useState(false)
+  const [urlModalOpen, setUrlModalOpen] = useState(false)
   const [stitchModalUrl, setStitchModalUrl] = useState<string | null>(null)
   const [zoomImageUrl, setZoomImageUrl] = useState<string | null>(null)
   const [isDragging, setIsDragging] = useState(false)
@@ -352,37 +345,12 @@ function StudioPage() {
     }
   }
 
-  const randomControls = (slot: ReferenceSlot, label: string) => (
-    <div className="mt-2 flex items-center gap-1.5 border-t border-border/70 pt-2">
-      <Select
-        value={randomScopes[slot]}
-        onValueChange={(value) => setRandomScopes((current) => ({ ...current, [slot]: value as RandomScope }))}
-      >
-        <SelectTrigger aria-label={`${label}换样范围`} className="h-9 w-[4.5rem] shrink-0 rounded-xl bg-card text-xs sm:h-8">
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value="similar">同类</SelectItem>
-          <SelectItem value="all">全部</SelectItem>
-        </SelectContent>
-      </Select>
-      <Button
-        type="button"
-        variant="outline"
-        className="h-9 min-w-0 flex-1 rounded-xl bg-card px-2.5 text-xs sm:h-8"
-        disabled={uploadingSlot !== null || randomizingSlot !== null}
-        onClick={() => void handleRandomSlot(slot)}
-        aria-label={`${label}换一个`}
-      >
-        {randomizingSlot === slot ? (
-          <LoaderCircleIcon className="size-3.5 animate-spin motion-reduce:animate-none" />
-        ) : (
-          <DicesIcon className="size-3.5" />
-        )}
-        换一个
-      </Button>
-    </div>
-  )
+  const toggleRandomScope = (slot: ReferenceSlot) => {
+    setRandomScopes((cur) => ({
+      ...cur,
+      [slot]: cur[slot] === 'similar' ? 'all' : 'similar',
+    }))
+  }
 
   const handleUploadFiles = async (e: ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || [])
@@ -406,7 +374,7 @@ function StudioPage() {
     }
     addExtraImage({ name: '外部参考图', url: trimmed })
     setExtraUrlInput('')
-    setShowUrlInput(false)
+    setUrlModalOpen(false)
   }
 
   const handleOpenStitchModal = async () => {
@@ -444,41 +412,64 @@ function StudioPage() {
   }
 
   const activeStyleKey = apiConfig.stylePreset in STYLE_PRESETS ? apiConfig.stylePreset : 'realistic'
-  const styleInfo = STYLE_PRESETS[activeStyleKey]
-  const styleVisual = getStyleVisualMeta(activeStyleKey)
-  const recentHistory = history.slice(0, 8)
+  const viewfinderStyleKey = hoveredStyleKey && hoveredStyleKey in STYLE_PRESETS ? hoveredStyleKey : activeStyleKey
+  const styleInfo = STYLE_PRESETS[viewfinderStyleKey]
+  const styleVisual = getStyleVisualMeta(viewfinderStyleKey)
+  const recentHistory = history.slice(0, 10)
   const promptModified = customPrompt !== null || sceneNote.trim().length > 0
 
   return (
-    <>
-      <PageHeader
-        title="AI 角色合成工作台"
-        description="自由组合人像、服装与动作姿势卡牌，挑选直观画风与细节描述，一键生成角色立绘"
-        actions={
+    <div className="flex min-h-0 flex-1 flex-col gap-2.5 md:overflow-hidden">
+      {/* 极简控制台单行顶栏 */}
+      <header className="flex shrink-0 flex-wrap items-center justify-between gap-2">
+        <div className="flex min-w-0 items-baseline gap-2.5">
+          <h1 className="truncate text-lg font-extrabold tracking-tight sm:text-xl">AI 角色合成工作台</h1>
+          <span className="hidden text-xs text-muted-foreground xl:inline">
+            三轨卡带混搭 · 13 种风格直选 · 一键生成立绘
+          </span>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-1.5">
+          {history.length > 0 && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setGalleryModalOpen(true)}
+              className="h-8 rounded-full bg-card px-3 text-xs font-medium"
+            >
+              <ImagesIcon className="size-3.5 text-[#E5A918]" />
+              <span>作品集 ({history.length})</span>
+            </Button>
+          )}
           <Link
             to="/settings"
-            className="inline-flex items-center gap-2 rounded-full border border-border bg-card px-3 py-1.5 text-xs font-medium text-muted-foreground shadow-2xs transition-colors hover:border-foreground/30 hover:text-foreground"
+            className="inline-flex h-8 items-center gap-1.5 rounded-full border border-border bg-card px-3 text-xs font-medium text-muted-foreground shadow-2xs transition-colors hover:border-foreground/30 hover:text-foreground"
           >
             <SlidersHorizontalIcon className="size-3.5 text-[#116E65] dark:text-[#4FD1C5]" />
-            <span>引擎：{PROVIDER_META[activeProvider].shortName}</span>
+            <span>{PROVIDER_META[activeProvider].shortName}</span>
             <span className="text-border">|</span>
-            <span className="font-mono font-semibold text-foreground">{coreCount}/3 参考</span>
+            <span className="font-mono font-semibold text-foreground">{coreCount}/3</span>
           </Link>
-        }
-      />
+        </div>
+      </header>
 
-      <ResizablePanelGroup orientation={isMobile ? 'vertical' : 'horizontal'} className="min-h-0 w-full gap-4 lg:gap-0">
-        {/* 左栏：角色配方卡槽 + 可视化画风与描述 */}
+      {/* 主驾驶舱：桌面端锁定视口无滚动条，移动端流式堆叠 */}
+      <ResizablePanelGroup
+        orientation={isMobile ? 'vertical' : 'horizontal'}
+        className="min-h-0 w-full flex-1 gap-3 md:gap-0"
+      >
+        {/* 左栏：1. 紧凑卡带式配方轨 + 2. 13画风矩阵与发射区 */}
         <ResizablePanel
           defaultSize={isMobile ? '100%' : '56%'}
-          minSize={isMobile ? '30%' : '36%'}
-          className="min-w-0 lg:pr-3"
+          minSize={isMobile ? '30%' : '38%'}
+          className="min-w-0 md:flex md:min-h-0 md:flex-col md:pr-2.5"
         >
           <motion.div
             initial={{ opacity: 0, y: 6 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.18 }}
-            className="flex min-w-0 flex-col gap-4"
+            className="flex min-h-0 min-w-0 flex-1 flex-col gap-2.5"
             onDragOver={(e) => {
               e.preventDefault()
               setIsDragging(true)
@@ -486,418 +477,492 @@ function StudioPage() {
             onDragLeave={() => setIsDragging(false)}
             onDrop={handleDropFiles}
           >
-            {/* 1. 角色配方卡槽 */}
-            <Section
-              title="1. 角色配方卡槽"
-              className="@lg/section:grid-cols-1"
-              actions={
-                <div className="flex flex-wrap items-center gap-1.5">
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept="image/*"
-                    multiple
-                    className="hidden"
-                    onChange={handleUploadFiles}
-                  />
-                  <Button variant="outline" size="sm" className="h-8 rounded-full px-3 text-xs" onClick={handleRandom}>
+            {/* 1. 角色配方卡带轨（紧凑 · 简洁 · 炫酷） */}
+            <section
+              data-impeccable-ignore="nested-cards"
+              className="ks-elevation shrink-0 rounded-2xl border border-border bg-card p-3"
+            >
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <h2 className="text-xs font-extrabold tracking-tight sm:text-sm">1. 角色配方卡带</h2>
+                  <span className="rounded-md bg-muted px-1.5 py-0.5 font-mono text-xs font-semibold text-muted-foreground">
+                    {coreCount}/3
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-7 rounded-full px-2.5 text-xs"
+                    onClick={handleRandom}
+                  >
                     <DicesIcon className="size-3.5 text-[#E5A918]" />
-                    随机配装
+                    <span>全随机</span>
                   </Button>
                   {hasAnyRef && hasStitchRefs && (
                     <Button
+                      type="button"
                       variant="outline"
                       size="sm"
-                      className="h-8 rounded-full px-3 text-xs"
+                      className="h-7 rounded-full px-2.5 text-xs"
                       onClick={handleOpenStitchModal}
                     >
                       <LayoutGridIcon className="size-3.5" />
-                      参考拼图
+                      <span>拼图</span>
                     </Button>
                   )}
                 </div>
-              }
-            >
+              </div>
+
               <input ref={slotInputRef} type="file" accept="image/*" className="hidden" onChange={handleSlotUpload} />
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                multiple
+                className="hidden"
+                onChange={handleUploadFiles}
+              />
+
               {showReferenceErrors && missingReferences.length > 0 && (
                 <div
                   id="reference-errors"
                   ref={referenceErrorsRef}
                   role="alert"
                   tabIndex={-1}
-                  className="rounded-xl border border-destructive bg-destructive/10 p-3 text-xs text-destructive focus-visible:outline-2"
+                  className="mt-2 rounded-xl border border-destructive bg-destructive/10 px-3 py-2 text-xs text-destructive focus-visible:outline-2"
                 >
                   请先选择或上传：{missingReferences.join('、')}。
                 </div>
               )}
 
-              <div
-                data-impeccable-ignore="nested-cards"
-                className="grid min-w-0 grid-cols-1 gap-3 @min-[40rem]/section:grid-cols-3"
-              >
-                {/* 01 人像槽 */}
+              {/* 实体凹槽轨道：3 枚横向卡带 */}
+              <div className="ks-recess mt-2 grid grid-cols-1 gap-1.5 rounded-xl border border-border/75 p-1.5 sm:grid-cols-3">
+                {/* 01 人像卡带 */}
                 <div
                   className={cn(
-                    'flex h-full min-w-0 flex-col justify-between overflow-hidden rounded-2xl border bg-[#FAF8F4] p-2.5 dark:bg-muted/30',
+                    'ks-paper-keycap dark:ks-keycap group relative flex h-[78px] min-w-0 items-center gap-2 overflow-hidden rounded-lg border bg-card p-1.5 transition-all hover:-translate-y-0.5',
                     showReferenceErrors && missingReferences.includes('人像')
                       ? 'border-destructive ring-1 ring-destructive'
-                      : 'border-border/80'
+                      : 'border-border/80 hover:border-[#E5A918]/60'
                   )}
                 >
-                  <div>
-                    <div className="mb-2 flex items-center justify-between gap-1">
+                  <span
+                    aria-hidden="true"
+                    className="absolute inset-y-1.5 left-0 w-0.5 rounded-r bg-[#E5A918]"
+                  />
+                  {recipe.portrait ? (
+                    <button
+                      type="button"
+                      aria-label="放大人像参考图"
+                      onClick={() => {
+                        const item = recipe.portrait
+                        if (item) setZoomImageUrl(referenceImageUrl(item.原图 || item.缩略图))
+                      }}
+                      className="relative h-full w-12 shrink-0 cursor-zoom-in overflow-hidden rounded-md border border-border/80 bg-muted/30"
+                    >
+                      <img
+                        src={referenceImageUrl(recipe.portrait.缩略图)}
+                        alt={recipe.portrait.标题}
+                        className="h-full w-full object-cover object-top"
+                      />
+                    </button>
+                  ) : (
+                    <Link
+                      to="/portraits"
+                      aria-label="前往人像库选图"
+                      className="flex h-full w-12 shrink-0 flex-col items-center justify-center rounded-md border border-dashed border-border bg-muted/30 text-[#B88300] transition-colors hover:border-[#E5A918] hover:bg-muted/60 dark:text-[#E5A918]"
+                    >
+                      <UserRoundIcon className="size-4" />
+                    </Link>
+                  )}
+
+                  <div className="flex h-full min-w-0 flex-1 flex-col justify-between py-0.5">
+                    <div className="flex items-center justify-between gap-1">
                       <span className="font-mono text-xs font-bold text-[#B88300] dark:text-[#E5A918]">
                         01 人像
                       </span>
-                      <div className="flex items-center gap-1">
+                      <div className="flex items-center gap-0.5">
                         <button
                           type="button"
+                          title={recipe.portrait ? '上传替换人像' : '上传人像'}
                           aria-label={recipe.portrait ? '上传替换人像参考图' : '上传人像参考图'}
-                          aria-busy={uploadingSlot === 'portrait'}
                           disabled={uploadingSlot !== null || randomizingSlot !== null}
                           onClick={() => {
                             uploadSlotRef.current = 'portrait'
                             slotInputRef.current?.click()
                           }}
-                          className="inline-flex h-6 items-center gap-1 rounded-full border border-border/80 bg-card px-2 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
+                          className="flex size-5 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
                         >
                           {uploadingSlot === 'portrait' ? (
                             <LoaderCircleIcon className="size-3 animate-spin" />
                           ) : (
                             <UploadIcon className="size-3" />
                           )}
-                          <span>{recipe.portrait ? '换图' : '上传'}</span>
                         </button>
                         {recipe.portrait && (
                           <button
                             type="button"
+                            title="清除人像"
                             aria-label="清除人像参考图"
                             onClick={() => setPortrait(null)}
-                            className="flex size-6 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                            className="flex size-5 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
                           >
-                            <XIcon className="size-3.5" />
+                            <XIcon className="size-3" />
                           </button>
                         )}
                       </div>
                     </div>
 
-                    {recipe.portrait ? (
+                    <div
+                      className={cn(
+                        'truncate text-xs leading-tight',
+                        recipe.portrait ? 'font-bold text-foreground' : 'text-muted-foreground'
+                      )}
+                      title={recipe.portrait?.发型名称}
+                    >
+                      {recipe.portrait ? (
+                        recipe.portrait.发型名称
+                      ) : (
+                        <Link to="/portraits" className="hover:text-foreground hover:underline">
+                          + 从人像库挑
+                        </Link>
+                      )}
+                    </div>
+
+                    <div className="flex items-center gap-1">
                       <button
                         type="button"
-                        aria-label="放大人像参考图"
-                        onClick={() => {
-                          const item = recipe.portrait
-                          if (item) setZoomImageUrl(referenceImageUrl(item.原图 || item.缩略图))
-                        }}
-                        className="group relative block h-24 w-full cursor-zoom-in overflow-hidden rounded-xl border border-border/80 bg-card focus-visible:outline-2 focus-visible:outline-ring"
+                        onClick={() => toggleRandomScope('portrait')}
+                        aria-label={`切换人像换样范围，当前${randomScopes.portrait === 'similar' ? '同类' : '全部'}`}
+                        className="h-5 shrink-0 rounded-md border border-border/80 bg-muted/50 px-1.5 text-xs leading-none font-medium text-muted-foreground transition-colors hover:text-foreground"
                       >
-                        <img
-                          src={referenceImageUrl(recipe.portrait.缩略图)}
-                          alt={recipe.portrait.标题}
-                          className="h-full w-full object-cover object-top transition-transform duration-300 group-hover:scale-105"
-                        />
-                        <span className="pointer-events-none absolute right-1.5 bottom-1.5 flex size-6 items-center justify-center rounded-full bg-black/55 text-white opacity-0 transition-opacity group-hover:opacity-100">
-                          <ZoomInIcon className="size-3.5" />
-                        </span>
+                        {randomScopes.portrait === 'similar' ? '同类' : '全部'}
                       </button>
-                    ) : (
-                      <Link
-                        to="/portraits"
-                        className="flex h-24 w-full flex-col items-center justify-center gap-1.5 rounded-xl border border-dashed border-border bg-card/65 p-2 text-center text-muted-foreground transition-colors hover:border-foreground/40 hover:bg-card hover:text-foreground"
+                      <button
+                        type="button"
+                        disabled={uploadingSlot !== null || randomizingSlot !== null}
+                        onClick={() => void handleRandomSlot('portrait')}
+                        aria-label="人像换一个"
+                        className="inline-flex h-5 min-w-0 flex-1 items-center justify-center gap-1 rounded-md border border-border/80 bg-muted/35 px-1.5 text-xs leading-none font-semibold text-foreground transition-colors hover:bg-muted disabled:opacity-50"
                       >
-                        <div className="flex size-8 items-center justify-center rounded-xl bg-muted text-[#B88300] dark:text-[#E5A918]">
-                          <UserRoundIcon className="size-4" />
-                        </div>
-                        <span className="text-xs font-semibold">+ 从人像库挑选</span>
-                      </Link>
-                    )}
-
-                    <div className="mt-2 min-h-[1.25rem]">
-                      <div
-                        className={cn(
-                          'truncate text-xs leading-snug',
-                          recipe.portrait ? 'font-bold text-foreground' : 'text-muted-foreground'
+                        {randomizingSlot === 'portrait' ? (
+                          <LoaderCircleIcon className="size-3 animate-spin" />
+                        ) : (
+                          <DicesIcon className="size-3 text-[#E5A918]" />
                         )}
-                        title={recipe.portrait?.发型名称}
-                      >
-                        {recipe.portrait ? recipe.portrait.发型名称 : '未指定人像（可留空生成）'}
-                      </div>
+                        <span className="truncate">换一个</span>
+                      </button>
                     </div>
                   </div>
-
-                  {randomControls('portrait', '人像')}
                 </div>
 
-                {/* 02 服装槽 */}
+                {/* 02 服装卡带 */}
                 <div
                   className={cn(
-                    'flex h-full min-w-0 flex-col justify-between overflow-hidden rounded-2xl border bg-[#FAF8F4] p-2.5 dark:bg-muted/30',
+                    'ks-paper-keycap dark:ks-keycap group relative flex h-[78px] min-w-0 items-center gap-2 overflow-hidden rounded-lg border bg-card p-1.5 transition-all hover:-translate-y-0.5',
                     showReferenceErrors && missingReferences.includes('服装')
                       ? 'border-destructive ring-1 ring-destructive'
-                      : 'border-border/80'
+                      : 'border-border/80 hover:border-[#19857B]/60'
                   )}
                 >
-                  <div>
-                    <div className="mb-2 flex items-center justify-between gap-1">
+                  <span
+                    aria-hidden="true"
+                    className="absolute inset-y-1.5 left-0 w-0.5 rounded-r bg-[#19857B]"
+                  />
+                  {recipe.costume ? (
+                    <button
+                      type="button"
+                      aria-label="放大服装参考图"
+                      onClick={() => {
+                        const item = recipe.costume
+                        if (item) setZoomImageUrl(referenceImageUrl(item.预览图 || item.原图 || item.缩略图))
+                      }}
+                      className="relative h-full w-12 shrink-0 cursor-zoom-in overflow-hidden rounded-md border border-border/80 bg-white dark:bg-zinc-900"
+                    >
+                      <img
+                        src={referenceImageUrl(recipe.costume.缩略图)}
+                        alt={recipe.costume.服装名称}
+                        className="h-full w-full object-contain p-0.5"
+                      />
+                    </button>
+                  ) : (
+                    <Link
+                      to="/costumes"
+                      aria-label="前往服装库选图"
+                      className="flex h-full w-12 shrink-0 flex-col items-center justify-center rounded-md border border-dashed border-border bg-muted/30 text-[#116E65] transition-colors hover:border-[#19857B] hover:bg-muted/60 dark:text-[#4FD1C5]"
+                    >
+                      <ShirtIcon className="size-4" />
+                    </Link>
+                  )}
+
+                  <div className="flex h-full min-w-0 flex-1 flex-col justify-between py-0.5">
+                    <div className="flex items-center justify-between gap-1">
                       <span className="font-mono text-xs font-bold text-[#116E65] dark:text-[#4FD1C5]">
                         02 服装
                       </span>
-                      <div className="flex items-center gap-1">
+                      <div className="flex items-center gap-0.5">
+                        {recipe.costume && costumeViews.length > 0 && (
+                          <select
+                            aria-label="已选服装视角"
+                            value={
+                              costumeViews.find((view) => view.id === recipe.costume?.selectedView)?.id ||
+                              costumeViews.find((view) => view.id === 'front')?.id ||
+                              costumeViews[0].id
+                            }
+                            onChange={(e) => {
+                              if (recipe.costume) setCostume(selectCostumeView(recipe.costume, e.target.value))
+                            }}
+                            className="h-5 max-w-[3.4rem] rounded border border-border bg-muted/50 px-1 text-xs outline-none"
+                          >
+                            {costumeViews.map((v) => (
+                              <option key={v.id} value={v.id}>
+                                {v.label}
+                              </option>
+                            ))}
+                          </select>
+                        )}
                         <button
                           type="button"
+                          title={recipe.costume ? '上传替换服装' : '上传服装'}
                           aria-label={recipe.costume ? '上传替换服装参考图' : '上传服装参考图'}
-                          aria-busy={uploadingSlot === 'costume'}
                           disabled={uploadingSlot !== null || randomizingSlot !== null}
                           onClick={() => {
                             uploadSlotRef.current = 'costume'
                             slotInputRef.current?.click()
                           }}
-                          className="inline-flex h-6 items-center gap-1 rounded-full border border-border/80 bg-card px-2 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
+                          className="flex size-5 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
                         >
                           {uploadingSlot === 'costume' ? (
                             <LoaderCircleIcon className="size-3 animate-spin" />
                           ) : (
                             <UploadIcon className="size-3" />
                           )}
-                          <span>{recipe.costume ? '换图' : '上传'}</span>
                         </button>
                         {recipe.costume && (
                           <button
                             type="button"
+                            title="清除服装"
                             aria-label="清除服装参考图"
                             onClick={() => setCostume(null)}
-                            className="flex size-6 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                            className="flex size-5 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
                           >
-                            <XIcon className="size-3.5" />
+                            <XIcon className="size-3" />
                           </button>
                         )}
                       </div>
                     </div>
 
-                    {recipe.costume ? (
-                      <div className="relative">
-                        <button
-                          type="button"
-                          aria-label="放大服装参考图"
-                          onClick={() => {
-                            const item = recipe.costume
-                            if (item) setZoomImageUrl(referenceImageUrl(item.预览图 || item.原图 || item.缩略图))
-                          }}
-                          className="group relative block h-24 w-full cursor-zoom-in overflow-hidden rounded-xl border border-border/80 bg-white focus-visible:outline-2 focus-visible:outline-ring dark:bg-zinc-900"
-                        >
-                          <img
-                            src={referenceImageUrl(recipe.costume.缩略图)}
-                            alt={recipe.costume.服装名称}
-                            className="h-full w-full object-contain p-1 transition-transform duration-300 group-hover:scale-105"
-                          />
-                          <span className="pointer-events-none absolute right-1.5 bottom-1.5 flex size-6 items-center justify-center rounded-full bg-black/55 text-white opacity-0 transition-opacity group-hover:opacity-100">
-                            <ZoomInIcon className="size-3.5" />
-                          </span>
-                        </button>
-                      </div>
-                    ) : (
-                      <Link
-                        to="/costumes"
-                        className="flex h-24 w-full flex-col items-center justify-center gap-1.5 rounded-xl border border-dashed border-border bg-card/65 p-2 text-center text-muted-foreground transition-colors hover:border-foreground/40 hover:bg-card hover:text-foreground"
-                      >
-                        <div className="flex size-8 items-center justify-center rounded-xl bg-muted text-[#116E65] dark:text-[#4FD1C5]">
-                          <ShirtIcon className="size-4" />
-                        </div>
-                        <span className="text-xs font-semibold">+ 从服装库挑选</span>
-                      </Link>
-                    )}
-
-                    <div className="mt-2 min-h-[1.25rem] space-y-1.5">
-                      <div
-                        className={cn(
-                          'truncate text-xs leading-snug',
-                          recipe.costume ? 'font-bold text-foreground' : 'text-muted-foreground'
-                        )}
-                        title={recipe.costume?.服装名称}
-                      >
-                        {recipe.costume ? recipe.costume.服装名称 : '未指定服装穿搭'}
-                      </div>
-                      {recipe.costume && costumeViews.length > 0 && (
-                        <Select
-                          value={
-                            costumeViews.find((view) => view.id === recipe.costume?.selectedView)?.id ||
-                            costumeViews.find((view) => view.id === 'front')?.id ||
-                            costumeViews[0].id
-                          }
-                          disabled={uploadingSlot !== null || randomizingSlot !== null}
-                          onValueChange={(value) => {
-                            if (recipe.costume && uploadingSlot === null && randomizingSlot === null)
-                              setCostume(selectCostumeView(recipe.costume, value))
-                          }}
-                        >
-                          <SelectTrigger aria-label="已选服装视角" className="h-7 w-full rounded-lg bg-card text-xs">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {costumeViews.map((view) => (
-                              <SelectItem key={view.id} value={view.id}>
-                                {view.label}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
+                    <div
+                      className={cn(
+                        'truncate text-xs leading-tight',
+                        recipe.costume ? 'font-bold text-foreground' : 'text-muted-foreground'
+                      )}
+                      title={recipe.costume?.服装名称}
+                    >
+                      {recipe.costume ? (
+                        recipe.costume.服装名称
+                      ) : (
+                        <Link to="/costumes" className="hover:text-foreground hover:underline">
+                          + 从服装库挑
+                        </Link>
                       )}
                     </div>
-                  </div>
 
-                  {randomControls('costume', '服装')}
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => toggleRandomScope('costume')}
+                        aria-label={`切换服装换样范围，当前${randomScopes.costume === 'similar' ? '同类' : '全部'}`}
+                        className="h-5 shrink-0 rounded-md border border-border/80 bg-muted/50 px-1.5 text-xs leading-none font-medium text-muted-foreground transition-colors hover:text-foreground"
+                      >
+                        {randomScopes.costume === 'similar' ? '同类' : '全部'}
+                      </button>
+                      <button
+                        type="button"
+                        disabled={uploadingSlot !== null || randomizingSlot !== null}
+                        onClick={() => void handleRandomSlot('costume')}
+                        aria-label="服装换一个"
+                        className="inline-flex h-5 min-w-0 flex-1 items-center justify-center gap-1 rounded-md border border-border/80 bg-muted/35 px-1.5 text-xs leading-none font-semibold text-foreground transition-colors hover:bg-muted disabled:opacity-50"
+                      >
+                        {randomizingSlot === 'costume' ? (
+                          <LoaderCircleIcon className="size-3 animate-spin" />
+                        ) : (
+                          <DicesIcon className="size-3 text-[#19857B]" />
+                        )}
+                        <span className="truncate">换一个</span>
+                      </button>
+                    </div>
+                  </div>
                 </div>
 
-                {/* 03 姿势槽 */}
+                {/* 03 姿势卡带 */}
                 <div
                   className={cn(
-                    'flex h-full min-w-0 flex-col justify-between overflow-hidden rounded-2xl border bg-[#FAF8F4] p-2.5 dark:bg-muted/30',
+                    'ks-paper-keycap dark:ks-keycap group relative flex h-[78px] min-w-0 items-center gap-2 overflow-hidden rounded-lg border bg-card p-1.5 transition-all hover:-translate-y-0.5',
                     showReferenceErrors && missingReferences.includes('姿势')
                       ? 'border-destructive ring-1 ring-destructive'
-                      : 'border-border/80'
+                      : 'border-border/80 hover:border-[#D9381E]/60'
                   )}
                 >
-                  <div>
-                    <div className="mb-2 flex items-center justify-between gap-1">
+                  <span
+                    aria-hidden="true"
+                    className="absolute inset-y-1.5 left-0 w-0.5 rounded-r bg-[#D9381E]"
+                  />
+                  {recipe.pose ? (
+                    <button
+                      type="button"
+                      aria-label="放大姿势参考图"
+                      onClick={() => {
+                        const item = recipe.pose
+                        if (item) setZoomImageUrl(referenceImageUrl(poseImagePath(item)))
+                      }}
+                      className="relative h-full w-12 shrink-0 cursor-zoom-in overflow-hidden rounded-md border border-border/80 bg-white dark:bg-zinc-900"
+                    >
+                      <img
+                        src={referenceImageUrl(poseThumbPath(recipe.pose))}
+                        alt={recipe.pose.姿势名称}
+                        className="h-full w-full object-contain p-0.5"
+                      />
+                    </button>
+                  ) : (
+                    <Link
+                      to="/poses"
+                      aria-label="前往姿势库选图"
+                      className="flex h-full w-12 shrink-0 flex-col items-center justify-center rounded-md border border-dashed border-border bg-muted/30 text-[#D9381E] transition-colors hover:border-[#D9381E] hover:bg-muted/60 dark:text-[#FF7A59]"
+                    >
+                      <PersonStandingIcon className="size-4" />
+                    </Link>
+                  )}
+
+                  <div className="flex h-full min-w-0 flex-1 flex-col justify-between py-0.5">
+                    <div className="flex items-center justify-between gap-1">
                       <span className="font-mono text-xs font-bold text-[#D9381E] dark:text-[#FF7A59]">
                         03 姿势
                       </span>
-                      <div className="flex items-center gap-1">
+                      <div className="flex items-center gap-0.5">
+                        {recipe.pose && recipe.pose.source !== 'upload' && (
+                          <button
+                            type="button"
+                            onClick={toggleRecipePoseDepth}
+                            aria-label={`切换白模或深度图，当前为${recipe.pose.useDepth ? '深度图' : '白模'}`}
+                            className={cn(
+                              'h-5 rounded-md px-1.5 text-xs leading-none font-semibold transition-colors',
+                              recipe.pose.useDepth
+                                ? 'bg-[#116E65] text-white'
+                                : 'border border-border/80 bg-muted/50 text-foreground hover:bg-muted'
+                            )}
+                          >
+                            {recipe.pose.useDepth ? '深度' : '白模'}
+                          </button>
+                        )}
                         <button
                           type="button"
+                          title={recipe.pose ? '上传替换姿势' : '上传姿势'}
                           aria-label={recipe.pose ? '上传替换姿势参考图' : '上传姿势参考图'}
-                          aria-busy={uploadingSlot === 'pose'}
                           disabled={uploadingSlot !== null || randomizingSlot !== null}
                           onClick={() => {
                             uploadSlotRef.current = 'pose'
                             slotInputRef.current?.click()
                           }}
-                          className="inline-flex h-6 items-center gap-1 rounded-full border border-border/80 bg-card px-2 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
+                          className="flex size-5 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
                         >
                           {uploadingSlot === 'pose' ? (
                             <LoaderCircleIcon className="size-3 animate-spin" />
                           ) : (
                             <UploadIcon className="size-3" />
                           )}
-                          <span>{recipe.pose ? '换图' : '上传'}</span>
                         </button>
                         {recipe.pose && (
                           <button
                             type="button"
+                            title="清除姿势"
                             aria-label="清除姿势参考图"
                             onClick={() => setPose(null)}
-                            className="flex size-6 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                            className="flex size-5 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
                           >
-                            <XIcon className="size-3.5" />
+                            <XIcon className="size-3" />
                           </button>
                         )}
                       </div>
                     </div>
 
-                    {recipe.pose ? (
-                      <div className="relative">
-                        <button
-                          type="button"
-                          aria-label="放大姿势参考图"
-                          onClick={() => {
-                            const item = recipe.pose
-                            if (item) setZoomImageUrl(referenceImageUrl(poseImagePath(item)))
-                          }}
-                          className="group relative block h-24 w-full cursor-zoom-in overflow-hidden rounded-xl border border-border/80 bg-white focus-visible:outline-2 focus-visible:outline-ring dark:bg-zinc-900"
-                        >
-                          <img
-                            src={referenceImageUrl(poseThumbPath(recipe.pose))}
-                            alt={recipe.pose.姿势名称}
-                            className="h-full w-full object-contain p-1 transition-transform duration-300 group-hover:scale-105"
-                          />
-                          <span className="pointer-events-none absolute right-1.5 bottom-1.5 flex size-6 items-center justify-center rounded-full bg-black/55 text-white opacity-0 transition-opacity group-hover:opacity-100">
-                            <ZoomInIcon className="size-3.5" />
-                          </span>
-                        </button>
-                        {recipe.pose.source !== 'upload' && (
-                          <div
-                            role="group"
-                            aria-label="切换素体白模或深度图"
-                            className="md-pill absolute bottom-1.5 left-1.5 inline-flex items-center rounded-full p-0.5 text-xs leading-none"
-                          >
-                            <button
-                              type="button"
-                              onClick={() => {
-                                if (recipe.pose?.useDepth) toggleRecipePoseDepth()
-                              }}
-                              className={cn(
-                                'rounded-full px-2 py-0.5 font-semibold transition',
-                                !recipe.pose.useDepth
-                                  ? 'bg-[#116E65] text-white'
-                                  : 'text-muted-foreground hover:text-foreground'
-                              )}
-                            >
-                              白模
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                if (!recipe.pose?.useDepth) toggleRecipePoseDepth()
-                              }}
-                              className={cn(
-                                'rounded-full px-2 py-0.5 font-semibold transition',
-                                recipe.pose.useDepth
-                                  ? 'bg-[#116E65] text-white'
-                                  : 'text-muted-foreground hover:text-foreground'
-                              )}
-                            >
-                              深度
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    ) : (
-                      <Link
-                        to="/poses"
-                        className="flex h-24 w-full flex-col items-center justify-center gap-1.5 rounded-xl border border-dashed border-border bg-card/65 p-2 text-center text-muted-foreground transition-colors hover:border-foreground/40 hover:bg-card hover:text-foreground"
-                      >
-                        <div className="flex size-8 items-center justify-center rounded-xl bg-muted text-[#D9381E] dark:text-[#FF7A59]">
-                          <PersonStandingIcon className="size-4" />
-                        </div>
-                        <span className="text-xs font-semibold">+ 从姿势库挑选</span>
-                      </Link>
-                    )}
-
-                    <div className="mt-2 min-h-[1.25rem]">
-                      <div
-                        className={cn(
-                          'truncate text-xs leading-snug',
-                          recipe.pose ? 'font-bold text-foreground' : 'text-muted-foreground'
-                        )}
-                        title={
-                          recipe.pose
-                            ? recipe.pose.角度
-                              ? `${recipe.pose.姿势名称} · ${recipe.pose.角度}`
-                              : recipe.pose.姿势名称
-                            : undefined
-                        }
-                      >
-                        {recipe.pose
+                    <div
+                      className={cn(
+                        'truncate text-xs leading-tight',
+                        recipe.pose ? 'font-bold text-foreground' : 'text-muted-foreground'
+                      )}
+                      title={
+                        recipe.pose
                           ? recipe.pose.角度
                             ? `${recipe.pose.姿势名称} · ${recipe.pose.角度}`
                             : recipe.pose.姿势名称
-                          : '未指定动作姿势'}
-                      </div>
+                          : undefined
+                      }
+                    >
+                      {recipe.pose ? (
+                        recipe.pose.角度 ? (
+                          `${recipe.pose.姿势名称} · ${recipe.pose.角度}`
+                        ) : (
+                          recipe.pose.姿势名称
+                        )
+                      ) : (
+                        <Link to="/poses" className="hover:text-foreground hover:underline">
+                          + 从姿势库挑
+                        </Link>
+                      )}
+                    </div>
+
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => toggleRandomScope('pose')}
+                        aria-label={`切换姿势换样范围，当前${randomScopes.pose === 'similar' ? '同类' : '全部'}`}
+                        className="h-5 shrink-0 rounded-md border border-border/80 bg-muted/50 px-1.5 text-xs leading-none font-medium text-muted-foreground transition-colors hover:text-foreground"
+                      >
+                        {randomScopes.pose === 'similar' ? '同类' : '全部'}
+                      </button>
+                      <button
+                        type="button"
+                        disabled={uploadingSlot !== null || randomizingSlot !== null}
+                        onClick={() => void handleRandomSlot('pose')}
+                        aria-label="姿势换一个"
+                        className="inline-flex h-5 min-w-0 flex-1 items-center justify-center gap-1 rounded-md border border-border/80 bg-muted/35 px-1.5 text-xs leading-none font-semibold text-foreground transition-colors hover:bg-muted disabled:opacity-50"
+                      >
+                        {randomizingSlot === 'pose' ? (
+                          <LoaderCircleIcon className="size-3 animate-spin" />
+                        ) : (
+                          <DicesIcon className="size-3 text-[#D9381E]" />
+                        )}
+                        <span className="truncate">换一个</span>
+                      </button>
                     </div>
                   </div>
-
-                  {randomControls('pose', '姿势')}
                 </div>
               </div>
 
-              {/* 附加参考图列表（支持 dnd-kit 拖拽排序） */}
-              <div className="space-y-2 pt-1">
-                {extraImages.length > 0 && (
+              {/* 附图极简捷径条（拖拽排序 / Ctrl+V 粘贴 / URL） */}
+              <div
+                onClick={() => extraImages.length === 0 && fileInputRef.current?.click()}
+                className={cn(
+                  'mt-2 flex min-h-9 items-center justify-between gap-2 rounded-xl border border-dashed px-2.5 py-1 transition-colors',
+                  isDragging
+                    ? 'border-[#E5A918] bg-muted text-foreground'
+                    : extraImages.length === 0
+                      ? 'cursor-pointer border-border bg-[#FAF8F4]/80 text-muted-foreground hover:border-foreground/40 hover:text-foreground dark:bg-muted/20'
+                      : 'border-border/80 bg-[#FAF8F4]/70 dark:bg-muted/20'
+                )}
+              >
+                {extraImages.length > 0 ? (
                   <DndContext sensors={dndSensors} collisionDetection={closestCenter} onDragEnd={handleExtraDragEnd}>
-                    <SortableContext items={extraImages.map((x) => x.id)} strategy={rectSortingStrategy}>
-                      <div className="grid min-w-0 grid-cols-1 gap-2 @min-[42rem]/section:grid-cols-3">
+                    <SortableContext
+                      items={extraImages.map((x) => x.id)}
+                      strategy={horizontalListSortingStrategy}
+                    >
+                      <div className="no-scrollbar flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto">
                         {extraImages.map((img, idx) => (
-                          <SortableExtraImageItem
+                          <SortableExtraPill
                             key={img.id}
                             img={img}
                             idx={idx}
@@ -908,231 +973,205 @@ function StudioPage() {
                       </div>
                     </SortableContext>
                   </DndContext>
-                )}
-
-                <div
-                  onClick={() => fileInputRef.current?.click()}
-                  className={cn(
-                    'flex cursor-pointer flex-col items-center justify-center gap-1.5 rounded-2xl border border-dashed px-3 py-2.5 text-center transition sm:flex-row sm:justify-between',
-                    isDragging
-                      ? 'border-[#E5A918] bg-muted text-foreground'
-                      : 'border-border bg-[#FAF8F4]/70 text-muted-foreground hover:border-foreground/50 hover:bg-[#FAF8F4] hover:text-foreground dark:bg-muted/20 dark:hover:bg-muted/35'
-                  )}
-                >
-                  <div className="flex items-center gap-2 text-xs">
-                    <ImagePlusIcon className="size-4 shrink-0" />
-                    <span>
-                      {isDragging
-                        ? '松开鼠标添加附加参考图'
-                        : '添加附加参考图：点击上传、拖拽图片至此，或按 Ctrl+V / ⌘V 粘贴'}
+                ) : (
+                  <div className="flex min-w-0 items-center gap-1.5 truncate text-xs">
+                    <ImagePlusIcon className="size-3.5 shrink-0" />
+                    <span className="truncate">
+                      {isDragging ? '松开添加附加参考图' : '附图：点击上传、拖拽图片或 Ctrl+V / ⌘V 粘贴'}
                     </span>
                   </div>
+                )}
+
+                <div className="flex shrink-0 items-center gap-1">
+                  {extraImages.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        fileInputRef.current?.click()
+                      }}
+                      className="inline-flex h-6 items-center gap-1 rounded-md border border-border bg-card px-2 text-xs font-medium text-foreground hover:bg-muted"
+                    >
+                      <ImagePlusIcon className="size-3" />
+                      <span>+ 图</span>
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={(e) => {
                       e.stopPropagation()
-                      setShowUrlInput((s) => !s)
+                      setUrlModalOpen(true)
                     }}
-                    className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-border bg-card px-2.5 py-1 text-xs font-medium text-foreground hover:bg-muted"
+                    className="inline-flex h-6 items-center gap-1 rounded-md border border-border bg-card px-2 text-xs font-medium text-foreground hover:bg-muted"
                   >
                     <LinkIcon className="size-3" />
-                    输入图片 URL
+                    <span>URL</span>
                   </button>
                 </div>
-
-                {showUrlInput && (
-                  <div className="flex items-center gap-2">
-                    <Input
-                      value={extraUrlInput}
-                      onChange={(e) => setExtraUrlInput(e.target.value)}
-                      placeholder="粘贴 https://... 图片地址"
-                      className="rounded-xl bg-[#FAF8F4] font-mono text-xs dark:bg-muted/30"
-                      onKeyDown={(e) => e.key === 'Enter' && handleAddUrl()}
-                    />
-                    <Button size="sm" className="rounded-xl text-xs" onClick={handleAddUrl}>
-                      添加
-                    </Button>
-                  </div>
-                )}
               </div>
-            </Section>
+            </section>
 
-            {/* 2. 画风、画面描述与一键生成 */}
-            <Section
-              title="2. 画风与画面描述"
-              className="@lg/section:grid-cols-1"
-              actions={
-                <div className="flex flex-wrap items-center gap-1.5">
-                  <span
-                    className={cn(
-                      'inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium',
-                      customPrompt !== null
-                        ? 'bg-[#E5A918]/15 text-[#9A6B00] dark:text-[#E5A918]'
-                        : 'bg-[#116E65]/12 text-[#116E65] dark:text-[#4FD1C5]'
-                    )}
-                  >
-                    <span
-                      className={cn(
-                        'size-1.5 rounded-full',
-                        customPrompt !== null ? 'bg-[#E5A918]' : 'bg-[#116E65] dark:bg-[#4FD1C5]'
-                      )}
-                    />
-                    {customPrompt !== null ? '已手动锁定' : '随配方自动同步'}
-                  </span>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    disabled={!promptModified}
-                    className="h-7 rounded-xl text-xs"
-                    onClick={() => {
-                      setCustomPrompt(null)
-                      setSceneNote('')
-                      toast.success('已恢复自动同步描述')
-                    }}
-                  >
-                    <RotateCcwIcon className="size-3.5" />
-                    恢复默认
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="h-7 rounded-xl text-xs"
-                    onClick={() => {
-                      void navigator.clipboard.writeText(prompt)
-                      toast.success('已复制画面描述')
-                    }}
-                  >
-                    <CopyIcon className="size-3.5" />
-                    复制
-                  </Button>
-                </div>
-              }
+            {/* 2. 成图画风 7×2 矩阵 + 一行描述 + 朱砂红发射键 */}
+            <section
+              data-impeccable-ignore="nested-cards"
+              className="ks-elevation flex min-h-0 flex-1 flex-col justify-between gap-2.5 rounded-2xl border border-border bg-card p-3"
             >
               <StylePresetSelector
                 value={apiConfig.stylePreset}
                 onChange={(v) => updateApiConfig({ stylePreset: v })}
+                onHoverChange={setHoveredStyleKey}
               />
 
-              {/* 分层提示词区：快速细节补充 + 可展开完整生成指令 */}
-              <div className="min-w-0 space-y-2.5 border-t border-border/70 pt-3">
-                <div className="min-w-0 space-y-1.5">
-                  <label htmlFor="studio-scene-note" className="block text-sm font-semibold select-none">
-                    补充画面细节（场景 / 光影 / 情绪，可选）
-                  </label>
-                  <Input
-                    id="studio-scene-note"
-                    value={sceneNote}
-                    disabled={customPrompt !== null}
-                    onChange={(e) => setSceneNote(e.target.value)}
-                    placeholder={
-                      customPrompt !== null
-                        ? '当前为手动完整编辑模式，请点击「恢复默认」以启用自动拼入'
-                        : '例如：午后逆光、微风吹起发丝、简约街拍背景、镜头微笑…'
-                    }
-                    className="h-10 rounded-xl bg-[#FAF8F4] text-xs dark:bg-muted/30"
-                  />
-                </div>
-
-                <div className="min-w-0 overflow-hidden rounded-2xl border border-border/80 bg-[#FAF8F4] dark:bg-muted/25">
-                  <button
+              <div className="space-y-2 border-t border-border/70 pt-2">
+                <div className="flex items-center gap-2">
+                  <div className="relative min-w-0 flex-1">
+                    <Input
+                      id="studio-scene-note"
+                      aria-label="补充画面细节"
+                      value={sceneNote}
+                      disabled={customPrompt !== null}
+                      onChange={(e) => setSceneNote(e.target.value)}
+                      placeholder={
+                        customPrompt !== null
+                          ? '当前已手动锁定完整指令（点右侧按钮查看或恢复同步）'
+                          : '补充场景、光影或动作细节（可选，如：樱花树下逆光微笑…）'
+                      }
+                      className="h-9 rounded-xl bg-[#FAF8F4] pr-2 text-xs dark:bg-muted/30"
+                    />
+                  </div>
+                  <Button
                     type="button"
-                    aria-expanded={promptExpanded}
-                    onClick={() => setPromptExpanded((v) => !v)}
-                    className="flex w-full min-w-0 items-center justify-between gap-2 px-3 py-2 text-left text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setPromptModalOpen(true)}
+                    className="h-9 shrink-0 rounded-xl bg-[#FAF8F4] px-2.5 text-xs dark:bg-muted/30"
                   >
-                    <span className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
-                      <span className="shrink-0 font-semibold text-foreground">完整生成指令</span>
-                      {!promptExpanded && (
-                        <span className="min-w-0 flex-1 truncate font-normal text-muted-foreground">
-                          {prompt.replace(/\s+/g, ' ').slice(0, 72)}…
-                        </span>
-                      )}
-                    </span>
-                    <span className="inline-flex shrink-0 items-center gap-1 text-xs">
-                      <span>{promptExpanded ? '收起' : '展开微调'}</span>
-                      <ChevronDownIcon
-                        className={cn('size-3.5 transition-transform duration-200', promptExpanded && 'rotate-180')}
-                      />
-                    </span>
-                  </button>
-
-                  {promptExpanded && (
-                    <div className="border-t border-border/70 p-2.5">
-                      <Textarea
-                        aria-label="完整生成指令"
-                        value={prompt}
-                        onChange={(e) => setCustomPrompt(e.target.value)}
-                        rows={6}
-                        className="rounded-xl bg-card text-xs leading-relaxed"
-                      />
-                    </div>
-                  )}
+                    <FileTextIcon className="size-3.5" />
+                    <span>{customPrompt !== null ? '已锁定指令' : '完整指令'}</span>
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    title="复制当前完整提示词"
+                    aria-label="复制当前完整提示词"
+                    onClick={() => {
+                      void navigator.clipboard.writeText(prompt)
+                      toast.success('已复制画面描述')
+                    }}
+                    className="h-9 shrink-0 rounded-xl bg-[#FAF8F4] px-2.5 text-xs dark:bg-muted/30"
+                  >
+                    <CopyIcon className="size-3.5" />
+                  </Button>
                 </div>
-              </div>
 
-              <Button
-                onClick={handleGenerate}
-                disabled={!hydrated || !!activeTask || isGenerating || uploadingSlot !== null}
-                className="ks-keycap h-11 w-full rounded-2xl border-0 bg-[#D9381E] text-sm font-extrabold tracking-tight text-white hover:bg-[#C23018]"
-              >
-                {isGenerating ? (
-                  <>
-                    <LoaderCircleIcon className="size-4 animate-spin" />
-                    正在生成角色图…
-                  </>
-                ) : (
-                  <>
-                    <SparklesIcon className="size-4" />
-                    立即生成角色图
-                  </>
-                )}
-              </Button>
-            </Section>
+                <Button
+                  onClick={handleGenerate}
+                  disabled={!hydrated || !!activeTask || isGenerating || uploadingSlot !== null}
+                  className="ks-keycap h-10 w-full rounded-xl border-0 bg-[#D9381E] text-sm font-extrabold tracking-tight text-white hover:bg-[#C23018]"
+                >
+                  {isGenerating ? (
+                    <>
+                      <LoaderCircleIcon className="size-4 animate-spin" />
+                      <span>正在生成角色图…</span>
+                    </>
+                  ) : (
+                    <>
+                      <SparklesIcon className="size-4" />
+                      <span>立即生成角色图</span>
+                    </>
+                  )}
+                </Button>
+              </div>
+            </section>
           </motion.div>
         </ResizablePanel>
 
         {!isMobile && <ResizableHandle withHandle />}
 
-        {/* 右栏：全高对齐取景画布 + 待命配方预览 + 最近胶片条 */}
+        {/* 右栏：暗房取景监视器 + 成图胶片底片条 */}
         <ResizablePanel
           defaultSize={isMobile ? '100%' : '44%'}
           minSize={isMobile ? '30%' : '28%'}
-          className="min-w-0 lg:pl-3"
+          className="min-w-0 md:flex md:min-h-0 md:flex-col md:pl-2.5"
         >
           <motion.div
             initial={{ opacity: 0, y: 6 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.18, delay: 0.04 }}
-            className="flex h-full min-w-0 flex-col gap-4"
+            className="flex min-h-0 min-w-0 flex-1 flex-col gap-2.5"
           >
-            <Section
-              title="生成作品"
-              outerClassName="flex flex-1 flex-col"
-              className="flex-1 grid-rows-[1fr_auto] @lg/section:grid-cols-1"
-              actions={
-                previewUrl && !isGenerating ? (
+            <section
+              data-impeccable-ignore="nested-cards"
+              className="ks-elevation flex min-h-0 flex-1 flex-col rounded-2xl border border-border bg-card p-3"
+            >
+              <div className="mb-2 flex shrink-0 flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <h2 className="text-xs font-extrabold tracking-tight sm:text-sm">生成监视器</h2>
+                  <span
+                    className={cn(
+                      'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium',
+                      isGenerating
+                        ? 'bg-[#E5A918]/15 text-[#9A6B00] dark:text-[#E5A918]'
+                        : previewUrl
+                          ? 'bg-[#116E65]/12 text-[#116E65] dark:text-[#4FD1C5]'
+                          : 'bg-muted text-muted-foreground'
+                    )}
+                  >
+                    <span
+                      className={cn(
+                        'size-1.5 rounded-full',
+                        isGenerating
+                          ? 'animate-pulse bg-[#E5A918]'
+                          : previewUrl
+                            ? 'bg-[#116E65] dark:bg-[#4FD1C5]'
+                            : 'bg-muted-foreground/50'
+                      )}
+                    />
+                    {isGenerating ? '绘制中' : previewUrl ? '已成图' : '待命'}
+                  </span>
+                </div>
+
+                {previewUrl && !isGenerating && (
                   <div className="flex items-center gap-1.5">
                     {previewResult && (
                       <Button
                         variant="outline"
                         size="sm"
-                        className="h-7 rounded-xl text-xs"
+                        className="h-7 rounded-lg px-2 text-xs"
                         onClick={() => setComparisonResult(previewResult)}
                       >
-                        对比参考
+                        <EyeIcon className="size-3.5" />
+                        <span>对比</span>
                       </Button>
                     )}
-                    <Button variant="outline" size="sm" className="h-7 rounded-xl text-xs" asChild>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-7 rounded-lg px-2 text-xs"
+                      onClick={() => setZoomImageUrl(previewUrl)}
+                    >
+                      <ZoomInIcon className="size-3.5" />
+                      <span>大图</span>
+                    </Button>
+                    <Button variant="outline" size="sm" className="h-7 rounded-lg px-2 text-xs" asChild>
                       <a href={previewUrl} download="character.png">
                         <DownloadIcon className="size-3.5" />
-                        下载图片
+                        <span>下载</span>
                       </a>
                     </Button>
                   </div>
-                ) : null
-              }
-            >
-              <div className="relative flex min-h-[380px] h-full flex-col items-center justify-center overflow-hidden rounded-2xl border border-border bg-[#FAF8F4] p-4 sm:min-h-[460px] dark:bg-muted/25">
+                )}
+              </div>
+
+              {/* 主取景视窗：自适应剩余高度，永不撑出滚动条 */}
+              <div className="relative flex min-h-[260px] flex-1 items-center justify-center overflow-hidden rounded-xl border border-border/80 bg-[#FAF8F4] p-3 md:min-h-0 dark:bg-[#141418]">
+                {/* 取景器四角刻度 */}
+                <span aria-hidden="true" className="pointer-events-none absolute top-2.5 left-2.5 size-3 border-t border-l border-foreground/20" />
+                <span aria-hidden="true" className="pointer-events-none absolute top-2.5 right-2.5 size-3 border-t border-r border-foreground/20" />
+                <span aria-hidden="true" className="pointer-events-none absolute bottom-2.5 left-2.5 size-3 border-b border-l border-foreground/20" />
+                <span aria-hidden="true" className="pointer-events-none absolute right-2.5 bottom-2.5 size-3 border-r border-b border-foreground/20" />
+
                 {isGenerating ? (
                   <div className="flex flex-col items-center gap-3 text-center">
                     <div className="flex size-12 items-center justify-center rounded-2xl border border-border bg-card text-[#E5A918] shadow-xs">
@@ -1175,69 +1214,23 @@ function StudioPage() {
                     )}
                   </div>
                 ) : previewUrl ? (
-                  <div className="flex w-full flex-col items-center gap-3">
-                    <button
-                      type="button"
-                      aria-label="放大生成结果"
-                      onClick={() => setZoomImageUrl(previewUrl)}
-                      className="group relative cursor-zoom-in overflow-hidden rounded-xl border border-border bg-card shadow-xs focus-visible:outline-2 focus-visible:outline-ring"
-                    >
-                      <img
-                        src={previewUrl}
-                        alt="生成结果"
-                        className="max-h-[440px] w-auto object-contain transition group-hover:opacity-95"
-                      />
-                      <span className="pointer-events-none absolute right-2.5 bottom-2.5 inline-flex items-center gap-1 rounded-full bg-black/65 px-2.5 py-1 text-xs font-medium text-white opacity-0 transition-opacity group-hover:opacity-100">
-                        <ZoomInIcon className="size-3.5" />
-                        放大查看
-                      </span>
-                    </button>
-
-                    <div className="flex w-full flex-wrap items-center justify-between gap-2 rounded-xl border border-border/80 bg-card px-3 py-2 text-xs">
-                      <div className="min-w-0 truncate text-muted-foreground">
-                        {previewResult ? (
-                          <span>
-                            <strong className="font-semibold text-foreground">{previewResult.model}</strong>
-                            {' · '}
-                            {new Date(previewResult.createdAt).toLocaleTimeString('zh-CN', {
-                              hour: '2-digit',
-                              minute: '2-digit',
-                            })}
-                          </span>
-                        ) : (
-                          <span>当前生成预览</span>
-                        )}
-                      </div>
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        {previewResult && (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="h-7 rounded-lg px-2.5 text-xs"
-                            onClick={() => setComparisonResult(previewResult)}
-                          >
-                            <EyeIcon className="size-3.5" />
-                            对比参考
-                          </Button>
-                        )}
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="h-7 rounded-lg px-2.5 text-xs"
-                          onClick={() => setZoomImageUrl(previewUrl)}
-                        >
-                          <ZoomInIcon className="size-3.5" />
-                          大图
-                        </Button>
-                      </div>
-                    </div>
-                  </div>
+                  <button
+                    type="button"
+                    aria-label="放大生成结果"
+                    onClick={() => setZoomImageUrl(previewUrl)}
+                    className="group relative flex h-full w-full cursor-zoom-in items-center justify-center focus-visible:outline-2 focus-visible:outline-ring"
+                  >
+                    <img
+                      src={previewUrl}
+                      alt="生成结果"
+                      className="max-h-full max-w-full rounded-lg border border-border/60 object-contain shadow-sm transition group-hover:opacity-95"
+                    />
+                  </button>
                 ) : (
-                  /* 待命取景板：实时展示当前配方卡片组合 + 选中画风 */
-                  <div className="flex w-full max-w-md flex-col items-center gap-5 text-center">
-                    <div className="flex items-center justify-center gap-2 sm:gap-3">
-                      {/* 3 张待合成分轨微缩卡 */}
-                      <div className="flex items-center -space-x-2">
+                  /* 待命舞台：卡带扇形合成预览 + 放大版悬停/选中画风样张 */
+                  <div className="flex w-full max-w-md flex-col items-center gap-4 text-center">
+                    <div className="flex items-center justify-center gap-3 sm:gap-4">
+                      <div className="flex items-center -space-x-2.5">
                         {[
                           {
                             key: 'portrait',
@@ -1265,7 +1258,7 @@ function StudioPage() {
                           return (
                             <div
                               key={slot.key}
-                              style={{ transform: `rotate(${(i - 1) * 4}deg)` }}
+                              style={{ transform: `rotate(${(i - 1) * 5}deg)` }}
                               className="flex h-24 w-18 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-border bg-card shadow-sm"
                             >
                               {slot.src ? (
@@ -1284,36 +1277,27 @@ function StudioPage() {
 
                       <ArrowRightIcon className="size-4 shrink-0 text-muted-foreground/70" />
 
-                      {/* 目标画风预览卡 */}
-                      <div className="relative flex h-24 w-18 shrink-0 flex-col items-center justify-center overflow-hidden rounded-xl border-2 border-[#D9381E]/75 bg-card shadow-sm">
-                        {styleVisual.preview ? (
-                          <>
-                            <img
-                              src={styleVisual.preview}
-                              alt={styleInfo.label}
-                              className="h-full w-full object-cover object-top"
-                            />
-                            <span className="absolute inset-x-0 bottom-0 bg-black/70 px-1 py-0.5 text-center text-xs font-semibold text-white">
-                              {styleVisual.shortLabel}
-                            </span>
-                          </>
-                        ) : (
-                          <div className="flex flex-col items-center gap-1 p-1.5 text-muted-foreground">
-                            <WandSparklesIcon className="size-4 text-[#D9381E]" />
-                            <span className="text-xs font-semibold text-foreground">{styleVisual.shortLabel}</span>
-                          </div>
+                      {/* 目标画风高清预览相框（随左侧悬停实时预览放大版） */}
+                      <div className="relative size-28 shrink-0 overflow-hidden rounded-2xl border-2 border-[#D9381E]/85 bg-card shadow-md sm:size-32">
+                        {styleVisual.preview && (
+                          <img
+                            src={styleVisual.preview}
+                            alt={styleInfo.label}
+                            className="h-full w-full object-cover"
+                          />
                         )}
+                        <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 via-black/45 to-transparent px-2 pt-4 pb-1.5 text-center">
+                          <span className="block truncate text-xs font-bold text-white">{styleVisual.shortLabel}</span>
+                        </div>
                       </div>
                     </div>
 
-                    <div className="space-y-1.5">
+                    <div className="space-y-1">
                       <div className="text-sm font-bold text-foreground">
-                        {hasAnyRef ? '合成取景器已就绪' : '请先挑选参考图或随机配装'}
+                        {hasAnyRef ? `${styleInfo.label} · 合成就绪` : '请先挑选参考图或随机配装'}
                       </div>
-                      <p className="text-xs leading-relaxed text-muted-foreground">
-                        {hasAnyRef
-                          ? `目标画风：${styleInfo.label}${styleVisual.tagline ? `（${styleVisual.tagline}）` : ''}`
-                          : '支持从人像、服装、姿势库混搭，或拖拽 / 粘贴本地参考图'}
+                      <p className="text-xs text-muted-foreground">
+                        {styleVisual.tagline || '支持从三大图库混搭，或拖拽 / 粘贴本地参考图'}
                       </p>
                     </div>
 
@@ -1322,9 +1306,7 @@ function StudioPage() {
                         { label: '人像', ok: Boolean(recipe.portrait) },
                         { label: '服装', ok: Boolean(recipe.costume) },
                         {
-                          label: recipe.pose
-                            ? `姿势(${recipe.pose.useDepth ? '深度' : '白模'})`
-                            : '姿势',
+                          label: recipe.pose ? `姿势(${recipe.pose.useDepth ? '深度' : '白模'})` : '姿势',
                           ok: Boolean(recipe.pose),
                         },
                       ].map((item) => (
@@ -1342,42 +1324,14 @@ function StudioPage() {
                         </span>
                       ))}
                     </div>
-
-                    <div className="flex flex-wrap items-center justify-center gap-2">
-                      {hasStitchRefs ? (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="h-8 rounded-full bg-card px-3 text-xs"
-                          onClick={handleOpenStitchModal}
-                        >
-                          <LayoutGridIcon className="size-3.5" />
-                          预览三合一拼图
-                        </Button>
-                      ) : (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="h-8 rounded-full bg-card px-3 text-xs"
-                          onClick={handleRandom}
-                        >
-                          <DicesIcon className="size-3.5 text-[#E5A918]" />
-                          随机配装试试
-                        </Button>
-                      )}
-                    </div>
                   </div>
                 )}
               </div>
 
-              {/* 最近成图胶片切换条 */}
+              {/* 底部胶片底片条：不撑高页面，随时切换成图或打开全部作品集弹窗 */}
               {recentHistory.length > 0 && (
-                <div className="space-y-1.5 pt-1">
-                  <div className="flex items-center justify-between text-xs text-muted-foreground">
-                    <span className="font-medium text-foreground">最近成图 ({history.length})</span>
-                    <span>点击切换主预览</span>
-                  </div>
-                  <div className="no-scrollbar flex gap-2 overflow-x-auto pb-1">
+                <div className="mt-2 flex shrink-0 items-center gap-2 border-t border-border/70 pt-2">
+                  <div className="no-scrollbar flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto py-0.5">
                     {recentHistory.map((h) => {
                       const active = h.imageUrl === previewUrl
                       return (
@@ -1387,10 +1341,10 @@ function StudioPage() {
                           aria-label={`切换到成图：${h.recipeSummary}`}
                           onClick={() => setPreviewUrl(h.imageUrl)}
                           className={cn(
-                            'relative aspect-[3/4] w-13 shrink-0 overflow-hidden rounded-xl border transition-all',
+                            'relative h-12 w-10 shrink-0 overflow-hidden rounded-lg border transition-all',
                             active
-                              ? 'border-[#D9381E] ring-2 ring-[#D9381E]/80'
-                              : 'border-border/80 opacity-80 hover:opacity-100'
+                              ? 'border-[#D9381E] ring-2 ring-[#D9381E]/85'
+                              : 'border-border/80 opacity-75 hover:opacity-100'
                           )}
                         >
                           <img src={h.imageUrl} alt={h.recipeSummary} className="h-full w-full object-cover" />
@@ -1398,115 +1352,219 @@ function StudioPage() {
                       )
                     })}
                   </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setGalleryModalOpen(true)}
+                    className="h-12 shrink-0 rounded-lg px-2.5 text-xs font-medium"
+                  >
+                    全部 ({history.length})
+                  </Button>
                 </div>
               )}
-            </Section>
+            </section>
 
             {activeTask && (
-              <Section title="进行中的任务" className="@lg/section:grid-cols-1">
-                <p className="break-all text-xs text-muted-foreground">
+              <section className="ks-elevation flex shrink-0 flex-wrap items-center justify-between gap-2 rounded-2xl border border-[#E5A918]/50 bg-card px-3 py-2 text-xs">
+                <span className="min-w-0 truncate text-muted-foreground">
                   {activeTask.task
-                    ? '检测到未完成的生成任务，点击恢复即可继续等待成图。'
-                    : '上次提交可能已发送成功，请恢复确认或手动取消。'}
-                </p>
-                <div className="flex flex-wrap gap-2">
+                    ? '检测到未完成的后台任务，可恢复继续等待成图'
+                    : '上次提交可能已发送成功，请恢复确认或取消'}
+                </span>
+                <div className="flex shrink-0 items-center gap-1.5">
                   <Button
-                    className="rounded-xl text-xs"
+                    size="sm"
+                    className="h-7 rounded-lg text-xs"
                     disabled={isGenerating || !activeTask.task}
                     onClick={() => void resumeGeneration()}
                   >
                     恢复等待
                   </Button>
-                  <Button className="rounded-xl text-xs" variant="outline" onClick={() => void stopTracking()}>
-                    取消等待
+                  <Button
+                    size="sm"
+                    className="h-7 rounded-lg text-xs"
+                    variant="outline"
+                    onClick={() => void stopTracking()}
+                  >
+                    取消
                   </Button>
                 </div>
-              </Section>
+              </section>
             )}
           </motion.div>
         </ResizablePanel>
       </ResizablePanelGroup>
 
-      {/* 生成历史作品集 */}
-      {history.length > 0 && (
-        <Section
-          title={`我的作品集 (${history.length})`}
-          className="grid-cols-2 @lg/section:grid-cols-3 @3xl/section:grid-cols-4"
-          actions={
-            <Button variant="outline" size="sm" className="h-7 rounded-xl text-xs" onClick={clearHistory}>
-              <Trash2Icon className="size-3.5" />
-              清空
-            </Button>
-          }
-        >
-          {history.map((h) => (
-            <div
-              key={h.id}
-              className="group flex flex-col justify-between overflow-hidden rounded-2xl border border-border/70 bg-[#FAF8F4] p-2 shadow-2xs dark:bg-muted/30"
-            >
-              <div className="relative aspect-3/4 overflow-hidden rounded-xl bg-muted/20">
-                <button
-                  type="button"
-                  aria-label={`查看生成记录：${h.recipeSummary}`}
-                  onClick={() => setZoomImageUrl(h.imageUrl)}
-                  className="block h-full w-full cursor-zoom-in focus-visible:outline-2 focus-visible:outline-ring"
-                >
-                  <img
-                    src={h.imageUrl}
-                    alt={h.recipeSummary}
-                    className="h-full w-full object-cover transition group-hover:scale-105"
-                  />
-                  <span className="absolute bottom-1.5 left-1.5 max-w-[calc(100%-12px)] truncate rounded-full bg-black/75 px-2 py-0.5 font-mono text-xs text-white">
-                    {new Date(h.createdAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    removeHistoryItem(h.id)
-                  }}
-                  title="删除此作品"
-                  className="absolute top-1.5 right-1.5 rounded-full bg-black/70 p-1 text-white opacity-85 transition hover:bg-destructive hover:opacity-100"
-                >
-                  <XIcon className="size-3" />
-                </button>
-              </div>
-
-              <div className="mt-2 space-y-1.5 px-1">
-                <div className="truncate text-xs font-bold">{h.recipeSummary}</div>
-                <Button
-                  variant="outline"
-                  className="min-h-10 w-full rounded-xl bg-card text-xs"
-                  onClick={() => setComparisonResult(h)}
-                >
-                  对比参考
-                </Button>
-                <div className="grid grid-cols-2 gap-1.5">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setCustomPrompt(h.prompt)
-                      setPromptExpanded(true)
-                      toast.success('已恢复该图描述词')
-                    }}
-                    className="flex h-8 items-center justify-center rounded-xl bg-muted text-xs font-semibold whitespace-nowrap text-foreground transition hover:bg-muted/70"
-                  >
-                    复用描述
-                  </button>
-                  <a
-                    href={h.imageUrl}
-                    download={`character-${h.id}.png`}
-                    className="flex h-8 items-center justify-center rounded-xl bg-[#D9381E] text-xs font-bold whitespace-nowrap text-white transition hover:bg-[#C23018]"
-                  >
-                    下载
-                  </a>
-                </div>
-              </div>
+      {/* 完整生成指令编辑弹窗（避免撑高主工作台） */}
+      <Dialog open={promptModalOpen} onOpenChange={setPromptModalOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader className="flex flex-row flex-wrap items-center justify-between gap-2 pr-8">
+            <DialogTitle className="text-base">完整生成指令</DialogTitle>
+            <div className="flex items-center gap-1.5">
+              <span
+                className={cn(
+                  'rounded-full px-2 py-0.5 text-xs font-medium',
+                  customPrompt !== null
+                    ? 'bg-[#E5A918]/15 text-[#9A6B00] dark:text-[#E5A918]'
+                    : 'bg-[#116E65]/12 text-[#116E65] dark:text-[#4FD1C5]'
+                )}
+              >
+                {customPrompt !== null ? '已手动锁定' : '随配方自动同步'}
+              </span>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                disabled={!promptModified}
+                className="h-7 rounded-lg text-xs"
+                onClick={() => {
+                  setCustomPrompt(null)
+                  setSceneNote('')
+                  toast.success('已恢复自动同步描述')
+                }}
+              >
+                <RotateCcwIcon className="size-3.5" />
+                恢复默认
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-7 rounded-lg text-xs"
+                onClick={() => {
+                  void navigator.clipboard.writeText(prompt)
+                  toast.success('已复制画面描述')
+                }}
+              >
+                <CopyIcon className="size-3.5" />
+                复制
+              </Button>
             </div>
-          ))}
-        </Section>
-      )}
+          </DialogHeader>
+          <Textarea
+            aria-label="完整生成指令"
+            value={prompt}
+            onChange={(e) => setCustomPrompt(e.target.value)}
+            rows={10}
+            className="rounded-xl bg-background text-xs leading-relaxed"
+          />
+        </DialogContent>
+      </Dialog>
+
+      {/* 全部作品集弹窗（不占主页面高度） */}
+      <Dialog open={galleryModalOpen} onOpenChange={setGalleryModalOpen}>
+        <DialogContent className="max-h-[90dvh] w-[95vw] max-w-4xl overflow-y-auto p-4 sm:max-w-4xl">
+          <DialogHeader className="flex flex-row flex-wrap items-center justify-between gap-3 pr-8">
+            <DialogTitle className="text-base">我的作品集 ({history.length})</DialogTitle>
+            {history.length > 0 && (
+              <Button variant="outline" size="sm" className="h-7 rounded-xl text-xs" onClick={clearHistory}>
+                <Trash2Icon className="size-3.5" />
+                清空全部
+              </Button>
+            )}
+          </DialogHeader>
+
+          {history.length === 0 ? (
+            <div className="py-12 text-center text-xs text-muted-foreground">暂无生成作品</div>
+          ) : (
+            <div className="mt-2 grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
+              {history.map((h) => (
+                <div
+                  key={h.id}
+                  className="group flex flex-col justify-between overflow-hidden rounded-2xl border border-border/70 bg-[#FAF8F4] p-2 shadow-2xs dark:bg-muted/30"
+                >
+                  <div className="relative aspect-3/4 overflow-hidden rounded-xl bg-muted/20">
+                    <button
+                      type="button"
+                      aria-label={`查看生成记录：${h.recipeSummary}`}
+                      onClick={() => {
+                        setPreviewUrl(h.imageUrl)
+                        setZoomImageUrl(h.imageUrl)
+                      }}
+                      className="block h-full w-full cursor-zoom-in"
+                    >
+                      <img
+                        src={h.imageUrl}
+                        alt={h.recipeSummary}
+                        className="h-full w-full object-cover transition group-hover:scale-105"
+                      />
+                      <span className="absolute bottom-1.5 left-1.5 max-w-[calc(100%-12px)] truncate rounded-full bg-black/75 px-2 py-0.5 font-mono text-xs text-white">
+                        {new Date(h.createdAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        removeHistoryItem(h.id)
+                      }}
+                      title="删除此作品"
+                      className="absolute top-1.5 right-1.5 rounded-full bg-black/70 p-1 text-white opacity-85 transition hover:bg-destructive hover:opacity-100"
+                    >
+                      <XIcon className="size-3" />
+                    </button>
+                  </div>
+
+                  <div className="mt-2 space-y-1.5 px-0.5">
+                    <div className="truncate text-xs font-bold">{h.recipeSummary}</div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-8 w-full rounded-xl bg-card text-xs"
+                      onClick={() => setComparisonResult(h)}
+                    >
+                      对比参考
+                    </Button>
+                    <div className="grid grid-cols-2 gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCustomPrompt(h.prompt)
+                          setGalleryModalOpen(false)
+                          setPromptModalOpen(true)
+                          toast.success('已恢复该图描述词')
+                        }}
+                        className="flex h-7 items-center justify-center rounded-lg bg-muted text-xs font-semibold text-foreground transition hover:bg-muted/70"
+                      >
+                        复用描述
+                      </button>
+                      <a
+                        href={h.imageUrl}
+                        download={`character-${h.id}.png`}
+                        className="flex h-7 items-center justify-center rounded-lg bg-[#D9381E] text-xs font-bold text-white transition hover:bg-[#C23018]"
+                      >
+                        下载
+                      </a>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* URL 添加附图弹窗 */}
+      <Dialog open={urlModalOpen} onOpenChange={setUrlModalOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-base">通过图片 URL 添加附图</DialogTitle>
+          </DialogHeader>
+          <div className="flex items-center gap-2 pt-2">
+            <Input
+              value={extraUrlInput}
+              onChange={(e) => setExtraUrlInput(e.target.value)}
+              placeholder="粘贴 https://... 图片地址"
+              className="rounded-xl bg-background font-mono text-xs"
+              onKeyDown={(e) => e.key === 'Enter' && handleAddUrl()}
+            />
+            <Button size="sm" className="rounded-xl text-xs" onClick={handleAddUrl}>
+              添加
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <ReferenceComparisonDialog
         result={comparisonResult}
@@ -1539,6 +1597,6 @@ function StudioPage() {
           )}
         </DialogContent>
       </Dialog>
-    </>
+    </div>
   )
 }
