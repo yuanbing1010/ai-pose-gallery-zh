@@ -70,10 +70,8 @@ export function RecipeDock() {
   const dockGlassRef = useRef<HTMLDivElement | null>(null)
   const ctaLinkRef = useRef<HTMLAnchorElement | null>(null)
   const impactTimerRef = useRef<number | null>(null)
-  const safetyMaskTimerRef = useRef<number | null>(null)
   const prevReadyRef = useRef(false)
 
-  const [maskedSlots, setMaskedSlots] = useState<Set<CoreSlot>>(() => new Set())
   const [sparkKeys, setSparkKeys] = useState<Record<CoreSlot, number>>({
     portrait: 0,
     costume: 0,
@@ -88,50 +86,28 @@ export function RecipeDock() {
       ? Object.values(recipe.workflowImages || {})
       : []
 
-  const showPortrait = Boolean(recipe.portrait) && !maskedSlots.has('portrait')
-  const showCostume = Boolean(recipe.costume) && !maskedSlots.has('costume')
-  const showPose = Boolean(recipe.pose) && !maskedSlots.has('pose')
-
-  const coreSlotsFilled = [showPortrait, showCostume, showPose].filter(Boolean).length
+  const coreSlotsFilled = [recipe.portrait, recipe.costume, recipe.pose].filter(Boolean).length
   const count = coreSlotsFilled + extraCount + workflowImages.length
   const isFullReady = coreSlotsFilled === 3
 
-  // 监听首页卡包飞入起飞与落地撞击事件
+  // 监听单张卡落地撞击事件：不清空已有卡，每飞落一张即刻独立抖动 + 火花迸发
   useEffect(() => {
-    const onFlightStart = (e: Event) => {
-      const detail = (e as CustomEvent<{ slots?: CoreSlot[] }>).detail
-      const slots = detail?.slots ?? ['portrait', 'costume', 'pose']
-      setMaskedSlots(new Set(slots))
-      if (safetyMaskTimerRef.current) window.clearTimeout(safetyMaskTimerRef.current)
-      safetyMaskTimerRef.current = window.setTimeout(() => {
-        setMaskedSlots(new Set())
-      }, 1700)
-    }
-
     const onImpact = (e: Event) => {
       const detail = (e as CustomEvent<{ slot?: CoreSlot; index?: number; isFinal?: boolean }>).detail
       const slot = detail?.slot
       if (!slot) return
 
-      // 1. 揭晓对应槽位的卡图
-      setMaskedSlots((prev) => {
-        if (!prev.has(slot)) return prev
-        const next = new Set(prev)
-        next.delete(slot)
-        return next
-      })
-
-      // 2. 触发槽位 Q 弹 + 星芒粒子迸发
+      // 1. 触发对应槽位 Q 弹 + 星芒粒子迸发
       const slotEl = document.querySelector<HTMLElement>(`[data-dock-slot="${slot}"]`)
       if (slotEl) {
         slotEl.classList.remove('hp-slot-pop')
         void slotEl.offsetWidth
         slotEl.classList.add('hp-slot-pop')
-        window.setTimeout(() => slotEl.classList.remove('hp-slot-pop'), 500)
+        window.setTimeout(() => slotEl.classList.remove('hp-slot-pop'), 480)
       }
       setSparkKeys((prev) => ({ ...prev, [slot]: prev[slot] + 1 }))
 
-      // 3. 触发整条悬浮块根据落点左右中微倾震颤
+      // 2. 触发整条悬浮块根据落点左/中/右微倾震颤一次
       const glass = dockGlassRef.current
       if (glass) {
         const cls =
@@ -146,22 +122,19 @@ export function RecipeDock() {
         if (impactTimerRef.current) window.clearTimeout(impactTimerRef.current)
         impactTimerRef.current = window.setTimeout(() => {
           glass.classList.remove('dock-impact-left', 'dock-impact-center', 'dock-impact-right')
-        }, 480)
+        }, 300)
       }
 
-      // 4. 压轴最后一张落地时，强制点燃立即合成按钮波纹
+      // 3. 第 3 张（压轴最后一张）落地时，点燃「立即合成」按钮唤醒波纹
       if (detail?.isFinal) {
         setCtaIgniteKey((k) => k + 1)
       }
     }
 
-    window.addEventListener('recipe-dock-flight-start', onFlightStart)
     window.addEventListener('recipe-dock-impact', onImpact)
     return () => {
-      window.removeEventListener('recipe-dock-flight-start', onFlightStart)
       window.removeEventListener('recipe-dock-impact', onImpact)
       if (impactTimerRef.current) window.clearTimeout(impactTimerRef.current)
-      if (safetyMaskTimerRef.current) window.clearTimeout(safetyMaskTimerRef.current)
     }
   }, [])
 
@@ -243,11 +216,11 @@ export function RecipeDock() {
             <div
               data-dock-slot="portrait"
               className={`relative flex min-w-0 items-center gap-2 rounded-xl px-2.5 py-1.5 transition-colors ${
-                showPortrait ? 'border border-border bg-card shadow-xs' : 'hover:bg-card/70'
+                recipe.portrait ? 'border border-border bg-card shadow-xs' : 'hover:bg-card/70'
               }`}
             >
               <SlotSparkBurst slot="portrait" burstKey={sparkKeys.portrait} />
-              {showPortrait && recipe.portrait ? (
+              {recipe.portrait ? (
                 <>
                   <img
                     src={referenceImageUrl(recipe.portrait.缩略图)}
@@ -283,11 +256,11 @@ export function RecipeDock() {
             <div
               data-dock-slot="costume"
               className={`relative flex min-w-0 items-center gap-2 rounded-xl px-2.5 py-1.5 transition-colors ${
-                showCostume ? 'border border-border bg-card shadow-xs' : 'hover:bg-card/70'
+                recipe.costume ? 'border border-border bg-card shadow-xs' : 'hover:bg-card/70'
               }`}
             >
               <SlotSparkBurst slot="costume" burstKey={sparkKeys.costume} />
-              {showCostume && recipe.costume ? (
+              {recipe.costume ? (
                 <>
                   <img
                     src={referenceImageUrl(recipe.costume.缩略图)}
@@ -323,11 +296,11 @@ export function RecipeDock() {
             <div
               data-dock-slot="pose"
               className={`relative flex min-w-0 items-center gap-2 rounded-xl px-2.5 py-1.5 transition-colors ${
-                showPose ? 'border border-border bg-card shadow-xs' : 'hover:bg-card/70'
+                recipe.pose ? 'border border-border bg-card shadow-xs' : 'hover:bg-card/70'
               }`}
             >
               <SlotSparkBurst slot="pose" burstKey={sparkKeys.pose} />
-              {showPose && recipe.pose ? (
+              {recipe.pose ? (
                 <>
                   <img
                     src={referenceImageUrl(poseThumbPath(recipe.pose))}

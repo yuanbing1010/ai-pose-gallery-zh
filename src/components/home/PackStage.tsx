@@ -18,9 +18,27 @@ export interface PackStageProps {
   onToggleMute: () => void
   onRedraw: () => void
   onSynthesize: (pack: DrawnPack) => void
+  onSynthesizeSlot?: (slot: 'portrait' | 'costume' | 'pose', pack: DrawnPack) => void
   onClose?: () => void
   variant?: 'inline' | 'modal'
   className?: string
+}
+
+function seededShuffle<T>(items: T[], seedStr: string): T[] {
+  let h = 2166136261
+  for (let i = 0; i < seedStr.length; i++) {
+    h ^= seedStr.charCodeAt(i)
+    h = Math.imul(h, 16777619)
+  }
+  const arr = [...items]
+  for (let i = arr.length - 1; i > 0; i--) {
+    h ^= h << 13
+    h ^= h >>> 17
+    h ^= h << 5
+    const j = (h >>> 0) % (i + 1)
+    ;[arr[i], arr[j]] = [arr[j], arr[i]]
+  }
+  return arr
 }
 
 const PACK_SKINS = [
@@ -238,6 +256,7 @@ export function PackStage({
   onToggleMute,
   onRedraw,
   onSynthesize,
+  onSynthesizeSlot,
   onClose,
   variant = 'inline',
   className,
@@ -262,6 +281,11 @@ export function PackStage({
   const mutedRef = useRef(muted)
   const sfxRef = useRef<ReturnType<typeof createVoices>>(null)
   const flyTimersRef = useRef<number[]>([])
+  const pendingPackRef = useRef<{ pack: DrawnPack; written: Set<'portrait' | 'costume' | 'pose'> } | null>(null)
+  const onSynthesizeRef = useRef(onSynthesize)
+  useEffect(() => {
+    onSynthesizeRef.current = onSynthesize
+  }, [onSynthesize])
 
   useEffect(() => {
     mutedRef.current = muted
@@ -272,38 +296,52 @@ export function PackStage({
     const timers = flyTimersRef.current
     return () => {
       timers.forEach((id) => window.clearTimeout(id))
+      if (pendingPackRef.current && pendingPackRef.current.written.size < 3) {
+        onSynthesizeRef.current(pendingPackRef.current.pack)
+        pendingPackRef.current = null
+      }
       sfxRef.current?.dispose()
       sfxRef.current = null
     }
   }, [])
 
-  const cardSpecs = useMemo(
-    () => [
+  // 每次抽卡均随机打乱 3 张卡在舞台上的展示顺序，并生成随机错落起飞次序
+  const cardSpecs = useMemo(() => {
+    const base = [
       {
         slotKey: 'portrait' as const,
+        kindLabel: '人像',
+        dotColor: '#E5A918',
         title: drawn.portrait.发型名称,
         img: `/${drawn.portrait.缩略图}`,
       },
       {
         slotKey: 'costume' as const,
+        kindLabel: '服装',
+        dotColor: '#19857B',
         title: drawn.costume.服装名称,
         img: referenceImageUrl(drawn.costume.缩略图),
       },
       {
         slotKey: 'pose' as const,
+        kindLabel: '姿势',
+        dotColor: '#D9381E',
         title: drawn.pose.姿势名称,
         img: `/${poseThumbPath(drawn.pose)}`,
       },
-    ],
-    [drawn]
-  )
+    ]
+    return seededShuffle(
+      base,
+      `${packSeed}:${drawn.portrait.id}:${drawn.costume.id}:${drawn.pose.id}`
+    )
+  }, [drawn, packSeed])
 
-  // 执行：三张卡错落有致地蓄力跳起，划出抛物线依次砸入底部 RecipeDock 对应槽位
+  // 执行：三张卡保留原槽位已有卡，按随机错落顺序蓄力跳起，落地一瞬间逐个撞换并触发底座抖动
   const handleSynthesizeClick = () => {
     if (phase !== 'opened') return
     const scene = sceneRef.current
     const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
-    if (!scene || reduce) {
+    if (!scene || reduce || variant !== 'inline') {
       onSynthesize(drawn)
       window.dispatchEvent(
         new CustomEvent('recipe-dock-impact', { detail: { slot: 'pose', index: 2, isFinal: true } })
@@ -317,89 +355,96 @@ export function PackStage({
       return { left: r.left, top: r.top, width: r.width, height: r.height }
     })
 
-    // 1. 先通知悬浮栏进入「待接卡」掩码态，再写入配方（保证中途跳页数据也不丢）
-    if (variant === 'inline' && fromRects.length >= 3) {
-      window.dispatchEvent(
-        new CustomEvent('recipe-dock-flight-start', { detail: { slots: ['portrait', 'costume', 'pose'] } })
-      )
-    }
-    onSynthesize(drawn)
-
-    if (variant !== 'inline' || fromRects.length < 3) {
+    if (fromRects.length < 3) {
+      onSynthesize(drawn)
       return
     }
 
     setPhase('flying')
+    pendingPackRef.current = { pack: drawn, written: new Set() }
 
-    // 2. 等两帧确保 RecipeDock 挂载并布局出最终位置
     requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        const slots: Array<'portrait' | 'costume' | 'pose'> = ['portrait', 'costume', 'pose']
-        const staggerDelays = [0, 165, 340]
-        const clones: FlyingCardClone[] = []
+      const launchOrder = seededShuffle(
+        [0, 1, 2],
+        `launch:${packSeed}:${drawn.portrait.id}:${drawn.pose.id}`
+      )
+      const clones: FlyingCardClone[] = []
 
-        slots.forEach((slotKey, i) => {
-          const targetEl = document.querySelector<HTMLElement>(`[data-dock-slot="${slotKey}"]`)
-          const from = fromRects[i]
-          if (!targetEl || !from || from.width < 10) return
-          const tr = targetEl.getBoundingClientRect()
-          clones.push({
-            key: `${slotKey}-${packSeed}-${i}`,
-            slotKey,
-            img: cardSpecs[i].img,
-            alt: cardSpecs[i].title,
-            from,
-            to: { left: tr.left, top: tr.top, width: tr.width, height: tr.height },
-            delay: staggerDelays[i] ?? i * 165,
-          })
+      launchOrder.forEach((cardIdx, orderIdx) => {
+        const spec = cardSpecs[cardIdx]
+        const targetEl = document.querySelector<HTMLElement>(`[data-dock-slot="${spec.slotKey}"]`)
+        const from = fromRects[cardIdx]
+        if (!targetEl || !from || from.width < 10) return
+        const tr = targetEl.getBoundingClientRect()
+        clones.push({
+          key: `${spec.slotKey}-${packSeed}-${cardIdx}`,
+          slotKey: spec.slotKey,
+          img: spec.img,
+          alt: spec.title,
+          from,
+          to: { left: tr.left, top: tr.top, width: tr.width, height: tr.height },
+          delay: orderIdx * 270,
         })
-
-        if (!clones.length) {
-          setPhase('opened')
-          return
-        }
-
-        // 逐张隐藏舞台原卡（与起飞延迟同步，实现错落跳出舞台的节奏）
-        clones.forEach((c, idx) => {
-          const hideAt = window.setTimeout(() => {
-            const el = cardEls[idx]
-            if (el) el.style.opacity = '0'
-          }, c.delay)
-          flyTimersRef.current.push(hideAt)
-        })
-
-        setFlyingClones(clones)
-
-        // 每张卡落地瞬间：触发对应槽位揭晓、底座重力抖动、星芒火花与升调打击音
-        clones.forEach((c, idx) => {
-          const isFinal = idx === clones.length - 1
-          const hitAt = window.setTimeout(() => {
-            window.dispatchEvent(
-              new CustomEvent('recipe-dock-impact', {
-                detail: { slot: c.slotKey, index: idx, isFinal },
-              })
-            )
-            sfxRef.current?.land(idx)
-            if (isFinal) {
-              const fullChime = window.setTimeout(() => sfxRef.current?.dockFull(), 85)
-              flyTimersRef.current.push(fullChime)
-            }
-          }, 530 + c.delay)
-          flyTimersRef.current.push(hitAt)
-        })
-
-        // 所有卡砸入并触发「立即合成」充能觉醒后，再优雅换入新卡包待命
-        const maxDelay = clones[clones.length - 1]?.delay ?? 340
-        const doneAt = window.setTimeout(() => {
-          setFlyingClones([])
-          onRedraw()
-        }, maxDelay + 1060)
-        flyTimersRef.current.push(doneAt)
       })
+
+      if (!clones.length) {
+        pendingPackRef.current = null
+        onSynthesize(drawn)
+        setPhase('opened')
+        return
+      }
+
+      // 逐张在起飞瞬间隐藏舞台原卡，避免三张卡同时消失
+      clones.forEach((c, idx) => {
+        const cardIdx = launchOrder[idx]
+        const hideAt = window.setTimeout(() => {
+          const el = cardEls[cardIdx]
+          if (el) el.style.opacity = '0'
+        }, c.delay)
+        flyTimersRef.current.push(hideAt)
+      })
+
+      setFlyingClones(clones)
+
+      // 每张卡砸进槽位的那一毫秒：单独写入该槽位（不清空其他槽位）+ 独立触发一次悬浮块震颤 + 火花 + 音效
+      clones.forEach((c, idx) => {
+        const isFinal = idx === clones.length - 1
+        const hitAt = window.setTimeout(() => {
+          if (pendingPackRef.current) {
+            pendingPackRef.current.written.add(c.slotKey)
+          }
+          if (onSynthesizeSlot) {
+            onSynthesizeSlot(c.slotKey, drawn)
+          } else if (isFinal) {
+            onSynthesize(drawn)
+          }
+
+          window.dispatchEvent(
+            new CustomEvent('recipe-dock-impact', {
+              detail: { slot: c.slotKey, index: idx, isFinal },
+            })
+          )
+          sfxRef.current?.land(idx)
+          if (isFinal) {
+            pendingPackRef.current = null
+            const fullChime = window.setTimeout(() => sfxRef.current?.dockFull(), 85)
+            flyTimersRef.current.push(fullChime)
+          }
+        }, 445 + c.delay)
+        flyTimersRef.current.push(hitAt)
+      })
+
+      // 全部落地并看到满槽充能点亮后，清空飞卡层并滑入下一包
+      const maxDelay = clones[clones.length - 1]?.delay ?? 540
+      const doneAt = window.setTimeout(() => {
+        setFlyingClones([])
+        onRedraw()
+      }, maxDelay + 920)
+      flyTimersRef.current.push(doneAt)
     })
   }
 
-  // 对飞入克隆节点应用 WAAPI 错落蓄力 + 高抛重力加速入袋动画
+  // 对飞入克隆节点应用 WAAPI 错落蓄力 + 高抛重力加速入袋动画 (480ms 干脆落袋)
   useEffect(() => {
     const layer = flyLayerRef.current
     if (!layer || !flyingClones.length) return
@@ -414,24 +459,24 @@ export function PackStage({
       const toCy = c.to.top + c.to.height / 2
       const dx = toCx - fromCx
       const dy = toCy - fromCy
-      const endScale = Math.max(0.16, 30 / Math.max(1, c.from.width))
+      const endScale = Math.max(0.14, 30 / Math.max(1, c.from.width))
       const bank = (idx - 1) * 14
-      const apexLift = [48, 72, 42][idx] ?? 54
+      const apexLift = [54, 78, 46][idx % 3] ?? 56
       el.animate(
         [
           { transform: 'translate3d(0, 0, 0) rotateZ(0deg) scale(1)', opacity: 1 },
           {
-            transform: `translate3d(${(-dx * 0.03).toFixed(1)}px, -26px, 0) rotateZ(${(-bank * 0.7).toFixed(1)}deg) scale(1.07)`,
+            transform: `translate3d(${(-dx * 0.03).toFixed(1)}px, -24px, 0) rotateZ(${(-bank * 0.65).toFixed(1)}deg) scale(1.07)`,
             opacity: 1,
-            offset: 0.15,
+            offset: 0.14,
           },
           {
-            transform: `translate3d(${(dx * 0.34).toFixed(1)}px, ${(dy * 0.16 - apexLift).toFixed(1)}px, 0) rotateZ(${bank}deg) scale(0.86)`,
+            transform: `translate3d(${(dx * 0.34).toFixed(1)}px, ${(dy * 0.16 - apexLift).toFixed(1)}px, 0) rotateZ(${bank}deg) scale(0.84)`,
             opacity: 1,
-            offset: 0.44,
+            offset: 0.42,
           },
           {
-            transform: `translate3d(${(dx * 0.94).toFixed(1)}px, ${(dy * 0.94).toFixed(1)}px, 0) rotateZ(${(bank * 0.2).toFixed(1)}deg) scale(${(endScale * 1.18).toFixed(3)})`,
+            transform: `translate3d(${(dx * 0.94).toFixed(1)}px, ${(dy * 0.94).toFixed(1)}px, 0) rotateZ(${(bank * 0.2).toFixed(1)}deg) scale(${(endScale * 1.16).toFixed(3)})`,
             opacity: 0.98,
             offset: 0.88,
           },
@@ -441,9 +486,9 @@ export function PackStage({
           },
         ],
         {
-          duration: 590,
+          duration: 480,
           delay: c.delay,
-          easing: 'cubic-bezier(0.28, 0.84, 0.42, 1)',
+          easing: 'cubic-bezier(0.26, 0.85, 0.38, 1)',
           fill: 'forwards',
         }
       )
@@ -833,16 +878,16 @@ export function PackStage({
       const sw = stage.clientWidth || 860
       const sh = stage.clientHeight || 580
       const m = slot - 1
-      const cw = Math.min(208, Math.max(108, sw * 0.24))
+      const cw = Math.min(256, Math.max(122, sw * 0.245))
       const tight = sw < 560
-      const gap = tight ? Math.min(cw * 0.96, (sw - 36) / 3) : Math.min(cw * 1.15, (sw - 108) / 3)
-      const s = cw / (PW * 0.84 || 206)
+      const gap = tight ? Math.min(cw * 0.96, (sw - 32) / 3) : Math.min(cw * 1.18, (sw - 96) / 3)
+      const s = cw / (PW * 0.84 || 232)
       return {
         x: m * gap,
-        y: Math.min(8, sh * 0.01) + m * m * (tight ? 7 : 5) - 10,
+        y: Math.min(8, sh * 0.01) + m * m * (tight ? 7 : 5) - 6,
         z: tight ? m * 24 : 0,
-        rz: m * (tight ? 5 : 3),
-        s: clamp(s, 0.56, 1.04),
+        rz: m * (tight ? 5 : 3.2),
+        s: clamp(s, 0.62, 1.12),
       }
     }
 
@@ -1509,13 +1554,48 @@ export function PackStage({
     <div
       ref={stageRef}
       className={cn(
-        'hp-stage relative flex w-full flex-col items-center justify-end overflow-hidden px-4 py-4 sm:px-6 sm:py-5',
+        'hp-stage relative flex w-full flex-col items-center justify-between overflow-hidden px-4 py-4 sm:px-6 sm:py-5',
         variant === 'inline'
           ? 'min-h-0 flex-1 text-[#141414] dark:text-white'
           : 'min-h-[560px] text-[#141414] dark:text-white sm:min-h-[600px]',
         className
       )}
     >
+      {/* 舞台中心聚光灯与精密表盘刻度圆环装饰 */}
+      <div aria-hidden="true" className="pointer-events-none absolute inset-0 flex items-center justify-center overflow-hidden">
+        <div className="size-[min(76vw,540px)] rounded-full bg-[radial-gradient(circle,rgba(255,255,255,0.68)_0%,rgba(255,255,255,0)_72%)] dark:bg-[radial-gradient(circle,rgba(255,255,255,0.06)_0%,rgba(255,255,255,0)_72%)]" />
+        <div className="absolute size-[min(64vw,430px)] rounded-full border border-dashed border-black/[0.08] dark:border-white/[0.08]" />
+        <div className="absolute size-[min(78vw,530px)] rounded-full border border-black/[0.04] dark:border-white/[0.04]" />
+      </div>
+
+      {/* 顶部导视与实时抽卡结果标签（开包前后动态切换） */}
+      <div className="pointer-events-none relative z-20 flex w-full flex-col items-center gap-1.5 pt-1 text-center">
+        {phase === 'sealed' ? (
+          <>
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-black/10 bg-white/75 px-3 py-0.5 font-mono text-xs font-semibold text-foreground/80 backdrop-blur-md dark:border-white/15 dark:bg-white/10">
+              <span className="size-1.5 animate-pulse rounded-full bg-[#D9381E]" />
+              <span>3-IN-1 角色配方盲盒 · 6,162+ 中文参考卡</span>
+            </span>
+            <p className="text-xs text-muted-foreground sm:text-sm">
+              沿顶部铝箔横向划开，或轻点两次直接拆封今日角色配方
+            </p>
+          </>
+        ) : (
+          <div className="flex flex-wrap items-center justify-center gap-1.5">
+            {cardSpecs.map((spec) => (
+              <span
+                key={spec.slotKey}
+                className="inline-flex max-w-[14rem] items-center gap-1.5 rounded-full border border-black/10 bg-white/85 px-2.5 py-1 text-xs font-medium text-foreground shadow-2xs backdrop-blur-md dark:border-white/15 dark:bg-white/10"
+              >
+                <span className="size-2 shrink-0 rounded-full" style={{ backgroundColor: spec.dotColor }} />
+                <span className="shrink-0 font-mono text-muted-foreground">{spec.kindLabel}</span>
+                <span className="truncate font-semibold">{spec.title}</span>
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+
       {/* 右上角静音与关闭按钮 */}
       <div className="absolute top-4 right-4 z-30 flex items-center gap-2 sm:right-6">
         <button
@@ -1593,28 +1673,30 @@ export function PackStage({
 
       <canvas ref={fxCanvasRef} className="hp-fx" aria-hidden="true" />
 
-      {/* 底部操作栏：开包后仅提供「再抽一包」与「立即合成」 */}
-      {phase === 'opened' && (
-        <div className="relative z-30 flex flex-wrap items-center justify-center gap-3 pb-1">
-          <button
-            type="button"
-            onClick={onRedraw}
-            className="inline-flex h-10 items-center gap-2 rounded-full border border-black/15 bg-white px-5 text-xs font-semibold text-[#141414] shadow-sm transition-all hover:bg-zinc-100 active:scale-[0.97] dark:border-white/15 dark:bg-white/10 dark:text-white dark:hover:bg-white/20"
-          >
-            <DicesIcon className="size-3.5" />
-            <span>再抽一包</span>
-          </button>
+      {/* 底部操作栏：未开包占位防跳动，开包后提供「再抽一包」与「立即合成」 */}
+      <div className="relative z-30 flex min-h-11 flex-wrap items-center justify-center gap-3 pb-1">
+        {phase === 'opened' && (
+          <>
+            <button
+              type="button"
+              onClick={onRedraw}
+              className="inline-flex h-10 items-center gap-2 rounded-full border border-black/15 bg-white px-5 text-xs font-semibold text-[#141414] shadow-sm transition-all hover:bg-zinc-100 active:scale-[0.97] dark:border-white/15 dark:bg-white/10 dark:text-white dark:hover:bg-white/20"
+            >
+              <DicesIcon className="size-3.5" />
+              <span>再抽一包</span>
+            </button>
 
-          <button
-            type="button"
-            onClick={handleSynthesizeClick}
-            className="inline-flex h-10 items-center gap-2 rounded-full bg-[#141414] px-6 text-xs font-semibold text-white shadow-md transition-all hover:bg-black/85 active:scale-[0.97] dark:bg-white dark:text-black dark:hover:bg-zinc-200"
-          >
-            <SparklesIcon className="size-3.5" />
-            <span>立即合成</span>
-          </button>
-        </div>
-      )}
+            <button
+              type="button"
+              onClick={handleSynthesizeClick}
+              className="ks-keycap inline-flex h-10 items-center gap-2 rounded-full bg-[#D9381E] px-6 text-xs font-semibold text-white shadow-md transition-all hover:-translate-y-0.5 hover:bg-[#C23018] active:scale-[0.97]"
+            >
+              <SparklesIcon className="size-3.5" />
+              <span>立即合成</span>
+            </button>
+          </>
+        )}
+      </div>
 
       {/* 飞入底部 RecipeDock 槽位的跨层飞行克隆层 */}
       {flyingClones.length > 0 &&

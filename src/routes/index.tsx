@@ -7,7 +7,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { useStudio } from '@/store/studioStore'
 
 export const Route = createFileRoute('/')({
-  staticData: { title: '图库总览' },
+  staticData: { title: '盲盒抽卡' },
   loader: ({ context }) =>
     Promise.all([
       context.queryClient.ensureQueryData(posesQuery),
@@ -71,6 +71,15 @@ function DashboardPage() {
     [setPortrait, setCostume, setPose]
   )
 
+  const handleSynthesizeSlot = useCallback(
+    (slot: 'portrait' | 'costume' | 'pose', pack: DrawnPack) => {
+      if (slot === 'portrait') setPortrait(pack.portrait)
+      else if (slot === 'costume') setCostume(pack.costume)
+      else setPose(pack.pose)
+    },
+    [setPortrait, setCostume, setPose]
+  )
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       {drawnPack && (
@@ -82,6 +91,7 @@ function DashboardPage() {
           onToggleMute={() => setMuted((m) => !m)}
           onRedraw={handleRedraw}
           onSynthesize={handleSynthesize}
+          onSynthesizeSlot={handleSynthesizeSlot}
         />
       )}
     </div>

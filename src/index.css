@@ -352,7 +352,7 @@
 
 /* holo.yashb.xyz 完整 3D 手撕盲盒物理样式（纯 CSS 3D + 多段卷曲箔条 + 3D 卡片飞出） */
 .hp-stage {
-    --ph: min(340px, 45vh);
+    --ph: min(400px, 50vh);
     --pw: calc(var(--ph) * 0.69);
     --cw: calc(var(--pw) * 0.84);
     --ch: calc(var(--cw) * 1.4);
@@ -728,36 +728,36 @@
     }
 }
 
-/* 悬浮配方坞受重物撞击时的物理微倾回弹 */
+/* 悬浮配方坞受重物撞击时的物理微倾回弹（单次 260ms 干脆震颤） */
 @keyframes dock-impact-left {
     0% { transform: translate3d(0, 0, 0) rotate(0deg); }
-    25% { transform: translate3d(-2px, 5px, 0) rotate(-0.95deg) scale(0.994); }
-    58% { transform: translate3d(1px, -2px, 0) rotate(0.35deg) scale(1.004); }
+    28% { transform: translate3d(-2px, 6px, 0) rotate(-1.05deg) scale(0.992); }
+    62% { transform: translate3d(1px, -2px, 0) rotate(0.32deg) scale(1.005); }
     100% { transform: translate3d(0, 0, 0) rotate(0deg) scale(1); }
 }
 
 @keyframes dock-impact-center {
     0% { transform: translate3d(0, 0, 0) scale(1); }
-    25% { transform: translate3d(0, 6px, 0) scale(0.992, 0.985); }
-    58% { transform: translate3d(0, -2.5px, 0) scale(1.005, 1.006); }
+    28% { transform: translate3d(0, 6.5px, 0) scale(0.99, 0.98); }
+    62% { transform: translate3d(0, -2.5px, 0) scale(1.006, 1.008); }
     100% { transform: translate3d(0, 0, 0) scale(1); }
 }
 
 @keyframes dock-impact-right {
     0% { transform: translate3d(0, 0, 0) rotate(0deg); }
-    25% { transform: translate3d(2px, 6px, 0) rotate(0.95deg) scale(0.992); }
-    58% { transform: translate3d(-1px, -2.5px, 0) rotate(-0.4deg) scale(1.006); }
+    28% { transform: translate3d(2px, 6px, 0) rotate(1.05deg) scale(0.992); }
+    62% { transform: translate3d(-1px, -2px, 0) rotate(-0.32deg) scale(1.005); }
     100% { transform: translate3d(0, 0, 0) rotate(0deg) scale(1); }
 }
 
 .dock-impact-left {
-    animation: dock-impact-left 420ms cubic-bezier(0.22, 1.4, 0.36, 1);
+    animation: dock-impact-left 260ms cubic-bezier(0.22, 1.45, 0.36, 1);
 }
 .dock-impact-center {
-    animation: dock-impact-center 420ms cubic-bezier(0.22, 1.4, 0.36, 1);
+    animation: dock-impact-center 260ms cubic-bezier(0.22, 1.45, 0.36, 1);
 }
 .dock-impact-right {
-    animation: dock-impact-right 460ms cubic-bezier(0.22, 1.4, 0.36, 1);
+    animation: dock-impact-right 280ms cubic-bezier(0.22, 1.45, 0.36, 1);
 }
 
 /* 槽位撞击时的星芒粒子扩散 */

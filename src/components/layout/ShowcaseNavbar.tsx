@@ -18,10 +18,10 @@ import { activeNavTo } from './nav'
 import { useStudio } from '@/store/studioStore'
 
 const SHOWCASE_NAV_ITEMS = [
-  { title: '总览', to: '/' as const, icon: LayoutDashboardIcon },
-  { title: '姿势卡', to: '/poses' as const, icon: PersonStandingIcon, count: '1.4K' },
-  { title: '服装卡', to: '/costumes' as const, icon: ShirtIcon, count: '3.2K' },
+  { title: '盲盒抽卡', to: '/' as const, icon: LayoutDashboardIcon },
   { title: '人像卡', to: '/portraits' as const, icon: UserRoundIcon, count: '1.5K' },
+  { title: '服装卡', to: '/costumes' as const, icon: ShirtIcon, count: '3.2K' },
+  { title: '姿势卡', to: '/poses' as const, icon: PersonStandingIcon, count: '1.4K' },
   { title: '指南', to: '/guide' as const, icon: BookOpenIcon },
 ]
 
