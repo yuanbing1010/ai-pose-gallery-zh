@@ -1,17 +1,13 @@
-import animeImg from '@/assets/styles/anime.webp'
-import anime90sImg from '@/assets/styles/anime_90s.webp'
-import celAnimeImg from '@/assets/styles/cel_anime.webp'
-import chibiBoxImg from '@/assets/styles/chibi_box.webp'
-import claymationImg from '@/assets/styles/claymation.webp'
-import disneyImg from '@/assets/styles/disney.webp'
-import filmImg from '@/assets/styles/film.webp'
-import ghibliImg from '@/assets/styles/ghibli.webp'
-import mangaImg from '@/assets/styles/manga.webp'
-import realisticImg from '@/assets/styles/realistic.webp'
-import render3dImg from '@/assets/styles/render3d.webp'
-import semiRealImg from '@/assets/styles/semi_real.webp'
-import webtoonImg from '@/assets/styles/webtoon.webp'
-import { STYLE_PRESETS } from '@/services/aiGenerator'
+import {
+  NONE_STYLE_PRESET,
+  getEffectiveStyleCatalog,
+  getEffectiveStyleCategories,
+  getEffectiveStyleSubcategories,
+  type PlatformConfig,
+  type StyleCategoryItem,
+  type StylePresetItem,
+  type StyleSubcategoryItem,
+} from '../../shared/studio'
 
 export interface StyleVisualMeta {
   shortLabel: string
@@ -19,106 +15,101 @@ export interface StyleVisualMeta {
   preview?: string
 }
 
-export const STYLE_VISUAL_META: Record<string, StyleVisualMeta> = {
-  none: {
-    shortLabel: '跟随原图',
-    tagline: '不叠加预设画风，忠实跟随参考图原本质感',
-  },
-  realistic: {
-    shortLabel: '写实写真',
-    tagline: '85mm 人像镜头 · 自然柔光与真实肌理',
-    preview: realisticImg,
-  },
-  film: {
-    shortLabel: '复古胶片',
-    tagline: '35mm 富士胶片 · 暖调光晕与细腻颗粒',
-    preview: filmImg,
-  },
-  semi_real: {
-    shortLabel: '2.5D原画',
-    tagline: '半写实厚涂 · 华丽戏剧光影与布料质感',
-    preview: semiRealImg,
-  },
-  anime: {
-    shortLabel: '二次元',
-    tagline: '赛璐璐与厚涂结合 · 色彩通透干净',
-    preview: animeImg,
-  },
-  cel_anime: {
-    shortLabel: '新海诚风',
-    tagline: '清澈天空 · 体积光与发丝高光',
-    preview: celAnimeImg,
-  },
-  ghibli: {
-    shortLabel: '吉卜力系',
-    tagline: '手绘水彩背景 · 温暖日光与治愈色彩',
-    preview: ghibliImg,
-  },
-  anime_90s: {
-    shortLabel: '90日漫',
-    tagline: '复古赛璐璐 · 暖调怀旧质感与线条',
-    preview: anime90sImg,
-  },
-  webtoon: {
-    shortLabel: '韩系网漫',
-    tagline: '清透水光肌 · 唯美柔光与利落勾线',
-    preview: webtoonImg,
-  },
-  manga: {
-    shortLabel: '黑白漫画',
-    tagline: 'G笔利落线稿 · 45° 网点纸高对比',
-    preview: mangaImg,
-  },
-  disney: {
-    shortLabel: '迪士尼',
-    tagline: '3D 动画电影 · 灵动眼神与暖金逆光',
-    preview: disneyImg,
-  },
-  render3d: {
-    shortLabel: '3D渲染',
-    tagline: 'UE5 / Octane · 次表面散射与电影布光',
-    preview: render3dImg,
-  },
-  chibi_box: {
-    shortLabel: '潮玩手办',
-    tagline: 'PVC 涂装质感 · 柔光箱微距景深',
-    preview: chibiBoxImg,
-  },
-  claymation: {
-    shortLabel: '黏土定格',
-    tagline: '手工黏土肌理 · 毛毡织物与移轴微距',
-    preview: claymationImg,
-  },
+const NONE_STYLE_VISUAL_META: StyleVisualMeta = {
+  shortLabel: '跟随原图',
+  tagline: '不叠加预设画风，忠实跟随参考图原本质感',
 }
 
-export function getStyleVisualMeta(key: string): StyleVisualMeta {
-  return (
-    STYLE_VISUAL_META[key] ?? {
-      shortLabel: STYLE_PRESETS[key]?.label || key,
-      tagline: STYLE_PRESETS[key]?.prompt || '',
-    }
-  )
+export function getStyleVisualMeta(
+  key: string,
+  styleItem?: StylePresetItem | null
+): StyleVisualMeta {
+  if (key === 'none') {
+    return NONE_STYLE_VISUAL_META
+  }
+
+  return {
+    shortLabel: styleItem?.shortLabel?.trim() || styleItem?.label || key,
+    tagline: styleItem?.tagline?.trim() || styleItem?.prompt || '',
+    preview: styleItem?.previewUrl?.trim() || undefined,
+  }
 }
 
 export interface VisualStyleItem {
   key: string
+  categoryId: string
+  categoryLabel: string
+  subcategoryId: string
+  subcategoryLabel: string
   label: string
   shortLabel: string
   tagline: string
+  prompt: string
+  negativePrompt?: string
   preview?: string
 }
 
-export function getVisualStylePresets(): VisualStyleItem[] {
-  return Object.entries(STYLE_PRESETS)
-    .filter(([key]) => key !== 'none')
-    .map(([key, info]) => {
-      const meta = getStyleVisualMeta(key)
-      return {
-        key,
-        label: info.label,
-        shortLabel: meta.shortLabel,
-        tagline: meta.tagline,
-        preview: meta.preview,
-      }
-    })
+export interface StyleTaxonomySubcategoryNode extends StyleSubcategoryItem {
+  count: number
+}
+
+export interface StyleTaxonomyCategoryNode extends StyleCategoryItem {
+  count: number
+  subcategories: StyleTaxonomySubcategoryNode[]
+}
+
+export function getVisualStylePresets(
+  platform?: Partial<PlatformConfig> | null
+): VisualStyleItem[] {
+  const categories = getEffectiveStyleCategories(platform)
+  const subcategories = getEffectiveStyleSubcategories(platform)
+  const catLabelMap = new Map(categories.map((c) => [c.id, c.label]))
+  const subLabelMap = new Map(subcategories.map((s) => [s.id, s.label]))
+  const items = getEffectiveStyleCatalog(platform)
+  return items.map((item) => {
+    const meta = getStyleVisualMeta(item.id, item)
+    return {
+      key: item.id,
+      categoryId: item.categoryId,
+      categoryLabel: catLabelMap.get(item.categoryId) || '未分类',
+      subcategoryId: item.subcategoryId,
+      subcategoryLabel: subLabelMap.get(item.subcategoryId) || '未细分',
+      label: item.label,
+      shortLabel: meta.shortLabel,
+      tagline: meta.tagline,
+      prompt: item.prompt.trim(),
+      negativePrompt: item.negativePrompt?.trim() || undefined,
+      preview: meta.preview,
+    }
+  })
+}
+
+export function getNoneStyleLabel(): string {
+  return NONE_STYLE_PRESET.label
+}
+
+export function getStyleTaxonomyTree(
+  platform?: Partial<PlatformConfig> | null
+): StyleTaxonomyCategoryNode[] {
+  const categories = getEffectiveStyleCategories(platform)
+  const subcategories = getEffectiveStyleSubcategories(platform)
+  const styles = getEffectiveStyleCatalog(platform)
+
+  const catCounts = new Map<string, number>()
+  const subCounts = new Map<string, number>()
+  for (const s of styles) {
+    catCounts.set(s.categoryId, (catCounts.get(s.categoryId) ?? 0) + 1)
+    subCounts.set(s.subcategoryId, (subCounts.get(s.subcategoryId) ?? 0) + 1)
+  }
+
+  return categories.map((cat) => ({
+    ...cat,
+    count: catCounts.get(cat.id) ?? 0,
+    subcategories: subcategories
+      .filter((sub) => sub.categoryId === cat.id)
+      .map((sub) => ({
+        ...sub,
+        count: subCounts.get(sub.id) ?? 0,
+      })),
+  }))
 }

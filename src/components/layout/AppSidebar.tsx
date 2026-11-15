@@ -33,8 +33,8 @@ export function AppSidebar() {
                   <LayersIcon className="size-4" />
                 </div>
                 <div className="grid flex-1 text-left leading-tight">
-                  <span className="truncate text-sm font-extrabold tracking-tight">POSE &amp; CHARACTER</span>
-                  <span className="truncate text-[11px] text-muted-foreground">AI 角色灵感与合成实验室</span>
+                  <span className="truncate text-sm font-extrabold tracking-tight">CASTDECK · 造角牌</span>
+                  <span className="truncate text-[11px] text-muted-foreground">三合一角色灵感与画风合成台</span>
                 </div>
               </Link>
             </SidebarMenuButton>
@@ -106,7 +106,7 @@ export function AppSidebar() {
                 <div className="grid flex-1 text-left text-xs leading-tight">
                   <span className="truncate font-bold">角色配方舱 ({count}/3)</span>
                   <span className="truncate text-[11px] text-muted-foreground">
-                    {count === 0 ? '点击挑选人像·服装·姿势' : '液态配方就绪 · 去合成'}
+                    {count === 0 ? '点击挑选姿势·服装·人像' : '液态配方就绪 · 去合成'}
                   </span>
                 </div>
               </Link>

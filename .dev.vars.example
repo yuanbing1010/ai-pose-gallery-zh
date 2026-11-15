@@ -1,0 +1,10 @@
+# 本地开发环境变量模板（复制为 .dev.vars 后使用，切勿提交 .dev.vars 到 Git）
+# 用于加密存放在 D1 中的各厂商 API Key（建议 32 位以上随机字符串）
+APP_ENCRYPTION_KEY=dev-local-encryption-key-change-in-production-32chars
+
+# 开发环境下 Vite 静态资源服务器地址（用于本地读取 1.1GB 图库原图，避免复制到 dist）
+DEV_ASSETS_ORIGIN=http://localhost:5173
+
+# 可选：首次启动自动初始化首个管理员账号（若已初始化管理员则忽略）
+# BOOTSTRAP_ADMIN_USERNAME=admin
+# BOOTSTRAP_ADMIN_PASSWORD=change-me-strong-password

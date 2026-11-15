@@ -1,6 +1,7 @@
-import { useEffect } from 'react'
 import type { QueryClient } from '@tanstack/react-query'
-import { createRootRouteWithContext, Outlet, useLocation, useMatches } from '@tanstack/react-router'
+import { createRootRouteWithContext, Outlet, useLocation } from '@tanstack/react-router'
+import { AccountModal } from '@/components/auth/AccountModal'
+import { AuthModal } from '@/components/auth/AuthModal'
 import { RecipeDock } from '@/components/layout/RecipeDock'
 import { ShowcaseNavbar } from '@/components/layout/ShowcaseNavbar'
 import { Toaster } from '@/components/ui/sonner'
@@ -12,15 +13,6 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
 
 function RootLayout() {
   const pathname = useLocation({ select: (l) => l.pathname })
-  const pageTitle = useMatches({
-    select: (matches) => [...matches].reverse().find((m) => m.staticData.title)?.staticData.title,
-  })
-
-  useEffect(() => {
-    document.title = pageTitle
-      ? `${pageTitle}｜CHARADECK 角色牌局`
-      : 'CHARADECK｜角色牌局 · 三合一角色灵感与画风合成台'
-  }, [pageTitle])
 
   // 管理端（/admin/login 与 /admin）是独立系统，拥有独立的瑞士极简布局
   if (pathname.startsWith('/admin')) {
@@ -35,7 +27,6 @@ function RootLayout() {
   const isHome = pathname === '/'
   const isStudio = pathname.startsWith('/studio')
 
-  // 用户前端：全站统一的暖调柔光棚拍背景与可切换暗房模式
   return (
     <TooltipProvider>
       <div
@@ -62,7 +53,7 @@ function RootLayout() {
               isHome
                 ? 'mx-auto flex min-h-0 min-w-0 w-full max-w-[1440px] flex-1 flex-col'
                 : isStudio
-                  ? 'mx-auto flex min-w-0 w-full max-w-[1440px] flex-1 flex-col gap-2 px-4 py-2.5 sm:px-6 lg:py-3.5 md:min-h-0 md:overflow-hidden'
+                  ? 'mx-auto flex min-w-0 w-full max-w-[1440px] flex-1 flex-col gap-2 px-4 pt-2 pb-2 sm:px-6 md:min-h-0 md:overflow-hidden'
                   : 'mx-auto flex min-w-0 w-full max-w-[1440px] flex-1 flex-col gap-6 px-4 pt-6 pb-12 sm:px-6'
             }
           >
@@ -71,6 +62,8 @@ function RootLayout() {
           <RecipeDock />
         </main>
       </div>
+      <AuthModal />
+      <AccountModal />
       <Toaster />
     </TooltipProvider>
   )

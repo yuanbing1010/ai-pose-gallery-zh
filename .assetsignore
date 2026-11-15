@@ -10,6 +10,9 @@ docs
 node_modules
 scripts
 src
+server
+shared
+migrations
 functions
 skills
 __init__.py
@@ -18,4 +21,7 @@ README.md
 LICENSE
 download_failed.txt
 verify_failed.txt
+tsconfig.worker.json
+.dev.vars
+.dev.vars.example
 .DS_Store

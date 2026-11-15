@@ -1,11 +1,11 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Toaster as Sonner, useSonner, type ToasterProps } from 'sonner'
 import { CircleCheckIcon, InfoIcon, TriangleAlertIcon, OctagonXIcon } from 'lucide-react'
-import { adoptNotification, toast, type Notification } from '@/lib/notifications'
+import { DEFAULT_TOAST_DURATION_MS, MAX_VISIBLE_TOASTS, adoptNotification, toast, type Notification } from '@/lib/notifications'
 import { useTheme } from '@/components/theme/ThemeProvider'
 
 function Lifetime({ notice, paused }: { notice: Notification; paused: boolean }) {
-  const duration = notice.notificationDuration ?? 4000
+  const duration = notice.notificationDuration ?? DEFAULT_TOAST_DURATION_MS
   const remaining = useRef(duration)
   useEffect(() => { remaining.current = duration }, [duration, notice.type, notice.notificationRevision])
   useEffect(() => {
@@ -35,7 +35,7 @@ export function Toaster(props: ToasterProps) {
   const [toggleFocused, setToggleFocused] = useState(false)
   const [toggleTop, setToggleTop] = useState(128)
   const [background, setBackground] = useState(document.hidden || !document.hasFocus())
-  const [visibleCount, setVisibleCount] = useState(3)
+  const [visibleCount, setVisibleCount] = useState(MAX_VISIBLE_TOASTS)
   const [readable, setReadable] = useState<Set<Notification['id']>>(new Set())
 
   useLayoutEffect(() => { toasts.forEach(adoptNotification) }, [toasts])
@@ -50,7 +50,7 @@ export function Toaster(props: ToasterProps) {
       const toggleSpace = toasts.length > 1 && matchMedia('(pointer: coarse)').matches ? 52 : 0
       const budget = Math.max(0, (window.visualViewport?.height ?? innerHeight) - top - 24 - toggleSpace)
       let count = 0, used = 0
-      for (const node of active.slice(0, 3)) {
+      for (const node of active.slice(0, MAX_VISIBLE_TOASTS)) {
         const height = parseFloat(node.style.getPropertyValue('--initial-height')) || node.offsetHeight
         if (count && used + height + 8 > budget) break
         used += height + (count ? 8 : 0)

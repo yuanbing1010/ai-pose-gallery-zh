@@ -1,0 +1,24 @@
+import type { PublicUser } from '../shared/studio'
+
+export interface Env {
+  DB: D1Database
+  BUCKET: R2Bucket
+  ASSETS: Fetcher
+  APP_ENCRYPTION_KEY?: string
+  DEV_ASSETS_ORIGIN?: string
+  BOOTSTRAP_ADMIN_USERNAME?: string
+  BOOTSTRAP_ADMIN_PASSWORD?: string
+  GEMINI_API_KEY?: string
+  OPENAI_API_KEY?: string
+  XAI_API_KEY?: string
+}
+
+export interface AppVariables {
+  user: PublicUser | null
+  sessionId: string | null
+}
+
+export type AppEnv = {
+  Bindings: Env
+  Variables: AppVariables
+}

@@ -474,11 +474,11 @@ export function PackStage({
         pendingCount += 1
         const fromCx = c.from.left + c.from.width / 2
         const fromCy = c.from.top + c.from.height / 2
-        const toCx = c.to.left + 26
+        const toCx = c.to.left + c.to.width / 2
         const toCy = c.to.top + c.to.height / 2
         const dx = toCx - fromCx
         const dy = toCy - fromCy
-        const endScale = Math.max(0.14, 30 / Math.max(1, c.from.width))
+        const endScale = Math.max(0.18, Math.min(c.to.width, c.to.height) / Math.max(1, c.from.width))
         const bank = (idx - 1) * 16
 
         // 水平平滑推进，垂直先跃起再加速砸入槽位，在 u=1 落座瞬间保持俯冲速度
@@ -1675,7 +1675,7 @@ export function PackStage({
             <span className="hp-lips">
               <i ref={bodyLipRef} className="hp-lip" />
             </span>
-            <b className="hp-mark">CHARA</b>
+            <b className="hp-mark">CAST</b>
             <span className="hp-series">Cobalt</span>
             <div className="hp-orb">
               <div className="hp-orb-core">
@@ -1689,17 +1689,17 @@ export function PackStage({
                 </span>
               </div>
             </div>
-            <span className="hp-foot hp-l">角色牌局盲盒</span>
+            <span className="hp-foot hp-l">造角牌盲盒</span>
             <span className="hp-foot hp-r">3 cards</span>
           </div>
 
           <div ref={backSkinRef} className="hp-skin hp-back" aria-hidden="true">
             <i className="hp-fin" />
-            <b className="hp-mark hp-sm">CHARADECK</b>
+            <b className="hp-mark hp-sm">CASTDECK</b>
             <p className="hp-blurb">
-              角色牌局 · CHARADECK
+              造角牌 · CASTDECK
               <br />
-              人像 · 服装 · 姿势三合一包
+              姿势 · 服装 · 人像三合一包
             </p>
           </div>
 

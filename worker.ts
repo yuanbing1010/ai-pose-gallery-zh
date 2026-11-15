@@ -1,27 +1,34 @@
-import { onRequestPost, type ProxyEnv } from './functions/api/proxy'
+import { Hono } from 'hono'
+import { withSession } from './server/middleware'
+import { accountRoutes } from './server/routes/account'
+import { adminRoutes } from './server/routes/admin'
+import { authRoutes } from './server/routes/auth'
+import { generationRoutes } from './server/routes/generations'
+import { uploadRoutes } from './server/routes/uploads'
+import type { AppEnv } from './server/types'
 
-export interface Env extends ProxyEnv {
-  ASSETS: {
-    fetch: (request: Request) => Promise<Response>
-  }
-}
+const app = new Hono<AppEnv>()
+
+app.use('/api/*', withSession)
+
+app.get('/api/health', (c) => {
+  return c.json({ ok: true, ts: Date.now() })
+})
+
+app.route('/api', authRoutes)
+app.route('/api/account', accountRoutes)
+app.route('/api', uploadRoutes)
+app.route('/api/generations', generationRoutes)
+app.route('/api/admin', adminRoutes)
+
+app.all('/api/*', (c) => {
+  return c.json({ error: { message: 'API route not found' } }, 404)
+})
+
+app.all('*', (c) => {
+  return c.env.ASSETS.fetch(c.req.raw)
+})
 
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
-    const url = new URL(request.url)
-
-    // Handle /api/proxy CORS forwarding for DashScope (Qwen) & Volcengine Ark (Doubao)
-    if (url.pathname === '/api/proxy') {
-      if (request.method === 'POST') {
-        return onRequestPost({ request, env })
-      }
-      return new Response(JSON.stringify({ error: { message: 'Method Not Allowed' } }), {
-        status: 405,
-        headers: { 'Content-Type': 'application/json; charset=utf-8' },
-      })
-    }
-
-    // Fallback to static assets binding
-    return env.ASSETS.fetch(request)
-  },
+  fetch: app.fetch,
 }

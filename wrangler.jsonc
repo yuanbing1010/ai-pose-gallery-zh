@@ -7,8 +7,22 @@
     "enabled": true
   },
   "previews": {},
-  // 可选环境变量：通过 `cf workers secrets update PROXY_ALLOWED_ORIGINS --worker ai-pose-gallery-zh --text "https://..." --type secret_text`
-  // 或在 Cloudflare 控制台 Variables and Secrets 中配置 PROXY_ALLOWED_ORIGINS（支持逗号分隔的精确域名或 https://*.openai.com 泛子域名）
+  // 部署前请先运行 `npx wrangler d1 create ai-pose-gallery-db` 与 `npx wrangler r2 bucket create ai-pose-gallery-bucket`
+  // 并把返回的 database_id 填入下方 d1_databases[0].database_id，再通过 `wrangler secret put APP_ENCRYPTION_KEY` 设置加密密钥
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "ai-pose-gallery-db",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "BUCKET",
+      "bucket_name": "ai-pose-gallery-bucket"
+    }
+  ],
   "assets": {
     "directory": "./dist",
     "binding": "ASSETS",

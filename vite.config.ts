@@ -1,5 +1,8 @@
 import fs from 'node:fs'
+import http from 'node:http'
+import https from 'node:https'
 import path from 'node:path'
+import tls from 'node:tls'
 import tailwindcss from '@tailwindcss/vite'
 import { tanstackRouter } from '@tanstack/router-plugin/vite'
 import react from '@vitejs/plugin-react'
@@ -16,61 +19,170 @@ const MIME: Record<string, string> = {
   '.txt': 'text/plain; charset=utf-8',
 }
 
+function getProxyUrlForTarget(targetHost: string): URL | null {
+  const noProxy = (process.env.NO_PROXY || process.env.no_proxy || '')
+    .split(',')
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean)
+  const h = targetHost.toLowerCase()
+  if (noProxy.some((entry) => h === entry || h.endsWith(`.${entry}`))) {
+    return null
+  }
+  const raw = process.env.HTTPS_PROXY || process.env.https_proxy || process.env.HTTP_PROXY || process.env.http_proxy
+  if (!raw) return null
+  try {
+    return new URL(raw)
+  } catch {
+    return null
+  }
+}
+
+function createProxyAgent(proxyUrl: URL, targetHost: string, targetPort: number): https.Agent {
+  const agent = new https.Agent({ keepAlive: false })
+  ;(agent as any).createConnection = (_opts: unknown, cb: (err: Error | null, sock?: tls.TLSSocket) => void) => {
+    const proxyPort = Number(proxyUrl.port) || (proxyUrl.protocol === 'https:' ? 443 : 80)
+    const connectHeaders: Record<string, string> = {
+      Host: `${targetHost}:${targetPort}`,
+    }
+    if (proxyUrl.username || proxyUrl.password) {
+      const cred = Buffer.from(
+        `${decodeURIComponent(proxyUrl.username)}:${decodeURIComponent(proxyUrl.password)}`
+      ).toString('base64')
+      connectHeaders['Proxy-Authorization'] = `Basic ${cred}`
+    }
+    const proxyReq = http.request({
+      host: proxyUrl.hostname,
+      port: proxyPort,
+      method: 'CONNECT',
+      path: `${targetHost}:${targetPort}`,
+      headers: connectHeaders,
+      timeout: 15_000,
+    })
+    proxyReq.once('connect', (res, socket) => {
+      if (res.statusCode !== 200) {
+        socket.destroy()
+        cb(new Error(`Proxy CONNECT ${targetHost}:${targetPort} failed: HTTP ${res.statusCode}`))
+        return
+      }
+      const tlsSock = tls.connect({
+        socket,
+        servername: targetHost,
+      })
+      cb(null, tlsSock)
+    })
+    proxyReq.once('timeout', () => {
+      proxyReq.destroy(new Error('Proxy CONNECT timeout'))
+    })
+    proxyReq.once('error', (err) => cb(err))
+    proxyReq.end()
+  }
+  return agent
+}
+
 // 开发与预览时：
-// 1. 直接挂载仓库根目录下的 data/、thumbs/、img/，避免拷贝 6.8 GB 素材
-// 2. 提供 /api/proxy 同源转发接口，解决 DashScope (Qwen) / 火山方舟 (Doubao) 官方接口的浏览器 CORS 限制
-function localAssetsAndProxyPlugin(): Plugin {
+// 1. 直接挂载仓库根目录下的 data/、thumbs/、img/，避免拷贝 1.1 GB 素材
+// 2. 仅在本地 dev 模式下提供 /__dev_upstream_fetch，解决 workerd 忽略系统 HTTPS_PROXY 环境变量的问题
+function localAssetsPlugin(): Plugin {
   const rootDir = import.meta.dirname
   const prefixes = ['/data/', '/thumbs/', '/img/', '/og-cover.jpg', '/robots.txt', '/sitemap.xml']
 
-  const handleProxy = async (req: any, res: any) => {
-    try {
-      const targetUrl = req.headers['x-target-url'] as string | undefined
-      if (!targetUrl || !/^https?:\/\//i.test(targetUrl)) {
-        res.statusCode = 400
-        res.setHeader('Content-Type', 'application/json; charset=utf-8')
-        res.end(JSON.stringify({ error: { message: 'Missing or invalid x-target-url header' } }))
-        return
-      }
+  const handleDevUpstream = async (req: any, res: any) => {
+    const remote = req.socket?.remoteAddress || ''
+    if (!['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(remote)) {
+      res.statusCode = 403
+      res.setHeader('Content-Type', 'application/json; charset=utf-8')
+      res.end(JSON.stringify({ error: { message: 'Forbidden' } }))
+      return
+    }
 
+    const targetRaw = req.headers['x-dev-target-url'] as string | undefined
+    const method = ((req.headers['x-dev-method'] as string | undefined) || 'POST').toUpperCase()
+    if (!targetRaw) {
+      res.statusCode = 400
+      res.setHeader('Content-Type', 'application/json; charset=utf-8')
+      res.end(JSON.stringify({ error: { message: 'Missing x-dev-target-url' } }))
+      return
+    }
+
+    let target: URL
+    try {
+      target = new URL(targetRaw)
+      if (target.protocol !== 'https:') {
+        throw new Error('Only https targets are allowed')
+      }
+    } catch (err) {
+      res.statusCode = 400
+      res.setHeader('Content-Type', 'application/json; charset=utf-8')
+      res.end(JSON.stringify({ error: { message: err instanceof Error ? err.message : 'Invalid URL' } }))
+      return
+    }
+
+    try {
       const chunks: Buffer[] = []
       for await (const chunk of req) {
         chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
       }
       const rawBody = Buffer.concat(chunks)
 
-      const forwardHeaders: Record<string, string> = {}
-      const contentType = req.headers['content-type']
-      if (contentType) forwardHeaders['Content-Type'] = contentType
-      const auth = req.headers['authorization']
-      if (auth) forwardHeaders['Authorization'] = auth
-      const googKey = req.headers['x-goog-api-key']
-      if (googKey) forwardHeaders['x-goog-api-key'] = googKey as string
-      const dashAsync = req.headers['x-dashscope-async']
-      if (dashAsync) forwardHeaders['X-DashScope-Async'] = dashAsync as string
+      const forwardHeaders: Record<string, string> = {
+        'Accept-Encoding': 'identity',
+      }
+      for (const h of ['content-type', 'authorization', 'x-goog-api-key']) {
+        const val = req.headers[h]
+        if (typeof val === 'string' && val) {
+          forwardHeaders[h] = val
+        }
+      }
+      if (rawBody.length > 0 && method !== 'GET') {
+        forwardHeaders['content-length'] = String(rawBody.length)
+      }
 
-      const upstream = await fetch(targetUrl, {
-        method: req.method || 'POST',
-        headers: forwardHeaders,
-        body: rawBody.length > 0 ? rawBody : undefined,
+      const targetPort = Number(target.port) || 443
+      const proxyUrl = getProxyUrlForTarget(target.hostname)
+      const agent = proxyUrl ? createProxyAgent(proxyUrl, target.hostname, targetPort) : undefined
+
+      await new Promise<void>((resolve, reject) => {
+        const upReq = https.request(
+          {
+            hostname: target.hostname,
+            port: targetPort,
+            path: `${target.pathname}${target.search}`,
+            method,
+            headers: forwardHeaders,
+            agent,
+            timeout: 80_000,
+          },
+          (upRes) => {
+            res.statusCode = upRes.statusCode || 502
+            const ct = upRes.headers['content-type']
+            if (ct) res.setHeader('Content-Type', ct)
+            upRes.pipe(res)
+            upRes.once('end', () => resolve())
+            upRes.once('error', (err) => reject(err))
+          }
+        )
+        upReq.once('timeout', () => {
+          upReq.destroy(new Error('Upstream request timeout'))
+        })
+        upReq.once('error', (err) => reject(err))
+        if (rawBody.length > 0 && method !== 'GET') {
+          upReq.write(rawBody)
+        }
+        upReq.end()
       })
-
-      res.statusCode = upstream.status
-      const upType = upstream.headers.get('content-type') || 'application/json; charset=utf-8'
-      res.setHeader('Content-Type', upType)
-      const ab = await upstream.arrayBuffer()
-      res.end(Buffer.from(ab))
-    } catch (err: any) {
-      res.statusCode = 502
-      res.setHeader('Content-Type', 'application/json; charset=utf-8')
-      res.end(JSON.stringify({ error: { message: err?.message || 'Proxy request failed' } }))
+    } catch (err) {
+      if (!res.headersSent) {
+        res.statusCode = 502
+        res.setHeader('Content-Type', 'application/json; charset=utf-8')
+        res.end(JSON.stringify({ error: { message: err instanceof Error ? err.message : 'Dev upstream proxy failed' } }))
+      }
     }
   }
 
-  const serve = (req: any, res: any, next: any) => {
+  const serve = (req: any, res: any, next: any, allowDevProxy: boolean) => {
     const rawUrl = (req.url || '').split('?')[0]
-    if (rawUrl === '/api/proxy') {
-      void handleProxy(req, res)
+    if (allowDevProxy && rawUrl === '/__dev_upstream_fetch') {
+      void handleDevUpstream(req, res)
       return
     }
     const decoded = decodeURIComponent(rawUrl)
@@ -83,42 +195,37 @@ function localAssetsAndProxyPlugin(): Plugin {
     }
     const ext = path.extname(filePath).toLowerCase()
     res.setHeader('Content-Type', MIME[ext] || 'application/octet-stream')
-    res.setHeader('Cache-Control', 'public, max-age=3600')
+    res.setHeader(
+      'Cache-Control',
+      ext === '.json' || ext === '.csv' ? 'no-cache, must-revalidate' : 'public, max-age=3600'
+    )
     fs.createReadStream(filePath).pipe(res)
   }
 
   return {
-    name: 'local-assets-and-proxy-plugin',
+    name: 'local-assets-plugin',
     configureServer(server) {
-      server.middlewares.use(serve)
+      server.middlewares.use((req, res, next) => serve(req, res, next, true))
     },
     configurePreviewServer(server) {
-      server.middlewares.use(serve)
+      server.middlewares.use((req, res, next) => serve(req, res, next, false))
     },
   }
 }
 
-// 本地 ComfyUI 同源代理：浏览器请求 /comfy/* → ComfyUI（默认 Desktop 端口 8000）
-// 这样无需修改 ComfyUI 的 --enable-cors-header 白名单。可用环境变量 COMFYUI_URL 指定其他地址。
-const COMFYUI_URL = process.env.COMFYUI_URL || 'http://127.0.0.1:8000'
-const comfyProxy = {
-  '/comfy': {
-    target: COMFYUI_URL,
-    changeOrigin: true,
-    ws: true,
-    rewrite: (p: string) => p.replace(/^\/comfy/, '') || '/',
-    configure: (proxy: any) => {
-      // ComfyUI 对带 Origin 的跨源请求做校验，代理转发时去掉浏览器 Origin，按同源请求处理
-      proxy.on('proxyReq', (proxyReq: any) => proxyReq.removeHeader('origin'))
-      proxy.on('proxyReqWs', (proxyReq: any) => proxyReq.removeHeader('origin'))
-    },
+// 将前端 /api/* 请求代理到本地 wrangler dev (D1 + R2)
+const WORKER_API_URL = process.env.WORKER_API_URL || 'http://127.0.0.1:8787'
+const apiProxy = {
+  '/api': {
+    target: WORKER_API_URL,
+    changeOrigin: false,
   },
 }
 
 export default defineConfig({
   publicDir: false,
   plugins: [
-    localAssetsAndProxyPlugin(),
+    localAssetsPlugin(),
     tanstackRouter({ target: 'react', autoCodeSplitting: true }),
     react(),
     tailwindcss(),
@@ -141,9 +248,9 @@ export default defineConfig({
   },
   server: {
     port: 5173,
-    proxy: comfyProxy,
+    proxy: apiProxy,
   },
   preview: {
-    proxy: comfyProxy,
+    proxy: apiProxy,
   },
 })

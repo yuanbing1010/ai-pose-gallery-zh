@@ -1,14 +1,16 @@
 import { Link, useLocation } from '@tanstack/react-router'
-import { AnimatePresence, motion } from 'motion/react'
 import {
   BookOpenIcon,
+  CoinsIcon,
   LayoutDashboardIcon,
+  LogInIcon,
   MenuIcon,
   MoonIcon,
   PersonStandingIcon,
   ShirtIcon,
   SparklesIcon,
   SunIcon,
+  TerminalSquareIcon,
   UserRoundIcon,
 } from 'lucide-react'
 import { useState } from 'react'
@@ -29,7 +31,12 @@ const SHOWCASE_NAV_ITEMS = [
 export function ShowcaseNavbar() {
   const pathname = useLocation({ select: (l) => l.pathname })
   const active = activeNavTo(pathname)
-  const { recipe } = useStudio()
+  const {
+    user,
+    recipe,
+    openAuthModal,
+    openAccountModal,
+  } = useStudio()
   const { theme, setTheme } = useTheme()
   const [mobileOpen, setMobileOpen] = useState(false)
 
@@ -41,8 +48,8 @@ export function ShowcaseNavbar() {
 
   return (
     <header className="sticky top-0 z-40 w-full border-b border-black/[0.06] bg-[#f5f2eb]/75 backdrop-blur-xl dark:border-white/[0.08] dark:bg-[#14141a]/75">
-      <div className="mx-auto flex h-15 w-full max-w-[1440px] items-center justify-between gap-4 px-4 sm:px-6">
-        {/* 左侧：品牌标识 + 桌面端主导航 */}
+      <div className="mx-auto flex h-15 w-full max-w-[1440px] items-center justify-between gap-3 px-4 sm:px-6">
+        {/* 左侧：品牌标识 + 桌面端纯文字导航 */}
         <div className="flex items-center gap-6">
           <div className="flex items-center gap-2.5">
             <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
@@ -50,7 +57,7 @@ export function ShowcaseNavbar() {
                 <button
                   type="button"
                   aria-label="打开导航菜单"
-                  className="inline-flex size-9 items-center justify-center rounded-full border border-border bg-card text-foreground transition-colors hover:bg-muted active:scale-95 lg:hidden"
+                  className="inline-flex size-9 items-center justify-center rounded-full border border-border bg-card text-foreground transition-colors hover:bg-muted lg:hidden"
                 >
                   <MenuIcon className="size-4" />
                 </button>
@@ -60,13 +67,13 @@ export function ShowcaseNavbar() {
                   <SheetTitle className="flex items-center gap-2.5 text-left">
                     <BrandMark />
                     <span className="flex flex-col leading-none">
-                      <span className="font-mono text-sm font-bold tracking-tight">CHARADECK</span>
-                      <span className="text-[11px] font-medium text-muted-foreground">角色牌局</span>
+                      <span className="font-mono text-sm font-bold tracking-tight">CAST.DECK</span>
+                      <span className="text-[11px] font-medium text-muted-foreground">造角牌</span>
                     </span>
                   </SheetTitle>
                 </SheetHeader>
                 <nav className="mt-6 flex flex-col gap-1 px-2">
-                  {[...SHOWCASE_NAV_ITEMS, { title: '角色合成台', to: '/studio' as const, icon: SparklesIcon }].map((item) => {
+                  {[...SHOWCASE_NAV_ITEMS, { title: 'AI 合成台', to: '/studio' as const, icon: SparklesIcon }].map((item) => {
                     const isActive = item.to === active
                     return (
                       <Link
@@ -97,6 +104,36 @@ export function ShowcaseNavbar() {
                     )
                   })}
                 </nav>
+
+                <div className="mt-6 border-t border-border px-2 pt-4">
+                  {user ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMobileOpen(false)
+                        openAccountModal('overview')
+                      }}
+                      className="flex w-full items-center justify-between rounded-xl border border-border bg-card px-3.5 py-2.5 text-xs font-semibold"
+                    >
+                      <span className="truncate">{user.displayName}</span>
+                      <span className="font-mono text-[#B88300] dark:text-[#E5A918]">
+                        {user.creditBalance} 积分
+                      </span>
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMobileOpen(false)
+                        openAuthModal('login')
+                      }}
+                      className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-3.5 py-2.5 text-xs font-semibold text-primary-foreground"
+                    >
+                      <LogInIcon className="size-3.5" />
+                      <span>登录 / 注册</span>
+                    </button>
+                  )}
+                </div>
               </SheetContent>
             </Sheet>
 
@@ -104,10 +141,10 @@ export function ShowcaseNavbar() {
               <BrandMark className="transition-transform duration-200 group-hover:scale-105 group-active:scale-95" />
               <span className="flex items-baseline gap-1.5">
                 <span className="font-mono text-sm font-bold tracking-tight text-foreground">
-                  CHARADECK
+                  CAST.DECK
                 </span>
                 <span className="hidden text-xs font-medium text-muted-foreground sm:inline">
-                  角色牌局
+                  造角牌
                 </span>
               </span>
             </Link>
@@ -120,22 +157,15 @@ export function ShowcaseNavbar() {
                 <Link
                   key={item.to}
                   to={item.to}
-                  className={`relative inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[13px] transition-colors ${
+                  className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[13px] transition-colors ${
                     isActive
-                      ? 'font-medium text-foreground'
+                      ? 'bg-muted font-medium text-foreground'
                       : 'text-muted-foreground hover:text-foreground'
                   }`}
                 >
-                  {isActive && (
-                    <motion.span
-                      layoutId="showcase-nav-pill"
-                      transition={{ type: 'spring', stiffness: 420, damping: 32 }}
-                      className="absolute inset-0 rounded-full bg-muted"
-                    />
-                  )}
-                  <span className="relative z-10">{item.title}</span>
+                  <span>{item.title}</span>
                   {item.count && (
-                    <span className="relative z-10 font-mono text-[11px] opacity-60">
+                    <span className="font-mono text-[11px] opacity-60">
                       {item.count}
                     </span>
                   )}
@@ -145,33 +175,66 @@ export function ShowcaseNavbar() {
           </nav>
         </div>
 
-        {/* 右侧：日夜主题切换 + 高对比主 CTA */}
-        <div className="flex items-center gap-2">
-          <motion.button
+        {/* 右侧：日夜切换 + 用户积分/登录 + 管理员控制台 + 合成台 CTA */}
+        <div className="flex items-center gap-1.5 sm:gap-2">
+          <button
             type="button"
-            whileTap={{ scale: 0.92 }}
             aria-label={isDark ? '切换到日间画廊模式' : '切换到暗房模式'}
             title={isDark ? '切换到日间画廊模式' : '切换到暗房模式'}
             onClick={() => setTheme(isDark ? 'light' : 'dark')}
             className="inline-flex size-9 items-center justify-center rounded-full border border-border bg-card text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
           >
-            <AnimatePresence mode="wait" initial={false}>
-              <motion.span
-                key={isDark ? 'sun' : 'moon'}
-                initial={{ opacity: 0, rotate: -45, scale: 0.7 }}
-                animate={{ opacity: 1, rotate: 0, scale: 1 }}
-                exit={{ opacity: 0, rotate: 45, scale: 0.7 }}
-                transition={{ duration: 0.16 }}
-                className="inline-flex items-center justify-center"
+            {isDark ? <SunIcon className="size-4" /> : <MoonIcon className="size-4" />}
+          </button>
+
+          {user ? (
+            <>
+              <button
+                type="button"
+                onClick={() => openAccountModal('redeem')}
+                title="查看或兑换积分"
+                className="inline-flex h-9 items-center gap-1.5 rounded-full border border-[#E5A918]/45 bg-[#E5A918]/12 px-3 font-mono text-xs font-bold text-[#9A6B00] transition-colors hover:bg-[#E5A918]/20 dark:text-[#E5A918]"
               >
-                {isDark ? <SunIcon className="size-4" /> : <MoonIcon className="size-4" />}
-              </motion.span>
-            </AnimatePresence>
-          </motion.button>
+                <CoinsIcon className="size-3.5 shrink-0" />
+                <span>{user.creditBalance}</span>
+                <span className="hidden sm:inline">积分</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => openAccountModal('overview')}
+                title="个人账户与流水"
+                className="hidden h-9 max-w-[120px] items-center gap-1.5 rounded-full border border-border bg-card px-3 text-xs font-semibold text-foreground transition-colors hover:bg-muted sm:inline-flex"
+              >
+                <UserRoundIcon className="size-3.5 shrink-0 text-muted-foreground" />
+                <span className="truncate">{user.displayName}</span>
+              </button>
+
+              {user.role === 'admin' && (
+                <Link
+                  to="/admin"
+                  title="进入管理控制台"
+                  aria-label="进入管理控制台"
+                  className="inline-flex size-9 items-center justify-center rounded-full border border-border bg-card text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                >
+                  <TerminalSquareIcon className="size-4" />
+                </Link>
+              )}
+            </>
+          ) : (
+            <button
+              type="button"
+              onClick={() => openAuthModal('login')}
+              className="inline-flex h-9 items-center gap-1.5 rounded-full border border-border bg-card px-3 text-xs font-semibold text-foreground transition-colors hover:bg-muted"
+            >
+              <LogInIcon className="size-3.5" />
+              <span>登录</span>
+            </button>
+          )}
 
           <Link
             to="/studio"
-            className={`inline-flex h-9 items-center gap-1.5 rounded-full bg-primary px-4 text-[13px] font-medium text-primary-foreground transition-all hover:opacity-90 active:scale-[0.97] ${
+            className={`inline-flex h-9 items-center gap-1.5 rounded-full bg-primary px-3.5 text-[13px] font-medium text-primary-foreground transition-all hover:opacity-90 active:scale-[0.97] sm:px-4 ${
               isStudio ? 'ring-2 ring-ring' : ''
             }`}
           >

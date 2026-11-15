@@ -16,11 +16,11 @@ function wrapDelta(deg: number, total: number): number {
 }
 
 export function StyleWheelDeck() {
-  const styles = useMemo(() => getVisualStylePresets(), [])
+  const { platform, setStylePreset } = useStudio()
+  const styles = useMemo(() => getVisualStylePresets(platform), [platform])
   const count = styles.length
   const totalSpan = Math.max(STEP_DEG, count * STEP_DEG)
   const navigate = useNavigate()
-  const { updateApiConfig } = useStudio()
 
   const stageRef = useRef<HTMLDivElement>(null)
   const cardRefs = useRef<(HTMLDivElement | null)[]>([])
@@ -50,7 +50,7 @@ export function StyleWheelDeck() {
   const applyAndGo = (idx: number) => {
     const item = styles[idx]
     if (!item) return
-    updateApiConfig({ stylePreset: item.key })
+    setStylePreset(item.key)
     toast.success(`已选定画风：${item.shortLabel}`)
     void navigate({ to: '/studio' })
   }
@@ -261,6 +261,46 @@ export function StyleWheelDeck() {
     }
   }
 
+  if (count === 0) {
+    return (
+      <div className="relative flex min-h-[300px] flex-col items-center justify-between overflow-hidden border-t border-border bg-[#121215] px-5 py-4 lg:border-t-0 lg:border-l">
+        <span aria-hidden="true" className="pointer-events-none absolute top-3.5 left-3.5 size-3 border-t border-l border-white/20" />
+        <span aria-hidden="true" className="pointer-events-none absolute top-3.5 right-3.5 size-3 border-t border-r border-white/20" />
+        <span aria-hidden="true" className="pointer-events-none absolute bottom-3.5 left-3.5 size-3 border-b border-l border-white/20" />
+        <span aria-hidden="true" className="pointer-events-none absolute right-3.5 bottom-3.5 size-3 border-r border-b border-white/20" />
+
+        <div className="relative z-20 flex w-full items-center justify-between gap-2">
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-white/[0.07] px-2.5 py-0.5 font-mono text-[11px] font-medium text-zinc-300 ring-1 ring-white/10">
+            <span className="size-1.5 rounded-full bg-zinc-500" />
+            STYLE WHEEL // 0 种画风
+          </span>
+          <span className="font-mono text-[11px] tabular-nums text-zinc-400">00 / 00</span>
+        </div>
+
+        <div className="relative z-10 flex flex-1 flex-col items-center justify-center gap-2.5 px-4 text-center">
+          <div className="flex size-12 items-center justify-center rounded-2xl border border-dashed border-white/20 bg-white/[0.04] text-[#E5A918]">
+            <WandSparklesIcon className="size-5" />
+          </div>
+          <div className="text-xs font-bold text-white">暂无预设画风</div>
+          <p className="max-w-xs text-[11px] leading-relaxed text-zinc-400">
+            当前暂未配置画风预设，可直接前往合成台跟随参考图原本质感出图。
+          </p>
+        </div>
+
+        <div className="relative z-20 flex w-full justify-center pb-1">
+          <button
+            type="button"
+            onClick={() => void navigate({ to: '/studio' })}
+            className="inline-flex items-center gap-1 rounded-full bg-[#D9381E] px-3.5 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-[#C23018]"
+          >
+            <span>前往合成台</span>
+            <ArrowRightIcon className="size-3.5" />
+          </button>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div
       ref={stageRef}
@@ -366,7 +406,10 @@ export function StyleWheelDeck() {
                 transition={{ duration: 0.14 }}
                 className="space-y-0.5"
               >
-                <div className="flex items-center justify-center gap-1.5">
+                <div className="flex flex-wrap items-center justify-center gap-1.5">
+                  <span className="rounded bg-white/10 px-1.5 py-0.5 text-[10px] font-medium text-zinc-300">
+                    {activeStyle.categoryLabel} · {activeStyle.subcategoryLabel}
+                  </span>
                   <span className="truncate text-xs font-bold text-white">{activeStyle.label}</span>
                   <button
                     type="button"

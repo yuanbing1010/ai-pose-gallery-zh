@@ -7,27 +7,30 @@
 `ai-pose-gallery-zh` 是一个「姿势 + 服装 + 人像」三合一 AI 角色参考库与合成工作台：
 
 - React 19 + TypeScript 7 + Vite 8 单页应用，TanStack Router / TanStack Query、Tailwind CSS 4、shadcn/ui。
-- 数据为静态 JSON + 本地图片（约 12,000 张，仓库约 1.1 GB），没有后端数据库。
-- 合成台可调用 Gemini、OpenAI GPT Image、阿里云百炼 Qwen、火山方舟 Doubao、本地 ComfyUI；生图历史与未决任务保存在浏览器 IndexedDB。
-- 同一个仓库也是 ComfyUI 自定义节点插件（根 `__init__.py` + `comfyui_plugin/`），克隆到 `custom_nodes/` 即可使用。
-- 通过 Cloudflare Workers / Pages 部署；Worker 同时提供 `/api/proxy` 同源代理。
+- 图库元数据为静态 JSON + 本地图片（约 12,000 张，仓库约 1.1 GB）；用户体系、积分账本、卡密、模型配置与生成任务保存在 **Cloudflare D1**，上传参考图与生成作品保存在 **Cloudflare R2**。
+- 后端由 `worker.ts` + `server/`（Hono）运行在 **Cloudflare Workers** 上，统一在服务端使用加密存储的厂商 API Key 代调 Google Gemini、OpenAI GPT Image、xAI Grok Imagine（支持官方与中转站，已下线前端直连代理与浏览器本地 ComfyUI 通道）。
+- 根目录保留的 `__init__.py` + `comfyui_plugin/` 仍作为独立的 ComfyUI 自定义节点插件存在。
 - 界面文案与图库元数据以简体中文为主；JSON 中的中文字段名是对外数据契约，不是临时命名。
 
 ## 环境与常用命令
 
-要求 **Node.js 20+** 和 **pnpm**（`pnpm-lock.yaml` 为 v9，请使用 pnpm，不要用 npm/yarn 更新依赖）。Python 3 只用于数据与图片维护，ComfyUI 可选。Windows 上执行 `bash scripts/build.sh` 需要 Git Bash 或 WSL。
+要求 **Node.js 20+** 和 **pnpm**（请使用 pnpm，不要用 npm/yarn 更新依赖）。Python 3 只用于数据与图片维护。Windows 上执行 `bash scripts/build.sh` 需要 Git Bash 或 WSL。
 
 > 使用 nvm-windows 时，`nvm` 命令必须在真实的 PowerShell/CMD 窗口中执行；它要求 stdout 是控制台设备，从 Agent/CI 的管道 shell 直接调用会弹出 “Terminal Only” 提示并退出。
 
 ```bash
 pnpm install
-pnpm dev                 # http://localhost:5173
+pnpm dev                 # 应用本地 D1 迁移并同时启动 Worker(8787) + Vite(5173)
+pnpm dev:web             # 仅启动前端 Vite（/api 代理到 http://127.0.0.1:8787）
+pnpm dev:worker          # 仅启动本地 Wrangler Worker（模拟 D1 + R2）
+pnpm db:migrate:local    # 应用 migrations/*.sql 到本地 D1
+pnpm db:migrate:remote   # 应用 migrations/*.sql 到线上 D1
 pnpm build               # tsc -b && vite build（只构建前端，不包含 data/ thumbs/ img/）
 pnpm lint                # oxlint
 pnpm preview             # 预览构建结果
 
 bash scripts/build.sh    # 生成可部署的 dist/：前端构建 + 复制 data/ thumbs/ img/ 等
-npx wrangler deploy      # 部署到 Cloudflare Workers（wrangler.jsonc 指向 ./dist）
+pnpm run deploy          # build.sh + wrangler deploy
 ```
 
 数据维护脚本（在仓库根目录执行；macOS/Linux 用 `python3`）：
@@ -45,24 +48,26 @@ python scripts/import_shisei_costumes.py      # 更新 Shisei 中国历代服装
 
 | 路径 | 职责 |
 | --- | --- |
-| `src/routes/` | 页面路由：`index` 总览、`poses`、`costumes`、`portraits`、`studio`、`settings`、`guide`；`__root.tsx` 是整体布局 |
+| `shared/studio.ts` | 前后端共享的类型定义、画师/厂商元数据、画风预设、提示词组装逻辑 |
+| `server/` | Cloudflare Workers 后端（Hono 路由、PBKDF2/AES-GCM 加密、D1 原子积分账本、R2 文件读写、4 家 AI 模型代调） |
+| `migrations/` | Cloudflare D1 SQL 迁移脚本（`0001_init.sql`） |
+| `worker.ts` / `wrangler.jsonc` | Cloudflare Worker 入口与 D1 (`DB`) / R2 (`BUCKET`) / 静态资源 (`ASSETS`) 绑定配置 |
+| `src/routes/` | 页面路由：`index` 总览、`poses`、`costumes`、`portraits`、`studio`、`guide`、`admin.login`、`admin.index`；`__root.tsx` 是整体布局 |
 | `src/api/gallery.ts` | React Query 查询、姿势分组、NSFW 分类判定 |
-| `src/store/studioStore.tsx` | 全局配方、API 配置、安全模式、生成历史、生成任务生命周期；localStorage + IndexedDB 持久化 |
-| `src/store/useComfyConnection.ts` | ComfyUI HTTP 连接检测器（全应用共享） |
-| `src/services/aiGenerator.ts` | 提示词组装、Canvas 拼图、5 家生图协议客户端、ComfyUI 工作流解析/上传/任务跟踪 |
-| `src/lib/` | 通用逻辑：图片路径、随机配方、IndexedDB、通知、ComfyUI 参数、生成快照等 |
-| `src/components/ui/` | shadcn/ui 生成组件（`components.json` 使用 `radix-vega` 风格），通常不要手改 |
-| `src/components/{common,layout,studio,theme}/` | 业务组件、侧边栏/头部/配方 Dock、合成台组件、主题 |
-| `src/types/gallery.ts` | 三库数据、配方、5 家协议参数、历史记录的类型定义 |
-| `src/workflows/*.api.json` | 内置 ComfyUI API 格式工作流 |
-| `functions/api/proxy.ts` | `/api/proxy` 处理器，同时被 Cloudflare Pages Functions 和 `worker.ts` 复用 |
-| `worker.ts` / `wrangler.jsonc` | Cloudflare Worker 入口与部署配置（静态资源 `ASSETS` 绑定 `./dist`） |
-| `comfyui_plugin/` + `__init__.py` | ComfyUI 节点、PromptServer 路由、前端弹窗选图器 |
+| `src/lib/apiClient.ts` | 前端 `/api/*` 请求与 SSE 生成流解析客户端 |
+| `src/store/studioStore.tsx` | 登录态、积分余额、平台配置、云端作品历史、草稿配方（IndexedDB 草稿 + localStorage 偏好） |
+| `src/services/aiGenerator.ts` | 浏览器端图片缩放、`stitchRecipeCanvas` 参考拼图与共享提示词导出 |
+| `src/lib/` | 通用逻辑：图片路径、随机配方、IndexedDB 草稿、通知、对比参考等 |
+| `src/components/auth/` | 用户登录/注册弹窗（`AuthModal`）、账户积分/卡密兑换/流水弹窗（`AccountModal`） |
+| `src/components/ui/` | shadcn/ui 生成组件（`components.json` 使用 `radix-nova` 风格），通常不要手改 |
+| `src/components/{common,layout,studio,theme}/` | 业务组件、导航栏/配方 Dock、画风选择器、主题 |
+| `src/types/gallery.ts` | 图库与工作台类型重导出 |
+| `comfyui_plugin/` + `__init__.py` | 独立 ComfyUI 节点、PromptServer 路由、前端弹窗选图器 |
 | `data/` | 三库 JSON 与翻译对照表；`*-zh.json` 是前端实际加载的数据 |
 | `thumbs/` / `img/` | 缩略图与高清原图（体积大，勿批量移动或重命名） |
-| `scripts/` | Python 下载、翻译、导入、校验脚本，不参与前端运行时 |
-| `skills/` | 9 个 Agent 技能包（`SKILL.md` + `references/catalog.csv`），不是应用代码 |
-| `docs/` | ComfyUI 本地部署、工作流参数、任务恢复、预览图等深入文档 |
+| `scripts/` | Python 下载、翻译、导入、校验脚本及 `dev-all.mjs`、`build.sh` |
+| `skills/` | Agent 技能包（`SKILL.md` + `references/catalog.csv`），不是应用代码 |
+| `docs/` | Cloudflare D1/R2 部署指南、图片数据说明等文档 |
 
 ## 数据与图片约定
 
@@ -78,16 +83,14 @@ python scripts/import_shisei_costumes.py      # 更新 Shisei 中国历代服装
 
 ## 关键行为与安全约束
 
-- **SFW 安全模式默认开启**：状态在 `studioStore.tsx`，NSFW 判定集中在 `src/api/gallery.ts`（`NSFW_POSE_SYSTEMS`、`NSFW_COSTUME_CATEGORIES`、`isNsfwPose*`、`isNsfwCostume*`）。新增图库筛选、随机配方、拼图或 ComfyUI 选图入口时，必须继续遵守 `safeMode`，不得默认展示或随机到 NSFW 内容。
-- **API Key 只留在浏览器**：配置存于 localStorage（`pose_atlas_api_config_v3`），历史和未决任务存于 IndexedDB（`pose_atlas_studio_db`）。不要把 Key 写进代码、提交、日志、URL 或生成快照；`GenerationSnapshot` 明确不包含提供商 Key，保持这一点。
-- **浏览器存储**：大图片/生成结果/未决任务用 IndexedDB（`src/lib/idbStorage.ts`），不要塞进 localStorage；`durableImage()` / `snapshotGeneration()` 负责生成可持久化数据。
+- **SFW 安全模式默认开启**：状态在 `studioStore.tsx`，NSFW 判定集中在 `src/api/gallery.ts`（`NSFW_POSE_SYSTEMS`、`NSFW_COSTUME_CATEGORIES`、`isNsfwPose*`、`isNsfwCostume*`），并受 D1 `system_settings.platform_config` 中 `defaultSafeMode` / `allowUserNsfwUnlock` 策略约束。新增图库筛选、随机配方、拼图或 ComfyUI 插件选图入口时，必须继续遵守 `safeMode`。
+- **API Key 与会话安全**：厂商 API Key 由管理员在 `/admin` 配置并使用 `APP_ENCRYPTION_KEY` AES-GCM 加密后存于 D1 `provider_configs`，**绝不下发给前端或写入快照**；用户会话采用 HttpOnly Cookie + SHA-256 `sessions` 表。
+- **积分账本与 D1 事务**：Cloudflare D1 不支持交互式 `BEGIN/COMMIT`，所有扣费、退款、卡密核销与手动调积分必须通过 `env.DB.batch([...])` + 表级约束（`CHECK (credit_balance >= 0)`、`idx_credit_ledger_unique_refund`、`UNIQUE (code_id, user_id)`）保证原子性与幂等性。
+- **R2 图片私有访问与 SSRF 防护**：用户上传参考图（`uploads/<userId>/...`）与 AI 成图（`generations/<userId>/...`）保存在私有 R2 桶，通过 `/api/files/*` 校验归属权后读取；外部图链仅允许安全公网 `https://`，禁止内网地址。
+- **浏览器存储**：仅用 IndexedDB（`src/lib/idbStorage.ts`）保存当前草稿配方、用 localStorage 保存轻量 UI 偏好（`pose_atlas_client_prefs_v4` / `pose_atlas_safe_mode_v1`），已生成作品与历史记录统一持久化在 D1 + R2。
 - **通知**：业务代码统一使用 `@/lib/notifications` 的 `toast`，它处理了 Sonner 溢出提示的计时问题；不要在新代码里直接 `import { toast } from 'sonner'`。
 - **路由**：TanStack Router 文件式路由，`src/routeTree.gen.ts` 由 Vite 插件自动生成，**不要手改**。新增页面时创建 `src/routes/<name>.tsx`，在其中 `createFileRoute('/<name>')` 并设置 `staticData.title`，再把导航项加到 `src/components/layout/nav.ts`；运行 dev/build 让路由树重新生成。
-- **静态资源**：`vite.config.ts` 设置了 `publicDir: false`，开发/预览时由自定义插件直接从仓库根目录提供 `/data/`、`/thumbs/`、`/img/`、`/og-cover.jpg`、`/robots.txt`、`/sitemap.xml`。新增根级静态路径时，要同时更新该插件的 `prefixes` 和 `scripts/build.sh` 的复制清单，否则会出现「本地能看、部署 404」。
-- **代理安全**：生产 `/api/proxy` 只接受 POST、https、默认四家官方域名（可通过 `PROXY_ALLOWED_ORIGINS` 扩展）、请求体上限 10 MiB，只转发 `content-type`、`authorization`、`x-goog-api-key`、`x-dashscope-async`。不要为了方便放宽白名单、协议或大小限制。
-- **ComfyUI 代理**：本地 dev/preview 的 `/comfy/*` 由 Vite 代理到 `COMFYUI_URL`（默认 `http://127.0.0.1:8000`）并移除 Origin；线上可直连。修改 ComfyUI 调用时同时考虑「`/comfy` 相对地址」和「绝对地址」两种情况。
-- **ComfyUI 任务语义**：提交响应丢失时后端可能已经收到任务，不能把网络错误当作安全重试依据；刷新恢复只查询原任务，不重新提交 `/prompt`。相关逻辑在 `aiGenerator.ts`，详细约束见 `docs/comfyui-task-tracking.md`。
-- **ComfyUI 工作流元数据**：`_meta.studio.controls`、`hiddenInputs`、`imageRole`、`referenceCombinations` 是本项目扩展约定，不是 ComfyUI 标准。修改工作流参数 UI 时保持「只覆盖真实存在且类型匹配的字段」的校验。
+- **静态资源**：`vite.config.ts` 设置了 `publicDir: false`，开发/预览时由自定义插件直接从仓库根目录提供 `/data/`、`/thumbs/`、`/img/`、`/og-cover.jpg`、`/robots.txt`、`/sitemap.xml`，同时将 `/api/*` 代理到本地 `wrangler dev`（`127.0.0.1:8787`）。新增根级静态路径时，要同时更新该插件的 `prefixes` 和 `scripts/build.sh` 的复制清单。
 - **界面与前端技术栈规范**：
   - **原则**：优先复用成熟库、组件源代码可控、统一设计语言（瑞士纯血极简画廊风 / Swiss Minimalist Gallery：0 圆角直角网格、1px 通栏分割细线、高对比黑白排印、等宽字体编号）、严格限制重复依赖。
   - **UI 组件**：统一使用 `shadcn/ui Nova`（`components.json` 中 `style: "radix-nova"`，源码位于 `src/components/ui/`）。
@@ -102,9 +105,8 @@ python scripts/import_shisei_costumes.py      # 更新 Shisei 中国历代服装
 ## 常见任务提示
 
 - **新增图库页面或筛选**：先看 `src/routes/poses.tsx` 或 `costumes.tsx` 的查询、分页（默认每次 60 条）、灯箱和「加入配方」模式；复用 `PageHeader`、`EmptyState`、`GalleryLightbox` 等通用组件，并确保安全模式过滤。
-- **新增生图协议**：同步修改 `src/types/gallery.ts`、`src/services/aiGenerator.ts` 的 `PROVIDER_META` 与调用逻辑、`studioStore.tsx` 的默认配置与 `mergeStoredConfig()`、`settings.tsx` 的配置 UI；若上游域名不在默认白名单，再更新 `functions/api/proxy.ts` 并说明原因。
-- **修改 ComfyUI 插件**：Python 节点在 `comfyui_plugin/nodes.py`，HTTP 路由在 `comfyui_plugin/routes.py`，前端在 `comfyui_plugin/web/extension.js` + `style.css`（纯 JS，无构建步骤）。改完用 `python -m compileall __init__.py comfyui_plugin` 做语法检查；真正的运行验证需要 ComfyUI 环境。节点输入输出名必须与前端扩展保持一致。
-- **修改代理**：`functions/api/proxy.ts` 是 Worker 与 Pages 共用的实现；`vite.config.ts` 里的开发代理是另一套实现。若要求本地与线上行为一致，两边都要改并分别验证。
+- **新增云端生图厂商**：同步修改 `shared/studio.ts`（`PROVIDER_ORDER`、`PROVIDER_META`、`STUDIO_ARTISTS`、`DEFAULT_PROVIDER_PARAMS`）、`migrations/` 中 `provider_configs.provider_id` 约束、`server/aiProviders.ts`、`src/routes/admin.index.tsx` 参数面板。
+- **修改 ComfyUI 插件**：独立 Python 节点在 `comfyui_plugin/nodes.py`、`routes.py`、`web/extension.js` + `style.css`（纯 JS，无构建步骤）。改完用 `python -m compileall __init__.py comfyui_plugin` 做语法检查。
 - **修改图片/数据**：跑 `python scripts/verify.py`；改动生成脚本后重新生成 `*-zh.json` 并抽查首条与边界条目。
 
 ## 验证清单
@@ -112,24 +114,21 @@ python scripts/import_shisei_costumes.py      # 更新 Shisei 中国历代服装
 当前仓库没有自动化测试。提交前至少执行：
 
 ```bash
-pnpm build     # 含 tsc -b 类型检查
+pnpm build     # 含 tsc -b 类型检查（覆盖 src、vite.config.ts 与 worker/server）
 pnpm lint
 ```
 
-涉及数据/图片时再执行 `python scripts/verify.py`。涉及 UI 时启动 `pnpm dev`，手动检查 `/`、`/poses`、`/costumes`、`/portraits`、`/studio`、`/settings` 中受影响页面，并验证：
+涉及后端或 UI 时启动 `pnpm dev:all`，手动检查 `/`、`/poses`、`/costumes`、`/portraits`、`/studio`、`/admin/login`、`/admin`，并验证：
 
-- 安全模式开启时 NSFW 分类不可见、不可随机到；关闭/解锁流程正常。
-- 图片缩略图、原图、深度图切换与灯箱下载正常，无 404。
-- 手机宽度下布局、侧边栏、配方 Dock 不溢出。
-- 合成台切换协议、保存配置、刷新后配方/历史恢复；ComfyUI 相关改动需连接真实实例验证提交与恢复。
+- 管理员初始化/登录、厂商加密配置保存（不泄漏密钥）、用户注册/登录、卡密兑换与手动调积分。
+- 安全模式开启时 NSFW 分类不可见、不可随机到；解锁开关遵循管理端 `allowUserNsfwUnlock`。
+- 生图失败自动全额退还积分、R2 文件仅本人/管理员可访问、跨设备云端作品集列表与对比正常。
 - 部署构建用 `bash scripts/build.sh`，确认 `dist/` 包含 `data/thumbs/img`，并留意 Cloudflare 的单文件 25 MiB、文件数 20,000 限制。
 
 ## 参考文档
 
 - `README.md`：功能、数据规模、完整目录结构、部署方式。
-- `docs/comfyui-local.md`：本地 ComfyUI 三图合成所需模型与运行方式。
-- `docs/comfyui-workflow-parameters.md`：工作流高级参数与 `_meta.studio` 约定。
-- `docs/comfyui-task-tracking.md`：ComfyUI WebSocket/HTTP 任务跟踪与刷新恢复。
+- `docs/cloudflare-d1-r2.md`：Cloudflare Workers + D1 + R2 本地联调、数据库迁移与线上部署步骤。
 - `docs/SHISEI-COSTUMES.md`、`docs/GIA-ANIME-COSTUMES.md`：两类外部服装数据说明。
 - `skills/`：姿势/服装/人像检索技能包及图片来源限制。
 

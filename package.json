@@ -4,8 +4,14 @@
   "version": "2.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "node scripts/dev-all.mjs",
+    "dev:web": "vite",
+    "dev:worker": "wrangler dev --port 8787 --local",
+    "dev:all": "node scripts/dev-all.mjs",
+    "db:migrate:local": "wrangler d1 migrations apply ai-pose-gallery-db --local",
+    "db:migrate:remote": "wrangler d1 migrations apply ai-pose-gallery-db --remote",
     "build": "tsc -b && vite build",
+    "deploy": "bash scripts/build.sh && wrangler deploy",
     "lint": "oxlint",
     "impeccable": "impeccable detect src/",
     "preview": "vite preview"
@@ -20,6 +26,7 @@
     "@tanstack/react-router": "^1.170.46",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "hono": "^4.13.18",
     "lucide-react": "^1.63.0",
     "motion": "^14.12.0",
     "radix-ui": "^1.8.1",
@@ -35,6 +42,7 @@
     "zustand": "^5.1.0"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261114.1",
     "@tanstack/router-plugin": "^1.168.48",
     "@types/node": "^24.19.2",
     "@types/react": "^19.3.0",
@@ -43,6 +51,7 @@
     "impeccable": "^4.8.2",
     "oxlint": "^1.89.0",
     "typescript": "~7.0.2",
-    "vite": "^8.3.5"
+    "vite": "^8.3.5",
+    "wrangler": "^4.162.0"
   }
 }

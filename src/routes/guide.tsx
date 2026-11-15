@@ -13,6 +13,7 @@ import {
 import { StyleWheelDeck } from '@/components/guide/StyleWheelDeck'
 import { Button } from '@/components/ui/button'
 import { getVisualStylePresets } from '@/lib/stylePresets'
+import { useStudio } from '@/store/studioStore'
 
 export const Route = createFileRoute('/guide')({
   staticData: { title: '使用指南' },
@@ -20,27 +21,19 @@ export const Route = createFileRoute('/guide')({
 })
 
 const EASE_OUT = [0.22, 1, 0.36, 1] as const
-const STYLE_COUNT = getVisualStylePresets().length
-
-const STAT_MATRIX = [
-  { label: '人像参考', value: '1,499', to: '/portraits' as const },
-  { label: '服装穿搭', value: '3,224', to: '/costumes' as const },
-  { label: '动作姿势', value: '1,439', to: '/poses' as const },
-  { label: '成图画风', value: String(STYLE_COUNT), to: '/studio' as const },
-] as const
 
 const STEPS = [
   {
     code: '01',
-    accent: '#E5A918',
-    badgeClass: 'bg-[#E5A918]/15 text-[#9A6B00] dark:text-[#E5A918]',
-    icon: UserRoundIcon,
-    title: '人像颜值库',
-    count: '1,499 张',
-    summary: '按正脸 / 造型氛围、4 种发长与 51 种细分发型筛选高清人像，也可在合成台上传照片锁定五官与发色。',
-    chips: ['正脸参考', '造型氛围', '51 款发型', '支持自传面部'],
-    to: '/portraits' as const,
-    cta: '前往人像库',
+    accent: '#D9381E',
+    badgeClass: 'bg-[#D9381E]/12 text-[#D9381E] dark:text-[#FF7A59]',
+    icon: PersonStandingIcon,
+    title: '动作姿势库',
+    count: '1,439 张',
+    summary: '覆盖多种人体动态与 5 种镜头视角，支持素体白模与深度图一键切换，快速锁定角色肢体动作与构图角度。',
+    chips: ['5 视角叠牌', '白模 / 深度切换', '站坐卧特写', '4 大动作体系'],
+    to: '/poses' as const,
+    cta: '前往姿势库',
   },
   {
     code: '02',
@@ -56,15 +49,15 @@ const STEPS = [
   },
   {
     code: '03',
-    accent: '#D9381E',
-    badgeClass: 'bg-[#D9381E]/12 text-[#D9381E] dark:text-[#FF7A59]',
-    icon: PersonStandingIcon,
-    title: '动作姿势库',
-    count: '1,439 张',
-    summary: '覆盖多种人体动态与 5 种镜头视角，支持素体白模与深度图一键切换，快速锁定角色肢体动作与构图角度。',
-    chips: ['5 视角叠牌', '白模 / 深度切换', '站坐卧特写', '4 大动作体系'],
-    to: '/poses' as const,
-    cta: '前往姿势库',
+    accent: '#E5A918',
+    badgeClass: 'bg-[#E5A918]/15 text-[#9A6B00] dark:text-[#E5A918]',
+    icon: UserRoundIcon,
+    title: '人像颜值库',
+    count: '1,499 张',
+    summary: '按正脸 / 造型氛围、4 种发长与 51 种细分发型筛选高清人像，也可在合成台上传照片锁定五官与发色。',
+    chips: ['正脸参考', '造型氛围', '51 款发型', '支持自传面部'],
+    to: '/portraits' as const,
+    cta: '前往人像库',
   },
 ] as const
 
@@ -76,12 +69,21 @@ const LEGAL_RULES = [
   },
   {
     no: '02',
-    title: '本地隐私与责任归属',
-    body: '您的角色配方、上传参考图与生成作品仅保留在当前浏览器本地，平台不收集、不存储个人图片与创作记录；使用者对其生成内容与行为独立承担全部法律责任。',
+    title: '账号积分与云端存档',
+    body: '注册登录后将根据平台策略获赠初始积分；每次云端生图消耗对应积分（失败自动全额退还），生成记录与配方快照保存在云端作品集中以便跨设备回看。使用者对其上传素材与生成内容独立承担全部法律责任。',
   },
 ] as const
 
 function GuidePage() {
+  const { platform } = useStudio()
+  const styleCount = getVisualStylePresets(platform).length
+  const statMatrix = [
+    { label: '动作姿势', value: '1,439', to: '/poses' as const },
+    { label: '服装穿搭', value: '3,224', to: '/costumes' as const },
+    { label: '人像参考', value: '1,499', to: '/portraits' as const },
+    { label: '成图画风', value: String(styleCount), to: '/studio' as const },
+  ] as const
+
   return (
     <div className="space-y-5">
       {/* 与三库完全一致的编辑杂志顶栏 + 右侧 1px 统计矩阵 */}
@@ -94,7 +96,7 @@ function GuidePage() {
         <div className="space-y-1.5">
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
             <span className="inline-block h-px w-5 bg-foreground/40" aria-hidden="true" />
-            <span>CHARADECK 角色牌局 · 创作指南</span>
+            <span>CASTDECK 造角牌 · 创作指南</span>
           </div>
           <h1 className="text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
             使用指南与创作规范
@@ -108,7 +110,7 @@ function GuidePage() {
           aria-label="图库规模概览"
           className="grid grid-cols-4 divide-x divide-border overflow-hidden rounded-xl border border-border bg-card"
         >
-          {STAT_MATRIX.map((item) => (
+          {statMatrix.map((item) => (
             <Link
               key={item.label}
               to={item.to}
@@ -134,13 +136,13 @@ function GuidePage() {
           <div className="space-y-3">
             <div className="inline-flex items-center gap-2 rounded-full border border-border bg-[#FAF8F4] px-3 py-1 font-mono text-xs font-semibold text-muted-foreground dark:bg-muted/50">
               <span className="size-1.5 rounded-full bg-[#D9381E]" />
-              <span>3-IN-1 // 人像 + 服装 + 姿势</span>
+              <span>3-IN-1 // 姿势 + 服装 + 人像</span>
             </div>
             <h2 className="text-xl font-extrabold tracking-tight text-foreground sm:text-2xl">
               像组卡组一样，三步完成角色立绘
             </h2>
             <p className="text-sm leading-relaxed text-muted-foreground">
-              在首页撕开盲盒抽卡，或在三大图库挑出满意的五官、穿搭与动作，点击锁入底部配方坞，进入合成台即可挑选画风与画师出图。
+              在首页撕开盲盒抽卡，或在三大图库挑出满意的动作、穿搭与五官，点击锁入底部配方坞，进入合成台即可挑选画风与画师出图。
             </p>
           </div>
 
@@ -148,8 +150,8 @@ function GuidePage() {
             {/* 实体凹槽公式条 */}
             <div className="ks-recess flex flex-wrap items-center gap-2 rounded-2xl border border-border/75 p-2.5 text-xs">
               <span className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-card px-2.5 py-1 font-semibold text-foreground shadow-2xs">
-                <span className="size-2 rounded-full bg-[#E5A918]" />
-                01 选人像
+                <span className="size-2 rounded-full bg-[#D9381E]" />
+                01 选姿势
               </span>
               <span className="font-mono text-muted-foreground">+</span>
               <span className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-card px-2.5 py-1 font-semibold text-foreground shadow-2xs">
@@ -158,13 +160,13 @@ function GuidePage() {
               </span>
               <span className="font-mono text-muted-foreground">+</span>
               <span className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-card px-2.5 py-1 font-semibold text-foreground shadow-2xs">
-                <span className="size-2 rounded-full bg-[#D9381E]" />
-                03 选姿势
+                <span className="size-2 rounded-full bg-[#E5A918]" />
+                03 选人像
               </span>
               <ArrowRightIcon className="size-3.5 text-muted-foreground" />
               <span className="inline-flex items-center gap-1 rounded-lg bg-foreground px-2.5 py-1 font-semibold text-background">
                 <SparklesIcon className="size-3" />
-                {STYLE_COUNT} 画风成图
+                {styleCount} 画风成图
               </span>
             </div>
 

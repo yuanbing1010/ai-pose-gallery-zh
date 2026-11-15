@@ -27,9 +27,9 @@ export const navGroups: NavGroup[] = [
     label: 'DIRECTORY // 核心索引',
     items: [
       { code: '00', title: '盲盒抽卡', to: '/', icon: LayoutDashboardIcon, badge: '[DRAW]' },
-      { code: '01', title: '人像颜值库', to: '/portraits', icon: UserRoundIcon, badge: '1499' },
+      { code: '01', title: '动作姿势库', to: '/poses', icon: PersonStandingIcon, badge: '1439' },
       { code: '02', title: '服装穿搭库', to: '/costumes', icon: ShirtIcon, badge: '3224' },
-      { code: '03', title: '动作姿势库', to: '/poses', icon: PersonStandingIcon, badge: '1439' },
+      { code: '03', title: '人像颜值库', to: '/portraits', icon: UserRoundIcon, badge: '1499' },
       { code: '04', title: 'AI 角色合成台', to: '/studio', icon: SparklesIcon, badge: '->' },
     ],
   },
