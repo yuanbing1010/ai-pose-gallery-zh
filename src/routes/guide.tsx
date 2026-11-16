@@ -26,7 +26,7 @@ const STEPS = [
   {
     code: '01',
     accent: '#D9381E',
-    badgeClass: 'bg-[#D9381E]/12 text-[#D9381E] dark:text-[#FF7A59]',
+    badgeClass: 'bg-[#D9381E]/12 text-[#B82914] dark:text-[#FF7A59]',
     icon: PersonStandingIcon,
     title: '动作姿势库',
     count: '1,439 张',
@@ -50,7 +50,7 @@ const STEPS = [
   {
     code: '03',
     accent: '#E5A918',
-    badgeClass: 'bg-[#E5A918]/15 text-[#9A6B00] dark:text-[#E5A918]',
+    badgeClass: 'bg-[#E5A918]/15 text-[#7A5200] dark:text-[#E5A918]',
     icon: UserRoundIcon,
     title: '人像颜值库',
     count: '1,499 张',
@@ -108,7 +108,7 @@ function GuidePage() {
 
         <div
           aria-label="图库规模概览"
-          className="grid grid-cols-4 divide-x divide-border overflow-hidden rounded-xl border border-border bg-card"
+          className="grid grid-cols-2 divide-x divide-y divide-border overflow-hidden rounded-xl border border-border bg-card sm:grid-cols-4 sm:divide-y-0"
         >
           {statMatrix.map((item) => (
             <Link
@@ -147,19 +147,19 @@ function GuidePage() {
           </div>
 
           <div className="space-y-4">
-            {/* 实体凹槽公式条 */}
-            <div className="ks-recess flex flex-wrap items-center gap-2 rounded-2xl border border-border/75 p-2.5 text-xs">
-              <span className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-card px-2.5 py-1 font-semibold text-foreground shadow-2xs">
+            {/* 公式条（扁平分隔避免卡片嵌套） */}
+            <div className="flex flex-wrap items-center gap-1.5 border-t border-border/75 pt-4 text-xs sm:gap-2">
+              <span className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-muted/45 px-2.5 py-1 font-semibold text-foreground">
                 <span className="size-2 rounded-full bg-[#D9381E]" />
                 01 选姿势
               </span>
-              <span className="font-mono text-muted-foreground">+</span>
-              <span className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-card px-2.5 py-1 font-semibold text-foreground shadow-2xs">
+              <span className="hidden font-mono text-muted-foreground sm:inline">+</span>
+              <span className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-muted/45 px-2.5 py-1 font-semibold text-foreground">
                 <span className="size-2 rounded-full bg-[#19857B]" />
                 02 选穿搭
               </span>
-              <span className="font-mono text-muted-foreground">+</span>
-              <span className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-card px-2.5 py-1 font-semibold text-foreground shadow-2xs">
+              <span className="hidden font-mono text-muted-foreground sm:inline">+</span>
+              <span className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-muted/45 px-2.5 py-1 font-semibold text-foreground">
                 <span className="size-2 rounded-full bg-[#E5A918]" />
                 03 选人像
               </span>
@@ -229,17 +229,15 @@ function GuidePage() {
                 <h2 className="mt-3 text-base font-extrabold tracking-tight">{step.title}</h2>
                 <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">{step.summary}</p>
 
-                <div className="ks-recess mt-3.5 rounded-xl border border-border/75 p-2">
-                  <div className="flex flex-wrap gap-1.5">
-                    {step.chips.map((chip) => (
-                      <span
-                        key={chip}
-                        className="rounded-md border border-border/80 bg-card px-2 py-0.5 text-[11px] font-medium text-foreground shadow-2xs"
-                      >
-                        {chip}
-                      </span>
-                    ))}
-                  </div>
+                <div className="mt-3.5 flex flex-wrap gap-1.5 border-t border-border/65 pt-3">
+                  {step.chips.map((chip) => (
+                    <span
+                      key={chip}
+                      className="rounded-md border border-border/80 bg-muted/50 px-2 py-0.5 text-[11px] font-medium text-foreground"
+                    >
+                      {chip}
+                    </span>
+                  ))}
                 </div>
               </div>
 
@@ -272,7 +270,7 @@ function GuidePage() {
           <div className="space-y-2.5 text-xs leading-relaxed text-muted-foreground">
             {LEGAL_RULES.map((rule) => (
               <p key={rule.no}>
-                <span className="mr-1.5 font-mono font-bold text-[#D9381E]">{rule.no}</span>
+                <span className="mr-1.5 font-mono font-bold text-[#B82914] dark:text-[#FF7A59]">{rule.no}</span>
                 <strong className="mr-1 text-foreground">{rule.title}：</strong>
                 {rule.body}
               </p>

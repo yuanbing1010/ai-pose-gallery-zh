@@ -87,7 +87,7 @@ export function CostumeFilterModal({
   const showTag = (section === 'all' || section === 'tag') && filteredTags.length > 0
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={(next) => { if (!next) setFilterSearch(''); onOpenChange(next) }}>
       <DialogContent
         showCloseButton={false}
         className="w-[94vw] max-w-[680px] gap-0 overflow-hidden rounded-[22px] border border-border bg-popover p-0 text-popover-foreground shadow-[0_24px_70px_rgba(0,0,0,0.22)] dark:shadow-[0_24px_70px_rgba(0,0,0,0.7)] sm:max-w-[680px]"
@@ -115,8 +115,8 @@ export function CostumeFilterModal({
         </div>
 
         {/* 双栏主体：左侧维度导航 + 右侧统计勾选列表 */}
-        <div className="grid max-h-[60dvh] min-h-[340px] sm:grid-cols-[176px_1fr]">
-          <aside className="flex gap-1 overflow-x-auto border-b border-border p-2.5 sm:flex-col sm:border-r sm:border-b-0">
+        <div className="grid max-h-[68dvh] min-h-[320px] grid-cols-1 grid-rows-[auto_minmax(0,1fr)] sm:max-h-[60dvh] sm:grid-cols-[176px_minmax(0,1fr)] sm:grid-rows-1">
+          <aside className="no-scrollbar flex min-w-0 shrink-0 gap-1 overflow-x-auto border-b border-border p-2.5 sm:flex-col sm:border-r sm:border-b-0">
             {RAIL_ITEMS.map((item) => {
               const active = section === item.id
               return (

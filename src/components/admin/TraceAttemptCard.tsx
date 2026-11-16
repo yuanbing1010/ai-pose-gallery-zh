@@ -184,7 +184,7 @@ export function TraceAttemptCard({
               {attempt.request.url}
             </span>
             {attempt.request.authSummary && (
-              <span className="border border-zinc-300 px-1.5 py-0.5 font-mono text-[10px] text-zinc-500 [overflow-wrap:anywhere] dark:border-zinc-700">
+              <span className="border border-zinc-300 px-1.5 py-0.5 font-mono text-[11px] text-zinc-600 [overflow-wrap:anywhere] dark:border-zinc-700 dark:text-zinc-400">
                 鉴权：{attempt.request.authSummary}
               </span>
             )}
@@ -233,13 +233,13 @@ export function TraceAttemptCard({
                   状态码 {attempt.response.status ?? '—'}
                 </span>
                 {attempt.response.requestId && (
-                  <span className="border border-zinc-300 px-1.5 py-0.5 font-mono text-[10px] text-zinc-500 [overflow-wrap:anywhere] dark:border-zinc-700">
+                  <span className="border border-zinc-300 px-1.5 py-0.5 font-mono text-[11px] text-zinc-600 [overflow-wrap:anywhere] dark:border-zinc-700 dark:text-zinc-400">
                     请求编号：{attempt.response.requestId}
                   </span>
                 )}
               </>
             ) : (
-              <span className="border border-zinc-300 px-1.5 py-0.5 text-[10px] text-zinc-500 dark:border-zinc-700">
+              <span className="border border-zinc-300 px-1.5 py-0.5 text-[11px] text-zinc-600 dark:border-zinc-700 dark:text-zinc-400">
                 无响应（前置阶段或网络中断）
               </span>
             )}

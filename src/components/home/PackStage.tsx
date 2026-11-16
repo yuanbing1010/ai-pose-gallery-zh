@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { AnimatePresence, motion } from 'motion/react'
-import { DicesIcon, SparklesIcon, Volume2Icon, VolumeXIcon, XIcon } from 'lucide-react'
+import { CheckIcon, DicesIcon, SparklesIcon, Volume2Icon, VolumeXIcon, XIcon } from 'lucide-react'
+import { toast } from '@/lib/notifications'
 import { poseThumbPath, referenceImageUrl } from '@/lib/recipeImages'
 import { cn } from '@/lib/utils'
 import type { CostumeItem, PortraitItem, PoseItem } from '@/types/gallery'
@@ -266,6 +267,7 @@ export function PackStage({
 }: PackStageProps) {
   const [phase, setPhase] = useState<'sealed' | 'opened' | 'flying'>('sealed')
   const [flyingClones, setFlyingClones] = useState<FlyingCardClone[]>([])
+  const [lockedSlots, setLockedSlots] = useState<Partial<Record<'portrait' | 'costume' | 'pose', boolean>>>({})
 
   const stageRef = useRef<HTMLDivElement>(null)
   const sceneRef = useRef<HTMLDivElement>(null)
@@ -539,6 +541,7 @@ export function PackStage({
     if (!fxc) return
 
     setPhase('sealed')
+    setLockedSlots({})
 
     const skin = PACK_SKINS[packSeed % PACK_SKINS.length]
     pack.style.setProperty('--pack', skin[1])
@@ -1309,6 +1312,27 @@ export function PackStage({
     const onStagePointerLeave = () => {
       pointer.in = false
     }
+    const onStageClick = (e: MouseEvent) => {
+      if ((e.target as HTMLElement | null)?.closest('button, a')) return
+      if (state !== 'spread') return
+      pointer.x = e.clientX
+      pointer.y = e.clientY
+      const target = aimed()
+      if (!target) return
+      const spec = cardSpecs[target.i]
+      if (!spec) return
+      onSynthesizeSlotRef.current?.(spec.slotKey, drawnRef.current)
+      setLockedSlots((prev) => ({ ...prev, [spec.slotKey]: true }))
+      target.p.s.v += 1.4
+      target.p.z.v += 280
+      window.dispatchEvent(
+        new CustomEvent('recipe-dock-impact', {
+          detail: { slot: spec.slotKey, index: 0, isFinal: false },
+        })
+      )
+      sfxRef.current?.land(0)
+      toast.success(`已单独锁入${spec.kindLabel}：${spec.title}`)
+    }
 
     hit.addEventListener('pointerdown', onHitDown)
     hit.addEventListener('pointermove', onHitMove)
@@ -1318,6 +1342,7 @@ export function PackStage({
     hit.addEventListener('click', onHitClick)
     stage.addEventListener('pointermove', onStagePointerMove)
     stage.addEventListener('pointerleave', onStagePointerLeave)
+    stage.addEventListener('click', onStageClick)
     const ro = new ResizeObserver(fit)
     ro.observe(stage)
 
@@ -1568,6 +1593,7 @@ export function PackStage({
       hit.removeEventListener('click', onHitClick)
       stage.removeEventListener('pointermove', onStagePointerMove)
       stage.removeEventListener('pointerleave', onStagePointerLeave)
+      stage.removeEventListener('click', onStageClick)
       sfxRef.current?.rip(0)
       scene.querySelectorAll('.hp-card').forEach((n) => n.remove())
     }
@@ -1576,6 +1602,7 @@ export function PackStage({
   return (
     <div
       ref={stageRef}
+      data-phase={phase}
       className={cn(
         'hp-stage relative flex w-full flex-col items-center justify-between overflow-hidden px-4 py-4 sm:px-6 sm:py-5',
         variant === 'inline'
@@ -1592,7 +1619,7 @@ export function PackStage({
       </div>
 
       {/* 顶部导视与实时抽卡结果标签（开包前后动态切换） */}
-      <div className="pointer-events-none relative z-20 flex w-full flex-col items-center gap-1.5 pt-1 text-center">
+      <div className="pointer-events-none relative z-20 flex w-full flex-col items-center gap-1.5 px-11 pt-1 text-center sm:px-14">
         <AnimatePresence mode="wait">
           {phase === 'sealed' ? (
             <motion.div
@@ -1603,9 +1630,10 @@ export function PackStage({
               transition={{ duration: 0.18 }}
               className="flex flex-col items-center gap-1.5"
             >
-              <span className="inline-flex items-center gap-1.5 rounded-full border border-black/10 bg-white/75 px-3 py-0.5 font-mono text-xs font-semibold text-foreground/80 backdrop-blur-md dark:border-white/15 dark:bg-white/10">
-                <span className="size-1.5 animate-pulse rounded-full bg-[#D9381E]" />
-                <span>3-IN-1 角色配方盲盒 · 6,162+ 中文参考卡</span>
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-black/10 bg-white/75 px-3 py-0.5 font-mono text-[11px] font-semibold whitespace-nowrap text-foreground/85 backdrop-blur-md sm:text-xs dark:border-white/15 dark:bg-white/10">
+                <span className="size-1.5 shrink-0 rounded-full bg-[#D9381E]" />
+                <span className="sm:hidden">3-IN-1 配方盲盒 · 6,162+ 参考卡</span>
+                <span className="hidden sm:inline">3-IN-1 角色配方盲盒 · 6,162+ 中文参考卡</span>
               </span>
               <p className="text-xs text-muted-foreground sm:text-sm">
                 沿顶部铝箔横向划开，或轻点两次直接拆封今日角色配方
@@ -1618,21 +1646,50 @@ export function PackStage({
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -4 }}
               transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
-              className="flex flex-wrap items-center justify-center gap-1.5"
+              className="pointer-events-auto flex flex-col items-center gap-1.5"
             >
-              {cardSpecs.map((spec, idx) => (
-                <motion.span
-                  key={spec.slotKey}
-                  initial={{ opacity: 0, scale: 0.9, y: 4 }}
-                  animate={{ opacity: 1, scale: 1, y: 0 }}
-                  transition={{ duration: 0.22, delay: idx * 0.04, ease: [0.22, 1, 0.36, 1] }}
-                  className="inline-flex max-w-[14rem] items-center gap-1.5 rounded-full border border-black/10 bg-white/85 px-2.5 py-1 text-xs font-medium text-foreground shadow-2xs backdrop-blur-md dark:border-white/15 dark:bg-white/10"
-                >
-                  <span className="size-2 shrink-0 rounded-full" style={{ backgroundColor: spec.dotColor }} />
-                  <span className="shrink-0 font-mono text-muted-foreground">{spec.kindLabel}</span>
-                  <span className="truncate font-semibold">{spec.title}</span>
-                </motion.span>
-              ))}
+              <div className="flex flex-wrap items-center justify-center gap-1.5">
+                {cardSpecs.map((spec, idx) => {
+                  const isLocked = Boolean(lockedSlots[spec.slotKey])
+                  return (
+                    <motion.button
+                      key={spec.slotKey}
+                      type="button"
+                      title={`点击单独锁入${spec.kindLabel}：${spec.title}`}
+                      initial={{ opacity: 0, scale: 0.9, y: 4 }}
+                      animate={{ opacity: 1, scale: 1, y: 0 }}
+                      transition={{ duration: 0.22, delay: idx * 0.04, ease: [0.22, 1, 0.36, 1] }}
+                      onClick={() => {
+                        onSynthesizeSlotRef.current?.(spec.slotKey, drawnRef.current)
+                        setLockedSlots((prev) => ({ ...prev, [spec.slotKey]: true }))
+                        window.dispatchEvent(
+                          new CustomEvent('recipe-dock-impact', {
+                            detail: { slot: spec.slotKey, index: 0, isFinal: false },
+                          })
+                        )
+                        sfxRef.current?.land(idx)
+                        toast.success(`已单独锁入${spec.kindLabel}：${spec.title}`)
+                      }}
+                      className={cn(
+                        'inline-flex max-w-[14rem] items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium shadow-2xs backdrop-blur-md transition-colors active:scale-95',
+                        isLocked
+                          ? 'border-foreground bg-foreground text-background'
+                          : 'border-black/10 bg-white/85 text-foreground hover:bg-white dark:border-white/15 dark:bg-white/10 dark:hover:bg-white/20'
+                      )}
+                    >
+                      <span className="size-2 shrink-0 rounded-full" style={{ backgroundColor: spec.dotColor }} />
+                      <span className={cn('shrink-0 font-mono', isLocked ? 'opacity-80' : 'text-muted-foreground')}>
+                        {spec.kindLabel}
+                      </span>
+                      <span className="truncate font-semibold">{spec.title}</span>
+                      {isLocked && <CheckIcon className="size-3 shrink-0" />}
+                    </motion.button>
+                  )
+                })}
+              </div>
+              <p className="text-[11px] text-muted-foreground">
+                轻点单张卡牌或上方标签可单独锁入槽位 · 点击「立即合成」整包入坞
+              </p>
             </motion.div>
           )}
         </AnimatePresence>

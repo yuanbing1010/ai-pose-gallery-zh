@@ -235,7 +235,7 @@ function CostumesPage() {
         <div
           role="tablist"
           aria-label="穿搭风格板块"
-          className="grid grid-cols-4 divide-x divide-border overflow-hidden rounded-xl border border-border bg-card"
+          className="grid grid-cols-2 divide-x divide-y divide-border overflow-hidden rounded-xl border border-border bg-card sm:grid-cols-4 sm:divide-y-0"
         >
           {COSTUME_STYLE_TABS.map((tab) => {
             const active = styleTab === tab.id
@@ -276,7 +276,7 @@ function CostumesPage() {
       {/* 检索与双栏命令筛选控制条 */}
       <div className="space-y-3">
         <div className="flex flex-wrap items-center gap-2.5">
-          <div className="relative flex h-10 min-w-[220px] flex-1 items-center rounded-xl border border-border bg-card px-3.5 transition-colors focus-within:border-foreground/40">
+          <div className="relative flex h-10 min-w-[160px] flex-1 items-center rounded-xl border border-border bg-card px-3.5 transition-colors focus-within:border-foreground/40">
             <SearchIcon className="mr-2.5 size-4 shrink-0 text-muted-foreground" />
             <input
               ref={searchInputRef}
@@ -321,7 +321,7 @@ function CostumesPage() {
             <SlidersHorizontalIcon className="size-3.5" />
             <span>筛选</span>
             {activeFilterCount > 0 ? (
-              <span className="flex size-4 items-center justify-center rounded-full bg-background font-mono text-[10px] font-semibold text-foreground">
+              <span className="flex size-4 items-center justify-center rounded-full bg-background font-mono text-[11px] font-semibold text-foreground">
                 {activeFilterCount}
               </span>
             ) : (
@@ -409,7 +409,7 @@ function CostumesPage() {
                 )}
               >
                 {c.label}
-                <span className={cn('ml-1.5 font-mono text-[11px]', isActive ? 'opacity-75' : 'opacity-60')}>
+                <span className={cn('ml-1.5 font-mono text-[11px]', isActive ? 'opacity-80' : 'text-muted-foreground')}>
                   {c.count}
                 </span>
               </button>

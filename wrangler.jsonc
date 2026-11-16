@@ -23,6 +23,22 @@
       "bucket_name": "ai-pose-gallery-bucket"
     }
   ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "US_RELAY",
+        "class_name": "UsEgressRelay"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": [
+        "UsEgressRelay"
+      ]
+    }
+  ],
   "assets": {
     "directory": "./dist",
     "binding": "ASSETS",

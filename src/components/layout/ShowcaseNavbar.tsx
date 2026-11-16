@@ -7,6 +7,8 @@ import {
   MenuIcon,
   MoonIcon,
   PersonStandingIcon,
+  ShieldAlertIcon,
+  ShieldCheckIcon,
   ShirtIcon,
   SparklesIcon,
   SunIcon,
@@ -34,6 +36,9 @@ export function ShowcaseNavbar() {
   const {
     user,
     recipe,
+    safeMode,
+    toggleSafeMode,
+    platform,
     openAuthModal,
     openAccountModal,
   } = useStudio()
@@ -42,22 +47,23 @@ export function ShowcaseNavbar() {
 
   const selectedCount = [recipe.portrait, recipe.costume, recipe.pose].filter(Boolean).length
   const isStudio = active === '/studio'
+  const showSafeToggle = platform.allowUserNsfwUnlock
   const isDark =
     theme === 'dark' ||
     (theme === 'system' && typeof window !== 'undefined' && window.matchMedia('(prefers-color-scheme: dark)').matches)
 
   return (
-    <header className="sticky top-0 z-40 w-full border-b border-black/[0.06] bg-[#f5f2eb]/75 backdrop-blur-xl dark:border-white/[0.08] dark:bg-[#14141a]/75">
-      <div className="mx-auto flex h-15 w-full max-w-[1440px] items-center justify-between gap-3 px-4 sm:px-6">
+    <header className="sticky top-0 z-40 w-full border-b border-black/[0.06] bg-[#f7f6f2]/82 backdrop-blur-xl dark:border-white/[0.08] dark:bg-[#14141a]/80">
+      <div className="mx-auto flex h-14 w-full max-w-[1440px] items-center justify-between gap-2 px-3 sm:h-15 sm:gap-3 sm:px-6">
         {/* 左侧：品牌标识 + 桌面端纯文字导航 */}
-        <div className="flex items-center gap-6">
-          <div className="flex items-center gap-2.5">
+        <div className="flex min-w-0 items-center gap-4 lg:gap-6">
+          <div className="flex min-w-0 items-center gap-2 sm:gap-2.5">
             <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
               <SheetTrigger asChild>
                 <button
                   type="button"
                   aria-label="打开导航菜单"
-                  className="inline-flex size-9 items-center justify-center rounded-full border border-border bg-card text-foreground transition-colors hover:bg-muted lg:hidden"
+                  className="inline-flex size-8.5 shrink-0 items-center justify-center rounded-full border border-border bg-card text-foreground transition-colors hover:bg-muted sm:size-9 lg:hidden"
                 >
                   <MenuIcon className="size-4" />
                 </button>
@@ -107,21 +113,58 @@ export function ShowcaseNavbar() {
                   })}
                 </nav>
 
-                <div className="mt-6 border-t border-border px-2 pt-4">
-                  {user ? (
+                <div className="mt-6 space-y-2.5 border-t border-border px-2 pt-4">
+                  {showSafeToggle && (
                     <button
                       type="button"
                       onClick={() => {
                         setMobileOpen(false)
-                        openAccountModal('overview')
+                        toggleSafeMode()
                       }}
-                      className="flex w-full items-center justify-between rounded-xl border border-border bg-card px-3.5 py-2.5 text-xs font-semibold"
+                      className={`flex w-full items-center justify-between rounded-xl border px-3.5 py-2.5 text-xs font-semibold transition-colors ${
+                        safeMode
+                          ? 'border-emerald-600/30 bg-emerald-500/10 text-emerald-800 dark:text-emerald-300'
+                          : 'border-[#D9381E]/35 bg-[#D9381E]/10 text-[#B82914] dark:text-[#FF8566]'
+                      }`}
                     >
-                      <span className="truncate">{user.displayName}</span>
-                      <span className="font-mono text-[#B88300] dark:text-[#E5A918]">
-                        {user.creditBalance} 积分
+                      <span className="flex items-center gap-2">
+                        {safeMode ? <ShieldCheckIcon className="size-4" /> : <ShieldAlertIcon className="size-4" />}
+                        <span>{safeMode ? '安全模式 (SFW)' : '18+ 完整图库'}</span>
+                      </span>
+                      <span className="font-mono text-[11px]">
+                        {safeMode ? '点击解锁' : '点击隐藏'}
                       </span>
                     </button>
+                  )}
+
+                  {user ? (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setMobileOpen(false)
+                          openAccountModal('overview')
+                        }}
+                        className="flex w-full items-center justify-between rounded-xl border border-border bg-card px-3.5 py-2.5 text-xs font-semibold"
+                      >
+                        <span className="truncate">{user.displayName}</span>
+                        <span className="font-mono text-[#7A5200] dark:text-[#E5A918]">
+                          {user.creditBalance} 积分
+                        </span>
+                      </button>
+                      {user.role === 'admin' && (
+                        <Link
+                          to="/admin"
+                          onClick={() => setMobileOpen(false)}
+                          className="flex w-full items-center justify-between rounded-xl border border-border bg-card px-3.5 py-2.5 text-xs font-semibold text-foreground transition-colors hover:bg-muted"
+                        >
+                          <span className="flex items-center gap-2">
+                            <TerminalSquareIcon className="size-4" />
+                            <span>管理控制台</span>
+                          </span>
+                        </Link>
+                      )}
+                    </>
                   ) : (
                     <button
                       type="button"
@@ -139,9 +182,9 @@ export function ShowcaseNavbar() {
               </SheetContent>
             </Sheet>
 
-            <Link to="/" className="group flex items-center gap-2.5">
+            <Link to="/" className="group flex shrink-0 items-center gap-2 sm:gap-2.5">
               <BrandMark className="transition-transform duration-200 group-hover:scale-105 group-active:scale-95" />
-              <span className="font-mono text-sm font-bold tracking-tight text-foreground">
+              <span className="font-mono text-[13px] font-bold tracking-tight whitespace-nowrap text-foreground sm:text-sm">
                 CAST.DECK
               </span>
             </Link>
@@ -154,7 +197,7 @@ export function ShowcaseNavbar() {
                 <Link
                   key={item.to}
                   to={item.to}
-                  className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[13px] transition-colors ${
+                  className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[13px] whitespace-nowrap transition-colors ${
                     isActive
                       ? 'bg-muted font-medium text-foreground'
                       : 'text-muted-foreground hover:text-foreground'
@@ -162,7 +205,7 @@ export function ShowcaseNavbar() {
                 >
                   <span>{item.title}</span>
                   {item.count && (
-                    <span className="font-mono text-[11px] opacity-60">
+                    <span className="font-mono text-[11px] text-muted-foreground">
                       {item.count}
                     </span>
                   )}
@@ -172,14 +215,31 @@ export function ShowcaseNavbar() {
           </nav>
         </div>
 
-        {/* 右侧：日夜切换 + 用户积分/登录 + 管理员控制台 + 合成台 CTA */}
-        <div className="flex items-center gap-1.5 sm:gap-2">
+        {/* 右侧：内容安全切换 + 日夜切换 + 用户积分/登录 + 管理员控制台 + 合成台 CTA */}
+        <div className="flex shrink-0 items-center gap-1 sm:gap-2">
+          {showSafeToggle && (
+            <button
+              type="button"
+              onClick={toggleSafeMode}
+              title={safeMode ? '安全模式已开启（隐藏敏感内容），点击解锁完整图库' : '当前为完整图库，点击切回安全模式'}
+              aria-label={safeMode ? '安全模式 (SFW)，点击解锁完整图库' : '18+ 完整图库，点击切回安全模式'}
+              className={`inline-flex h-8 shrink-0 items-center justify-center gap-1 rounded-full border px-2 font-mono text-[11px] font-bold whitespace-nowrap transition-colors sm:h-9 sm:px-2.5 ${
+                safeMode
+                  ? 'border-emerald-600/30 bg-emerald-500/10 text-emerald-800 hover:bg-emerald-500/15 dark:text-emerald-300'
+                  : 'border-[#D9381E]/40 bg-[#D9381E]/12 text-[#B82914] hover:bg-[#D9381E]/18 dark:text-[#FF8566]'
+              }`}
+            >
+              {safeMode ? <ShieldCheckIcon className="size-3.5 shrink-0" /> : <ShieldAlertIcon className="size-3.5 shrink-0" />}
+              <span className="hidden sm:inline">{safeMode ? 'SFW' : '18+'}</span>
+            </button>
+          )}
+
           <button
             type="button"
             aria-label={isDark ? '切换到日间画廊模式' : '切换到暗房模式'}
             title={isDark ? '切换到日间画廊模式' : '切换到暗房模式'}
             onClick={() => setTheme(isDark ? 'light' : 'dark')}
-            className="inline-flex size-9 items-center justify-center rounded-full border border-border bg-card text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            className="inline-flex size-8 shrink-0 items-center justify-center rounded-full border border-border bg-card text-muted-foreground transition-colors hover:bg-muted hover:text-foreground sm:size-9"
           >
             {isDark ? <SunIcon className="size-4" /> : <MoonIcon className="size-4" />}
           </button>
@@ -190,7 +250,7 @@ export function ShowcaseNavbar() {
                 type="button"
                 onClick={() => openAccountModal('redeem')}
                 title="查看或兑换积分"
-                className="inline-flex h-9 items-center gap-1.5 rounded-full border border-[#E5A918]/45 bg-[#E5A918]/12 px-3 font-mono text-xs font-bold text-[#9A6B00] transition-colors hover:bg-[#E5A918]/20 dark:text-[#E5A918]"
+                className="inline-flex h-8 shrink-0 items-center gap-1 rounded-full border border-[#E5A918]/45 bg-[#E5A918]/12 px-2.5 font-mono text-xs font-bold whitespace-nowrap text-[#7A5200] transition-colors hover:bg-[#E5A918]/20 sm:h-9 sm:gap-1.5 sm:px-3 dark:text-[#E5A918]"
               >
                 <CoinsIcon className="size-3.5 shrink-0" />
                 <span>{user.creditBalance}</span>
@@ -201,7 +261,7 @@ export function ShowcaseNavbar() {
                 type="button"
                 onClick={() => openAccountModal('overview')}
                 title="个人账户与流水"
-                className="hidden h-9 max-w-[120px] items-center gap-1.5 rounded-full border border-border bg-card px-3 text-xs font-semibold text-foreground transition-colors hover:bg-muted sm:inline-flex"
+                className="hidden h-9 max-w-[120px] shrink-0 items-center gap-1.5 rounded-full border border-border bg-card px-3 text-xs font-semibold text-foreground transition-colors hover:bg-muted sm:inline-flex"
               >
                 <UserRoundIcon className="size-3.5 shrink-0 text-muted-foreground" />
                 <span className="truncate">{user.displayName}</span>
@@ -212,7 +272,7 @@ export function ShowcaseNavbar() {
                   to="/admin"
                   title="进入管理控制台"
                   aria-label="进入管理控制台"
-                  className="inline-flex size-9 items-center justify-center rounded-full border border-border bg-card text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                  className="hidden size-9 shrink-0 items-center justify-center rounded-full border border-border bg-card text-muted-foreground transition-colors hover:bg-muted hover:text-foreground sm:inline-flex"
                 >
                   <TerminalSquareIcon className="size-4" />
                 </Link>
@@ -222,21 +282,22 @@ export function ShowcaseNavbar() {
             <button
               type="button"
               onClick={() => openAuthModal('login')}
-              className="inline-flex h-9 items-center gap-1.5 rounded-full border border-border bg-card px-3 text-xs font-semibold text-foreground transition-colors hover:bg-muted"
+              className="inline-flex h-8 shrink-0 items-center gap-1 rounded-full border border-border bg-card px-2.5 text-xs font-semibold whitespace-nowrap text-foreground transition-colors hover:bg-muted sm:h-9 sm:gap-1.5 sm:px-3"
             >
-              <LogInIcon className="size-3.5" />
+              <LogInIcon className="hidden size-3.5 min-[380px]:inline" />
               <span>登录</span>
             </button>
           )}
 
           <Link
             to="/studio"
-            className={`inline-flex h-9 items-center gap-1.5 rounded-full bg-primary px-3.5 text-[13px] font-medium text-primary-foreground transition-all hover:opacity-90 active:scale-[0.97] sm:px-4 ${
+            className={`inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full bg-primary px-2.5 text-xs font-medium whitespace-nowrap text-primary-foreground transition-all hover:opacity-90 active:scale-[0.97] sm:h-9 sm:px-4 sm:text-[13px] ${
               isStudio ? 'ring-2 ring-ring' : ''
             }`}
           >
-            <SparklesIcon className="size-3.5" />
-            <span>{selectedCount > 0 ? `合成台 (${selectedCount}/3)` : '进入合成台'}</span>
+            <SparklesIcon className="size-3.5 shrink-0" />
+            <span className="sm:hidden">{selectedCount > 0 ? `合成 ${selectedCount}/3` : '合成台'}</span>
+            <span className="hidden sm:inline">{selectedCount > 0 ? `合成台 (${selectedCount}/3)` : '进入合成台'}</span>
           </Link>
         </div>
       </div>

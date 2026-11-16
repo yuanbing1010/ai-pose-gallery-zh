@@ -196,7 +196,7 @@ function PortraitsPage() {
         <div
           role="tablist"
           aria-label="人像画面分区"
-          className="grid grid-cols-3 divide-x divide-border overflow-hidden rounded-xl border border-border bg-card"
+          className="grid grid-cols-2 divide-x divide-y divide-border overflow-hidden rounded-xl border border-border bg-card [&>*:first-child]:col-span-2 sm:grid-cols-3 sm:divide-y-0 sm:[&>*:first-child]:col-span-1"
         >
           {(
             [
@@ -240,7 +240,7 @@ function PortraitsPage() {
       {/* 与服装库、姿势库统一的控制栏：搜索 (/) + 筛选 (F) + Top 10 切换 + 单行横向发长/发型带 */}
       <div className="space-y-3">
         <div className="flex flex-wrap items-center gap-2.5">
-          <div className="relative flex h-10 min-w-[220px] flex-1 items-center rounded-xl border border-border bg-card px-3.5 transition-colors focus-within:border-foreground/40">
+          <div className="relative flex h-10 min-w-[160px] flex-1 items-center rounded-xl border border-border bg-card px-3.5 transition-colors focus-within:border-foreground/40">
             <SearchIcon className="mr-2.5 size-4 shrink-0 text-muted-foreground" />
             <input
               ref={searchInputRef}
@@ -377,7 +377,7 @@ function PortraitsPage() {
                 )}
               >
                 {h.label}
-                <span className="ml-1.5 font-mono text-[11px] opacity-60">{h.count}</span>
+                <span className={cn('ml-1.5 font-mono text-[11px]', isActive ? 'opacity-80' : 'text-muted-foreground')}>{h.count}</span>
               </button>
             )
           })}
@@ -400,7 +400,7 @@ function PortraitsPage() {
                 )}
               >
                 {s.label}
-                <span className="ml-1.5 font-mono text-[11px] opacity-60">{s.count}</span>
+                <span className={cn('ml-1.5 font-mono text-[11px]', isActive ? 'opacity-80' : 'text-muted-foreground')}>{s.count}</span>
               </button>
             )
           })}

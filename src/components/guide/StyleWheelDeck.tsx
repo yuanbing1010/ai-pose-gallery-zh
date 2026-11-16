@@ -270,7 +270,7 @@ export function StyleWheelDeck() {
         <span aria-hidden="true" className="pointer-events-none absolute right-3.5 bottom-3.5 size-3 border-r border-b border-white/20" />
 
         <div className="relative z-20 flex w-full items-center justify-between gap-2">
-          <span className="inline-flex items-center gap-1.5 rounded-full bg-white/[0.07] px-2.5 py-0.5 font-mono text-[11px] font-medium text-zinc-300 ring-1 ring-white/10">
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-white/[0.07] px-2.5 py-0.5 font-mono text-xs font-medium text-zinc-300 ring-1 ring-white/10">
             <span className="size-1.5 rounded-full bg-zinc-500" />
             STYLE WHEEL // 0 种画风
           </span>
@@ -343,8 +343,8 @@ export function StyleWheelDeck() {
 
       {/* 顶部仪表栏 */}
       <div className="relative z-20 flex w-full items-center justify-between gap-2">
-        <span className="inline-flex items-center gap-1.5 rounded-full bg-white/[0.07] px-2.5 py-0.5 font-mono text-[11px] font-medium text-zinc-300 ring-1 ring-white/10">
-          <span className="size-1.5 animate-pulse rounded-full bg-[#E5A918]" />
+        <span className="inline-flex items-center gap-1.5 rounded-full bg-white/[0.07] px-2.5 py-0.5 font-mono text-xs font-medium text-zinc-300 ring-1 ring-white/10">
+          <span className="size-1.5 rounded-full bg-[#E5A918]" />
           STYLE WHEEL // {count} 种画风
         </span>
         <span className="font-mono text-[11px] tabular-nums text-zinc-400">
@@ -407,7 +407,7 @@ export function StyleWheelDeck() {
                 className="space-y-0.5"
               >
                 <div className="flex flex-wrap items-center justify-center gap-1.5">
-                  <span className="rounded bg-white/10 px-1.5 py-0.5 text-[10px] font-medium text-zinc-300">
+                  <span className="rounded bg-white/10 px-1.5 py-0.5 text-[11px] font-medium text-zinc-300">
                     {activeStyle.categoryLabel} · {activeStyle.subcategoryLabel}
                   </span>
                   <span className="truncate text-xs font-bold text-white">{activeStyle.label}</span>
@@ -415,13 +415,13 @@ export function StyleWheelDeck() {
                     type="button"
                     data-wheel-control
                     onClick={() => applyAndGo(activeIndex)}
-                    className="inline-flex shrink-0 items-center gap-0.5 rounded-full bg-[#D9381E] px-2 py-0.5 text-[10px] font-semibold text-white transition-colors hover:bg-[#C23018]"
+                    className="inline-flex shrink-0 items-center gap-0.5 rounded-full bg-[#D9381E] px-2.5 py-0.5 text-[11px] font-semibold text-white transition-colors hover:bg-[#C23018]"
                   >
                     <span>试用</span>
-                    <ArrowRightIcon className="size-2.5" />
+                    <ArrowRightIcon className="size-3" />
                   </button>
                 </div>
-                <p className="truncate text-[11px] text-zinc-400">
+                <p className="truncate text-xs text-zinc-300">
                   {activeStyle.tagline || '左右拖动轮盘浏览全部画风 · 点击主卡直接试用'}
                 </p>
               </motion.div>

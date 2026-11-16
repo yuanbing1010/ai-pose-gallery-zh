@@ -54,6 +54,25 @@ export const Route = createFileRoute('/poses')({
   component: PosesPage,
 })
 
+function useMasonryColumns() {
+  const [cols, setCols] = useState(() => {
+    if (typeof window === 'undefined') return 2
+    if (window.innerWidth >= 1024) return 5
+    if (window.innerWidth >= 768) return 4
+    if (window.innerWidth >= 640) return 3
+    return 2
+  })
+  useEffect(() => {
+    const update = () => {
+      const w = window.innerWidth
+      setCols(w >= 1024 ? 5 : w >= 768 ? 4 : w >= 640 ? 3 : 2)
+    }
+    window.addEventListener('resize', update, { passive: true })
+    return () => window.removeEventListener('resize', update)
+  }, [])
+  return cols
+}
+
 function PosesPage() {
   const { data } = useSuspenseQuery(posesQuery)
   const { recipe, togglePose, safeMode, poseDepthMode, setPoseDepthMode } = useStudio()
@@ -77,10 +96,6 @@ function PosesPage() {
 
   const activeLine = safeMode && line && isNsfwPoseSystem(line) ? '' : line
 
-  const baseItems = useMemo(
-    () => (safeMode ? data.items.filter((x) => !isNsfwPose(x)) : data.items),
-    [data.items, safeMode]
-  )
   const baseGroups = useMemo(
     () => (safeMode ? data.groups.filter((g) => !isNsfwPose(g)) : data.groups),
     [data.groups, safeMode]
@@ -204,6 +219,32 @@ function PosesPage() {
   }
 
   const totalCount = filteredGroups.length
+  const matchedImageCount = useMemo(
+    () => filteredGroups.reduce((sum, g) => sum + g.order.length, 0),
+    [filteredGroups]
+  )
+  const masonryCols = useMasonryColumns()
+  const distributedCols = useMemo(() => {
+    const columns: Array<Array<{ group: PoseGroup; gIdx: number }>> = Array.from(
+      { length: masonryCols },
+      () => []
+    )
+    const heights = new Array<number>(masonryCols).fill(0)
+    const visible = filteredGroups.slice(0, shown)
+    for (let gIdx = 0; gIdx < visible.length; gIdx++) {
+      const group = visible[gIdx]
+      const item = angle && group.angles[angle] ? group.angles[angle] : group.order[0]
+      const bounds = getPoseFrameBounds(item.id)
+      const ratio = bounds.cropH / POSE_THUMB_WIDTH + 0.34
+      let minCol = 0
+      for (let c = 1; c < masonryCols; c++) {
+        if (heights[c] < heights[minCol]) minCol = c
+      }
+      columns[minCol].push({ group, gIdx })
+      heights[minCol] += ratio
+    }
+    return columns
+  }, [filteredGroups, shown, masonryCols, angle])
 
   const lineShortLabel = (label: string) =>
     label
@@ -225,14 +266,14 @@ function PosesPage() {
           </h1>
           <p className="text-xs text-muted-foreground sm:text-sm">
             5 视角 3D 素体白模与深度图参考 · 当前匹配{' '}
-            <span className="font-mono font-medium text-foreground">{totalCount.toLocaleString('zh-CN')}</span> 组（{baseItems.length.toLocaleString('zh-CN')} 张）
+            <span className="font-mono font-medium text-foreground">{totalCount.toLocaleString('zh-CN')}</span> 组（{matchedImageCount.toLocaleString('zh-CN')} 张）
           </p>
         </div>
 
         <div
           role="tablist"
           aria-label="姿势体系板块"
-          className="grid auto-cols-fr grid-flow-col divide-x divide-border overflow-hidden rounded-xl border border-border bg-card"
+          className="grid grid-cols-2 divide-x divide-y divide-border overflow-hidden rounded-xl border border-border bg-card [&>*:first-child:nth-last-child(odd)]:col-span-2 sm:auto-cols-fr sm:grid-flow-col sm:grid-cols-none sm:divide-y-0 sm:[&>*:first-child:nth-last-child(odd)]:col-span-1"
         >
           <button
             type="button"
@@ -293,7 +334,7 @@ function PosesPage() {
       {/* 与服装库统一的控制栏：搜索 (/) + 筛选 (F) + 白模/深度切换 + 单行分类带 */}
       <div className="space-y-3">
         <div className="flex flex-wrap items-center gap-2.5">
-          <div className="relative flex h-10 min-w-[220px] flex-1 items-center rounded-xl border border-border bg-card px-3.5 transition-colors focus-within:border-foreground/40">
+          <div className="relative flex h-10 min-w-[160px] flex-1 items-center rounded-xl border border-border bg-card px-3.5 transition-colors focus-within:border-foreground/40">
             <SearchIcon className="mr-2.5 size-4 shrink-0 text-muted-foreground" />
             <input
               ref={searchInputRef}
@@ -437,7 +478,7 @@ function PosesPage() {
                 )}
               >
                 {c.label}
-                <span className={cn('ml-1.5 font-mono text-[11px]', isActive ? 'opacity-75' : 'opacity-60')}>
+                <span className={cn('ml-1.5 font-mono text-[11px]', isActive ? 'opacity-80' : 'text-muted-foreground')}>
                   {c.count}
                 </span>
               </button>
@@ -450,69 +491,74 @@ function PosesPage() {
       {totalCount === 0 ? (
         <EmptyState title="没有找到匹配的姿势" description="试试更换搜索词或重置筛选条件" />
       ) : (
-        <div className="columns-2 gap-5 space-y-6 sm:columns-3 md:columns-4 lg:columns-5">
-          {filteredGroups.slice(0, shown).map((group, gIdx) => {
-            const item = getActiveGroupItem(group)
-            const picked = recipe.pose?.id === item.id && Boolean(recipe.pose?.useDepth) === poseDepthMode
-            const accent = getPoseAccent(group.category, group.system, gIdx)
-            const isFlipped = Boolean(flippedIds[group.key])
-            const bounds = getPoseFrameBounds(item.id)
-            return (
-              <GalleryHoloCard
-                key={group.key}
-                title={group.name}
-                index={gIdx % 60}
-                picked={picked}
-                flipped={isFlipped}
-                accent={accent}
-                flipAriaLabel="翻转查看深度图"
-                onFlipToggle={() => setFlippedIds((prev) => ({ ...prev, [group.key]: !prev[group.key] }))}
-                onPickToggle={() => togglePose(item)}
-                onOpenViewer={() => openViewer({ groupIndex: gIdx, item })}
-                media={
-                  <div
-                    style={{ aspectRatio: `${POSE_THUMB_WIDTH} / ${bounds.cropH}` }}
-                    className={cn(
-                      'relative w-full overflow-hidden transition-[aspect-ratio] duration-300',
-                      poseDepthMode ? 'bg-[#2B2B32]' : 'bg-white'
-                    )}
-                  >
-                    <img
-                      src={`/${poseThumbPath(item, poseDepthMode)}`}
-                      alt={group.name}
-                      loading="lazy"
-                      style={{
-                        position: 'absolute',
-                        left: 0,
-                        top: `${-(bounds.y1 / bounds.cropH) * 100}%`,
-                        width: '100%',
-                        height: `${(POSE_THUMB_HEIGHT / bounds.cropH) * 100}%`,
-                        maxWidth: 'none',
-                      }}
-                      className="pointer-events-none block select-none object-cover"
-                    />
-                  </div>
-                }
-                backMedia={
-                  <div
-                    className={cn(
-                      'relative flex h-full w-full items-center justify-center overflow-hidden rounded-xl',
-                      !poseDepthMode ? 'bg-[#2B2B32]' : 'bg-white'
-                    )}
-                  >
-                    <img
-                      src={`/${poseThumbPath(item, !poseDepthMode)}`}
-                      alt={group.name}
-                      className="h-full w-full object-contain"
-                    />
-                    <span className="pointer-events-none absolute top-2 left-2 rounded-full bg-black/65 px-2 py-0.5 text-[10px] font-semibold text-white backdrop-blur-xs">
-                      {!poseDepthMode ? '深度图' : '素体白模'}
-                    </span>
-                  </div>
-                }
-              />
-            )
-          })}
+        <div className="grid grid-cols-2 items-start gap-5 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
+          {distributedCols.map((colItems, colIdx) => (
+            <div key={colIdx} className="flex flex-col gap-6">
+              {colItems.map(({ group, gIdx }) => {
+                const item = getActiveGroupItem(group)
+                const isFlipped = Boolean(flippedIds[group.key])
+                const activeLayerIsDepth = isFlipped ? !poseDepthMode : poseDepthMode
+                const picked = recipe.pose?.id === item.id && Boolean(recipe.pose?.useDepth) === activeLayerIsDepth
+                const accent = getPoseAccent(group.category, group.system, gIdx)
+                const bounds = getPoseFrameBounds(item.id)
+                return (
+                  <GalleryHoloCard
+                    key={group.key}
+                    title={group.name}
+                    index={gIdx % 60}
+                    picked={picked}
+                    flipped={isFlipped}
+                    accent={accent}
+                    flipAriaLabel="翻转查看深度图"
+                    onFlipToggle={() => setFlippedIds((prev) => ({ ...prev, [group.key]: !prev[group.key] }))}
+                    onPickToggle={() => togglePose({ ...item, useDepth: activeLayerIsDepth })}
+                    onOpenViewer={() => openViewer({ groupIndex: gIdx, item })}
+                    media={
+                      <div
+                        style={{ aspectRatio: `${POSE_THUMB_WIDTH} / ${bounds.cropH}` }}
+                        className={cn(
+                          'relative w-full overflow-hidden transition-[aspect-ratio] duration-300',
+                          poseDepthMode ? 'bg-[#2B2B32]' : 'bg-white'
+                        )}
+                      >
+                        <img
+                          src={`/${poseThumbPath(item, poseDepthMode)}`}
+                          alt={group.name}
+                          loading="lazy"
+                          style={{
+                            position: 'absolute',
+                            left: 0,
+                            top: `${-(bounds.y1 / bounds.cropH) * 100}%`,
+                            width: '100%',
+                            height: `${(POSE_THUMB_HEIGHT / bounds.cropH) * 100}%`,
+                            maxWidth: 'none',
+                          }}
+                          className="pointer-events-none block select-none object-cover"
+                        />
+                      </div>
+                    }
+                    backMedia={
+                      <div
+                        className={cn(
+                          'relative flex h-full w-full items-center justify-center overflow-hidden rounded-xl',
+                          !poseDepthMode ? 'bg-[#2B2B32]' : 'bg-white'
+                        )}
+                      >
+                        <img
+                          src={`/${poseThumbPath(item, !poseDepthMode)}`}
+                          alt={group.name}
+                          className="h-full w-full object-contain"
+                        />
+                        <span className="pointer-events-none absolute top-2 left-2 rounded-full bg-black/70 px-2 py-0.5 text-[11px] font-semibold text-white backdrop-blur-xs">
+                          {!poseDepthMode ? '深度图' : '素体白模'}
+                        </span>
+                      </div>
+                    }
+                  />
+                )
+              })}
+            </div>
+          ))}
         </div>
       )}
 

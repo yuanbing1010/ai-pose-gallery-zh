@@ -4,6 +4,8 @@ import {
   AlertTriangleIcon,
   ArrowLeftIcon,
   ArrowRightIcon,
+  EyeIcon,
+  EyeOffIcon,
   LoaderCircleIcon,
   LockIcon,
   RefreshCwIcon,
@@ -28,6 +30,8 @@ function AdminLoginPage() {
   const [account, setAccount] = useState('')
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
 
@@ -142,7 +146,7 @@ function AdminLoginPage() {
                 <div className="space-y-1.5">
                   <div className="font-bold">后端服务未连通</div>
                   <div>{connectError}</div>
-                  <div className="font-mono text-[11px] opacity-85">
+                  <div className="font-mono text-xs">
                     本地开发请停止仅前端进程后运行：<code>pnpm dev</code>（或另开终端运行{' '}
                     <code>pnpm dev:worker</code>）。
                   </div>
@@ -192,7 +196,7 @@ function AdminLoginPage() {
                     value={account}
                     onChange={(e) => setAccount(e.target.value)}
                     placeholder={needsSetup ? '例如 admin（3~32 位字母数字）' : '管理员用户名或邮箱'}
-                    className="h-10 w-full rounded-none border border-zinc-300 bg-transparent px-3 font-mono text-xs outline-none focus:border-zinc-950 dark:border-zinc-700 dark:focus:border-zinc-100"
+                    className="h-10 w-full rounded-none border border-zinc-300 bg-transparent px-3 font-mono text-xs placeholder:text-zinc-500 outline-none focus:border-zinc-950 dark:border-zinc-700 dark:placeholder:text-zinc-400 dark:focus:border-zinc-100"
                   />
                 </div>
 
@@ -200,15 +204,25 @@ function AdminLoginPage() {
                   <label htmlFor="admin-pass" className="block text-xs font-bold">
                     02. 登录密码
                   </label>
-                  <input
-                    id="admin-pass"
-                    type="password"
-                    autoComplete={needsSetup ? 'new-password' : 'current-password'}
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    placeholder="至少 6 位字符"
-                    className="h-10 w-full rounded-none border border-zinc-300 bg-transparent px-3 font-mono text-xs outline-none focus:border-zinc-950 dark:border-zinc-700 dark:focus:border-zinc-100"
-                  />
+                  <div className="relative">
+                    <input
+                      id="admin-pass"
+                      type={showPassword ? 'text' : 'password'}
+                      autoComplete={needsSetup ? 'new-password' : 'current-password'}
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      placeholder="至少 6 位字符"
+                      className="h-10 w-full rounded-none border border-zinc-300 bg-transparent px-3 pr-10 font-mono text-xs placeholder:text-zinc-500 outline-none focus:border-zinc-950 dark:border-zinc-700 dark:placeholder:text-zinc-400 dark:focus:border-zinc-100"
+                    />
+                    <button
+                      type="button"
+                      aria-label={showPassword ? '隐藏密码' : '显示密码'}
+                      onClick={() => setShowPassword((v) => !v)}
+                      className="absolute top-1/2 right-2 -translate-y-1/2 p-1 text-zinc-500 hover:text-zinc-950 dark:text-zinc-400 dark:hover:text-white"
+                    >
+                      {showPassword ? <EyeOffIcon className="size-3.5" /> : <EyeIcon className="size-3.5" />}
+                    </button>
+                  </div>
                 </div>
 
                 {needsSetup && (
@@ -216,15 +230,25 @@ function AdminLoginPage() {
                     <label htmlFor="admin-pass-confirm" className="block text-xs font-bold">
                       03. 确认密码
                     </label>
-                    <input
-                      id="admin-pass-confirm"
-                      type="password"
-                      autoComplete="new-password"
-                      value={confirmPassword}
-                      onChange={(e) => setConfirmPassword(e.target.value)}
-                      placeholder="再次输入密码"
-                      className="h-10 w-full rounded-none border border-zinc-300 bg-transparent px-3 font-mono text-xs outline-none focus:border-zinc-950 dark:border-zinc-700 dark:focus:border-zinc-100"
-                    />
+                    <div className="relative">
+                      <input
+                        id="admin-pass-confirm"
+                        type={showConfirmPassword ? 'text' : 'password'}
+                        autoComplete="new-password"
+                        value={confirmPassword}
+                        onChange={(e) => setConfirmPassword(e.target.value)}
+                        placeholder="再次输入密码"
+                        className="h-10 w-full rounded-none border border-zinc-300 bg-transparent px-3 pr-10 font-mono text-xs placeholder:text-zinc-500 outline-none focus:border-zinc-950 dark:border-zinc-700 dark:placeholder:text-zinc-400 dark:focus:border-zinc-100"
+                      />
+                      <button
+                        type="button"
+                        aria-label={showConfirmPassword ? '隐藏确认密码' : '显示确认密码'}
+                        onClick={() => setShowConfirmPassword((v) => !v)}
+                        className="absolute top-1/2 right-2 -translate-y-1/2 p-1 text-zinc-500 hover:text-zinc-950 dark:text-zinc-400 dark:hover:text-white"
+                      >
+                        {showConfirmPassword ? <EyeOffIcon className="size-3.5" /> : <EyeIcon className="size-3.5" />}
+                      </button>
+                    </div>
                   </div>
                 )}
               </div>

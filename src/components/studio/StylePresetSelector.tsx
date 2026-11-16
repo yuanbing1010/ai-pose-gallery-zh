@@ -125,10 +125,10 @@ export function StylePresetSelector({
           <div className="flex flex-wrap items-center gap-1.5">
             <span
               className={cn(
-                'inline-flex shrink-0 items-center rounded-md px-1.5 py-0.5 text-[10px] font-bold leading-none',
+                'inline-flex shrink-0 items-center rounded-md px-1.5 py-0.5 text-[11px] font-bold leading-none',
                 isNone
                   ? 'bg-muted text-muted-foreground'
-                  : 'bg-[#D9381E]/10 text-[#C23018] dark:bg-[#D9381E]/20 dark:text-[#FF7A59]'
+                  : 'bg-[#D9381E]/10 text-[#B82914] dark:bg-[#D9381E]/20 dark:text-[#FF7A59]'
               )}
             >
               {categoryBadge}
@@ -160,12 +160,12 @@ export function StylePresetSelector({
                 className={cn(
                   'inline-flex h-6 shrink-0 items-center gap-1 rounded-full border px-2 text-[11px] transition-colors active:scale-95',
                   belongsHere
-                    ? 'border-[#D9381E]/55 bg-[#D9381E]/10 font-bold text-[#C23018] dark:text-[#FF7A59]'
+                    ? 'border-[#D9381E]/55 bg-[#D9381E]/10 font-bold text-[#B82914] dark:text-[#FF7A59]'
                     : 'border-border/80 bg-[#FAF8F4] font-medium text-muted-foreground hover:border-foreground/40 hover:text-foreground dark:bg-muted/35'
                 )}
               >
                 <span>{cat.label}</span>
-                <span className="font-mono text-[10px] opacity-70">{cat.count}</span>
+                <span className="font-mono text-[11px] text-muted-foreground">{cat.count}</span>
               </button>
             )
           })}

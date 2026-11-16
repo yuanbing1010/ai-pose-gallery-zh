@@ -3,6 +3,8 @@ import { Link, useLocation } from '@tanstack/react-router'
 import { motion } from 'motion/react'
 import {
   ArrowRightIcon,
+  ChevronDownIcon,
+  ChevronUpIcon,
   DicesIcon,
   LoaderCircleIcon,
   PersonStandingIcon,
@@ -77,11 +79,13 @@ export function RecipeDock() {
   })
   const [ctaIgniteKey, setCtaIgniteKey] = useState(0)
   const [diceSpin, setDiceSpin] = useState(0)
+  const [minimized, setMinimized] = useState(false)
 
   const extraCount = (recipe.extraImages || []).length
   const coreSlotsFilled = [recipe.portrait, recipe.costume, recipe.pose].filter(Boolean).length
   const hasAnyItem = coreSlotsFilled > 0 || extraCount > 0
   const isFullReady = coreSlotsFilled === 3
+  const isHome = pathname === '/'
 
   // 监听单张卡落地撞击事件：每选中/飞落一张即刻独立抖动 + 星芒迸发
   useEffect(() => {
@@ -169,25 +173,83 @@ export function RecipeDock() {
     })
   }
 
+  if (!isHome && minimized) {
+    return (
+      <div className="sticky bottom-[max(0.75rem,env(safe-area-inset-bottom))] z-30 mx-auto mt-2 w-fit max-w-[calc(100vw-1rem)] px-2 sm:max-w-[calc(100vw-1.5rem)]">
+        <div className="md-glass flex items-center gap-1.5 rounded-full px-2 py-1.5 shadow-sm">
+          <button
+            type="button"
+            onClick={() => setMinimized(false)}
+            aria-label="展开底部配方栏"
+            title="展开底部配方栏"
+            className="inline-flex h-8 items-center gap-2 rounded-full bg-muted/85 px-3 text-xs font-semibold text-foreground transition-colors hover:bg-muted"
+          >
+            <span className="flex items-center gap-1" aria-hidden="true">
+              <span className={cn('size-2 rounded-full', recipe.pose ? 'bg-[#D9381E]' : 'bg-black/20 dark:bg-white/25')} />
+              <span className={cn('size-2 rounded-full', recipe.costume ? 'bg-[#19857B]' : 'bg-black/20 dark:bg-white/25')} />
+              <span className={cn('size-2 rounded-full', recipe.portrait ? 'bg-[#E5A918]' : 'bg-black/20 dark:bg-white/25')} />
+            </span>
+            <span className="whitespace-nowrap">配方 {coreSlotsFilled}/3</span>
+            <ChevronUpIcon className="size-3.5 text-muted-foreground" />
+          </button>
+
+          <button
+            type="button"
+            onClick={handleRandom}
+            aria-label="随机抽一套配方"
+            title="随机抽一套配方"
+            className="inline-flex size-8 items-center justify-center rounded-full border border-border bg-card text-foreground transition-colors hover:bg-muted"
+          >
+            <DicesIcon className="size-3.5 text-[#E5A918]" />
+          </button>
+
+          <Link
+            to="/studio"
+            data-dock-cta
+            className={cn(
+              'inline-flex h-8 items-center gap-1 rounded-full px-3 text-xs font-bold whitespace-nowrap transition-colors',
+              isFullReady ? 'bg-[#D9381E] text-white hover:bg-[#C23018]' : 'bg-primary text-primary-foreground hover:opacity-90'
+            )}
+          >
+            <span>{isGenerating ? '绘制中…' : '去合成'}</span>
+            <ArrowRightIcon className="size-3" />
+          </Link>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <motion.div
       initial={{ opacity: 0, scale: 0.985 }}
       animate={{ opacity: 1, scale: 1 }}
       transition={{ duration: 0.22, ease: [0.2, 0.8, 0.2, 1] }}
       className={
-        pathname === '/'
-          ? 'z-30 mx-auto w-fit max-w-[calc(100vw-1rem)] shrink-0 px-2 pb-3 sm:max-w-[calc(100vw-1.5rem)]'
-          : 'sticky bottom-[max(0.85rem,env(safe-area-inset-bottom))] z-30 mx-auto mt-2 w-fit max-w-[calc(100vw-1rem)] px-2 sm:max-w-[calc(100vw-1.5rem)] [@media(max-height:30rem)]:static'
+        isHome
+          ? 'z-30 mx-auto w-fit max-w-[calc(100vw-0.75rem)] shrink-0 px-1.5 pb-2.5 sm:max-w-[calc(100vw-1.5rem)] sm:px-2 sm:pb-3'
+          : 'sticky bottom-[max(0.75rem,env(safe-area-inset-bottom))] z-30 mx-auto mt-2 w-fit max-w-[calc(100vw-0.75rem)] px-1.5 sm:max-w-[calc(100vw-1.5rem)] sm:px-2 [@media(max-height:30rem)]:static'
       }
     >
       <div
         ref={dockGlassRef}
         data-impeccable-ignore="nested-cards"
         className={cn(
-          'md-glass relative overflow-visible rounded-[28px] p-2.5 text-foreground transition-shadow duration-300 sm:px-3.5 sm:py-3',
+          'md-glass relative overflow-visible rounded-[24px] p-2 text-foreground transition-shadow duration-300 sm:rounded-[28px] sm:px-3.5 sm:py-3',
           isFullReady && 'ring-1 ring-[#D9381E]/25'
         )}
       >
+        {!isHome && (
+          <button
+            type="button"
+            onClick={() => setMinimized(true)}
+            aria-label="收起底部配方栏"
+            title="收起底部配方栏"
+            className="absolute -top-2.5 right-3 z-20 inline-flex size-6 items-center justify-center rounded-full border border-border bg-card text-muted-foreground shadow-xs transition-colors hover:bg-muted hover:text-foreground"
+          >
+            <ChevronDownIcon className="size-3.5" />
+          </button>
+        )}
+
         {/* 底部极细充能进度条 */}
         <div className="pointer-events-none absolute inset-x-5 bottom-0 h-[2px] overflow-hidden rounded-b-[28px] bg-border/80">
           <motion.div
@@ -200,9 +262,9 @@ export function RecipeDock() {
           />
         </div>
 
-        <div className="flex flex-col items-stretch gap-2.5 sm:flex-row sm:items-center sm:gap-3.5">
+        <div className="flex flex-row items-center gap-2 sm:gap-3.5">
           {/* 三张纯图像配方卡槽 */}
-          <div className="mx-auto flex items-center gap-2 rounded-2xl bg-muted/75 p-1.5 sm:mx-0 sm:gap-2.5">
+          <div className="flex shrink-0 items-center gap-1.5 rounded-xl bg-muted/75 p-1 sm:gap-2.5 sm:rounded-2xl sm:p-1.5">
             {/* Slot 1: Pose */}
             <div
               data-dock-slot="pose"
@@ -226,7 +288,7 @@ export function RecipeDock() {
                     }
                     aria-label={`姿势参考：${recipe.pose.姿势名称}，点击前往姿势库更换`}
                     className={cn(
-                      'block h-[76px] w-[58px] overflow-hidden rounded-xl border border-[#D9381E]/55 shadow-xs ring-1 ring-[#D9381E]/30 transition-all hover:scale-[1.03] hover:ring-[#D9381E]/75 sm:h-[92px] sm:w-[70px]',
+                      'block h-[58px] w-[44px] overflow-hidden rounded-lg border border-[#D9381E]/55 shadow-xs ring-1 ring-[#D9381E]/30 transition-all hover:scale-[1.03] hover:ring-[#D9381E]/75 sm:h-[92px] sm:w-[70px] sm:rounded-xl',
                       recipe.pose.useDepth ? 'bg-[#2B2B32]' : 'bg-white'
                     )}
                   >
@@ -243,7 +305,7 @@ export function RecipeDock() {
                       title="切换白模或深度图"
                       aria-label={`切换白模或深度图，当前为${recipe.pose.useDepth ? '深度图' : '白模'}`}
                       className={cn(
-                        'absolute bottom-1 left-1 z-10 inline-flex h-4.5 items-center rounded-md px-1.5 font-mono text-[10px] font-bold leading-none shadow-xs backdrop-blur-xs transition-colors',
+                        'absolute bottom-0.5 left-0.5 z-10 inline-flex h-4.5 items-center rounded-md px-1 font-mono text-[11px] font-bold leading-none shadow-xs backdrop-blur-xs transition-colors sm:bottom-1 sm:left-1 sm:px-1.5',
                         recipe.pose.useDepth
                           ? 'bg-[#D9381E] text-white'
                           : 'border border-black/15 bg-white/90 text-zinc-900 hover:bg-white'
@@ -267,9 +329,9 @@ export function RecipeDock() {
                   to="/poses"
                   title="选择姿势参考图"
                   aria-label="选择姿势参考图"
-                  className="flex h-[76px] w-[58px] flex-col items-center justify-center gap-1 rounded-xl border border-dashed border-border/90 bg-card/45 text-muted-foreground transition-colors hover:border-[#D9381E]/65 hover:bg-card/85 hover:text-foreground sm:h-[92px] sm:w-[70px]"
+                  className="flex h-[58px] w-[44px] flex-col items-center justify-center gap-0.5 rounded-lg border border-dashed border-border/90 bg-card/45 text-muted-foreground transition-colors hover:border-[#D9381E]/65 hover:bg-card/85 hover:text-foreground sm:h-[92px] sm:w-[70px] sm:gap-1 sm:rounded-xl"
                 >
-                  <PersonStandingIcon className="size-5 text-[#D9381E]" />
+                  <PersonStandingIcon className="size-4 text-[#D9381E] sm:size-5" />
                   <span className="text-[11px] font-medium leading-none">姿势</span>
                 </Link>
               )}
@@ -293,7 +355,7 @@ export function RecipeDock() {
                     to="/costumes"
                     title={`${recipe.costume.服装名称} · 点击前往服装库更换`}
                     aria-label={`穿搭参考：${recipe.costume.服装名称}，点击前往服装库更换`}
-                    className="block h-[76px] w-[58px] overflow-hidden rounded-xl border border-[#19857B]/55 bg-white shadow-xs ring-1 ring-[#19857B]/30 transition-all hover:scale-[1.03] hover:ring-[#19857B]/75 sm:h-[92px] sm:w-[70px] dark:bg-zinc-900"
+                    className="block h-[58px] w-[44px] overflow-hidden rounded-lg border border-[#19857B]/55 bg-white shadow-xs ring-1 ring-[#19857B]/30 transition-all hover:scale-[1.03] hover:ring-[#19857B]/75 sm:h-[92px] sm:w-[70px] sm:rounded-xl dark:bg-zinc-900"
                   >
                     <img
                       src={referenceImageUrl(recipe.costume.缩略图)}
@@ -316,9 +378,9 @@ export function RecipeDock() {
                   to="/costumes"
                   title="选择穿搭参考图"
                   aria-label="选择穿搭参考图"
-                  className="flex h-[76px] w-[58px] flex-col items-center justify-center gap-1 rounded-xl border border-dashed border-border/90 bg-card/45 text-muted-foreground transition-colors hover:border-[#19857B]/65 hover:bg-card/85 hover:text-foreground sm:h-[92px] sm:w-[70px]"
+                  className="flex h-[58px] w-[44px] flex-col items-center justify-center gap-0.5 rounded-lg border border-dashed border-border/90 bg-card/45 text-muted-foreground transition-colors hover:border-[#19857B]/65 hover:bg-card/85 hover:text-foreground sm:h-[92px] sm:w-[70px] sm:gap-1 sm:rounded-xl"
                 >
-                  <ShirtIcon className="size-5 text-[#19857B]" />
+                  <ShirtIcon className="size-4 text-[#19857B] sm:size-5" />
                   <span className="text-[11px] font-medium leading-none">穿搭</span>
                 </Link>
               )}
@@ -342,7 +404,7 @@ export function RecipeDock() {
                     to="/portraits"
                     title={`${recipe.portrait.发型名称} · 点击前往人像库更换`}
                     aria-label={`人像参考：${recipe.portrait.发型名称}，点击前往人像库更换`}
-                    className="block h-[76px] w-[58px] overflow-hidden rounded-xl border border-[#E5A918]/55 bg-card shadow-xs ring-1 ring-[#E5A918]/30 transition-all hover:scale-[1.03] hover:ring-[#E5A918]/75 sm:h-[92px] sm:w-[70px]"
+                    className="block h-[58px] w-[44px] overflow-hidden rounded-lg border border-[#E5A918]/55 bg-card shadow-xs ring-1 ring-[#E5A918]/30 transition-all hover:scale-[1.03] hover:ring-[#E5A918]/75 sm:h-[92px] sm:w-[70px] sm:rounded-xl"
                   >
                     <img
                       src={referenceImageUrl(recipe.portrait.缩略图)}
@@ -365,9 +427,9 @@ export function RecipeDock() {
                   to="/portraits"
                   title="选择人像参考图"
                   aria-label="选择人像参考图"
-                  className="flex h-[76px] w-[58px] flex-col items-center justify-center gap-1 rounded-xl border border-dashed border-border/90 bg-card/45 text-muted-foreground transition-colors hover:border-[#E5A918]/65 hover:bg-card/85 hover:text-foreground sm:h-[92px] sm:w-[70px]"
+                  className="flex h-[58px] w-[44px] flex-col items-center justify-center gap-0.5 rounded-lg border border-dashed border-border/90 bg-card/45 text-muted-foreground transition-colors hover:border-[#E5A918]/65 hover:bg-card/85 hover:text-foreground sm:h-[92px] sm:w-[70px] sm:gap-1 sm:rounded-xl"
                 >
-                  <UserRoundIcon className="size-5 text-[#E5A918]" />
+                  <UserRoundIcon className="size-4 text-[#E5A918] sm:size-5" />
                   <span className="text-[11px] font-medium leading-none">人像</span>
                 </Link>
               )}
@@ -375,12 +437,12 @@ export function RecipeDock() {
           </div>
 
           {/* 右侧上下两行操作区：上排整理配方（随机 + 清空），下排主 CTA（立即合成） */}
-          <div className="flex flex-col justify-center gap-1.5 sm:min-w-[216px] sm:gap-2">
+          <div className="flex min-w-0 flex-1 flex-col justify-center gap-1.5 sm:min-w-[216px] sm:gap-2">
             <div className="flex items-center gap-1.5">
               <button
                 type="button"
                 onClick={handleRandom}
-                className="inline-flex h-9 flex-1 items-center justify-center gap-1.5 rounded-full border border-border bg-card px-3.5 text-xs font-semibold text-foreground transition-colors hover:bg-muted active:scale-[0.97] sm:h-10"
+                className="inline-flex h-7 flex-1 items-center justify-center gap-1 rounded-full border border-border bg-card px-2.5 text-xs font-semibold whitespace-nowrap text-foreground transition-colors hover:bg-muted active:scale-[0.97] sm:h-10 sm:gap-1.5 sm:px-3.5"
               >
                 <motion.span
                   key={diceSpin}
@@ -399,7 +461,7 @@ export function RecipeDock() {
                   title="清空全部参考图"
                   aria-label="清空全部参考图"
                   onClick={clearRecipe}
-                  className="inline-flex h-9 shrink-0 items-center justify-center gap-1 rounded-full border border-border bg-card px-3 text-xs font-medium text-muted-foreground transition-colors hover:border-destructive/40 hover:bg-destructive/10 hover:text-destructive active:scale-[0.97] sm:h-10"
+                  className="inline-flex h-7 shrink-0 items-center justify-center gap-1 rounded-full border border-border bg-card px-2 text-xs font-medium whitespace-nowrap text-muted-foreground transition-colors hover:border-destructive/40 hover:bg-destructive/10 hover:text-destructive active:scale-[0.97] sm:h-10 sm:px-3"
                 >
                   <Trash2Icon className="size-3.5" />
                   <span>清空</span>
@@ -421,7 +483,7 @@ export function RecipeDock() {
                 to="/studio"
                 data-dock-cta
                 className={cn(
-                  'group relative inline-flex h-10 w-full items-center justify-center gap-1.5 overflow-hidden rounded-full px-4 text-xs font-bold whitespace-nowrap transition-all active:scale-[0.98] sm:h-11 sm:px-5 sm:text-[13px]',
+                  'group relative inline-flex h-8 w-full items-center justify-center gap-1.5 overflow-hidden rounded-full px-3 text-xs font-bold whitespace-nowrap transition-all active:scale-[0.98] sm:h-11 sm:px-5 sm:text-[13px]',
                   isFullReady
                     ? 'ks-keycap bg-[#D9381E] text-white shadow-sm hover:-translate-y-0.5 hover:bg-[#C23018]'
                     : 'bg-primary text-primary-foreground hover:opacity-90'
@@ -440,11 +502,14 @@ export function RecipeDock() {
                   </>
                 ) : (
                   <>
-                    <SparklesIcon className={cn('size-3.5 sm:size-4', isFullReady && 'animate-pulse')} />
-                    <span>
+                    <SparklesIcon className="size-3.5 shrink-0 sm:size-4" />
+                    <span className="sm:hidden">
+                      去合成 ({coreSlotsFilled}/3{extraCount > 0 ? `+${extraCount}` : ''})
+                    </span>
+                    <span className="hidden sm:inline">
                       立即合成 ({coreSlotsFilled}/3{extraCount > 0 ? ` +${extraCount}` : ''})
                     </span>
-                    {isFullReady && <ArrowRightIcon className="size-3.5 transition-transform group-hover:translate-x-0.5" />}
+                    {isFullReady && <ArrowRightIcon className="size-3.5 shrink-0 transition-transform group-hover:translate-x-0.5" />}
                   </>
                 )}
               </Link>

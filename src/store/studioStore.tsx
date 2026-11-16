@@ -52,7 +52,7 @@ import type {
 
 const PREFS_KEY = 'pose_atlas_client_prefs_v4'
 const RECIPE_KEY = 'pose_atlas_recipe_v4'
-const SAFE_MODE_KEY = 'pose_atlas_safe_mode_v1'
+const SAFE_MODE_KEY = 'pose_atlas_safe_mode_user_v2'
 
 export type AuthModalTab = 'login' | 'register'
 export type AccountModalTab = 'overview' | 'redeem' | 'ledger' | 'security'
@@ -62,6 +62,7 @@ interface ClientPrefs {
   stylePreset: string
   aspectRatio: StudioAspectRatio
   poseFrontOnly: boolean
+  sceneNote: string
 }
 
 const DEFAULT_PREFS: ClientPrefs = {
@@ -69,6 +70,7 @@ const DEFAULT_PREFS: ClientPrefs = {
   stylePreset: 'none',
   aspectRatio: '3:4',
   poseFrontOnly: true,
+  sceneNote: '',
 }
 
 const initialPrefs = (): ClientPrefs => {
@@ -93,6 +95,10 @@ const initialPrefs = (): ClientPrefs => {
         typeof parsed.poseFrontOnly === 'boolean'
           ? parsed.poseFrontOnly
           : DEFAULT_PREFS.poseFrontOnly,
+      sceneNote:
+        typeof parsed.sceneNote === 'string'
+          ? parsed.sceneNote
+          : DEFAULT_PREFS.sceneNote,
     }
   } catch {
     return DEFAULT_PREFS
@@ -149,6 +155,7 @@ interface StudioZustandStore {
   safeMode: boolean
   poseDepthMode: boolean
   poseFrontOnly: boolean
+  sceneNote: string
   previewUrl: string
   isGenerating: boolean
   generationProgress: StreamGenerationProgress | null
@@ -171,6 +178,7 @@ interface StudioZustandStore {
   setSafeMode: (updater: Updater<boolean>) => void
   setPoseDepthModeState: (updater: Updater<boolean>) => void
   setPoseFrontOnly: (updater: Updater<boolean>) => void
+  setSceneNote: (updater: Updater<string>) => void
   setPreviewUrl: (updater: Updater<string>) => void
   setIsGenerating: (val: boolean) => void
   setGenerationProgress: (val: StreamGenerationProgress | null) => void
@@ -200,6 +208,7 @@ export const useStudioStore = create<StudioZustandStore>((set) => {
     safeMode: initialSafeMode(),
     poseDepthMode: Boolean(rec.pose?.useDepth),
     poseFrontOnly: prefs.poseFrontOnly,
+    sceneNote: prefs.sceneNote,
     previewUrl: '',
     isGenerating: false,
     generationProgress: null,
@@ -228,6 +237,8 @@ export const useStudioStore = create<StudioZustandStore>((set) => {
       set((s) => ({ poseDepthMode: typeof updater === 'function' ? updater(s.poseDepthMode) : updater })),
     setPoseFrontOnly: (updater) =>
       set((s) => ({ poseFrontOnly: typeof updater === 'function' ? updater(s.poseFrontOnly) : updater })),
+    setSceneNote: (updater) =>
+      set((s) => ({ sceneNote: typeof updater === 'function' ? updater(s.sceneNote) : updater })),
     setPreviewUrl: (updater) =>
       set((s) => ({ previewUrl: typeof updater === 'function' ? updater(s.previewUrl) : updater })),
     setIsGenerating: (isGenerating) => set({ isGenerating }),
@@ -256,6 +267,7 @@ interface StudioContextValue {
   safeMode: boolean
   poseDepthMode: boolean
   poseFrontOnly: boolean
+  sceneNote: string
   previewUrl: string
   isGenerating: boolean
   generationProgress: StreamGenerationProgress | null
@@ -286,6 +298,7 @@ interface StudioContextValue {
   requestUnlockNsfw: (onUnlocked?: () => void) => void
   setPoseDepthMode: (val: boolean) => void
   setPoseFrontOnly: (val: boolean) => void
+  setSceneNote: (updater: Updater<string>) => void
   toggleRecipePoseDepth: () => void
   setPreviewUrl: (url: string) => void
   startGeneration: (sceneNote?: string) => Promise<void>
@@ -324,6 +337,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     safeMode,
     poseDepthMode,
     poseFrontOnly,
+    sceneNote,
     previewUrl,
     isGenerating,
     generationProgress,
@@ -346,6 +360,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     setSafeMode,
     setPoseDepthModeState,
     setPoseFrontOnly,
+    setSceneNote,
     setPreviewUrl,
     setIsGenerating,
     setGenerationProgress,
@@ -386,7 +401,10 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       setProvidersLoaded(true)
 
       if (!data.platform.allowUserNsfwUnlock) {
-        setSafeMode(true)
+        setSafeMode(data.platform.defaultSafeMode)
+        try {
+          localStorage.removeItem(SAFE_MODE_KEY)
+        } catch {}
       } else if (localStorage.getItem(SAFE_MODE_KEY) === null) {
         setSafeMode(data.platform.defaultSafeMode)
       }
@@ -486,16 +504,12 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     try {
       localStorage.setItem(
         PREFS_KEY,
-        JSON.stringify({ selectedProvider, stylePreset, aspectRatio, poseFrontOnly })
+        JSON.stringify({ selectedProvider, stylePreset, aspectRatio, poseFrontOnly, sceneNote })
       )
     } catch {}
-  }, [selectedProvider, stylePreset, aspectRatio, poseFrontOnly])
+  }, [selectedProvider, stylePreset, aspectRatio, poseFrontOnly, sceneNote])
 
-  useEffect(() => {
-    try {
-      localStorage.setItem(SAFE_MODE_KEY, String(safeMode))
-    } catch {}
-  }, [safeMode])
+  // Only persist safeMode when the user explicitly toggles it (never overwrite platform.defaultSafeMode on mount)
 
   // 轮询未完成的云端任务（例如刷新页面后仍有 processing 任务）
   useEffect(() => {
@@ -571,6 +585,9 @@ export function StudioProvider({ children }: { children: ReactNode }) {
 
   const confirmUnlockNsfw = () => {
     setSafeMode(false)
+    try {
+      localStorage.setItem(SAFE_MODE_KEY, 'false')
+    } catch {}
     setAgeGateOpen(false)
     toast.success('已解锁完整图库浏览')
     const cb = pendingUnlockCbRef.current
@@ -583,6 +600,9 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       requestUnlockNsfw()
     } else {
       setSafeMode(true)
+      try {
+        localStorage.setItem(SAFE_MODE_KEY, 'true')
+      } catch {}
       toast.success('已切换回标准图库视图')
     }
   }
@@ -948,6 +968,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
         safeMode,
         poseDepthMode,
         poseFrontOnly,
+        sceneNote,
         previewUrl,
         isGenerating,
         generationProgress,
@@ -973,6 +994,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
         requestUnlockNsfw,
         setPoseDepthMode,
         setPoseFrontOnly,
+        setSceneNote,
         toggleRecipePoseDepth,
         setPreviewUrl,
         startGeneration,

@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react'
-import { KeyRoundIcon, LoaderCircleIcon, SparklesIcon, UserPlusIcon } from 'lucide-react'
+import { EyeIcon, EyeOffIcon, KeyRoundIcon, LoaderCircleIcon, SparklesIcon, UserPlusIcon } from 'lucide-react'
 import { BrandMark } from '@/components/common/BrandMark'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -25,18 +25,29 @@ export function AuthModal() {
   const [email, setEmail] = useState('')
   const [displayName, setDisplayName] = useState('')
   const [password, setPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
 
   const handleOpenChange = (open: boolean) => {
     if (!open) {
       setError('')
+      setPassword('')
+      setConfirmPassword('')
+      setShowPassword(false)
+      setShowConfirmPassword(false)
       closeAuthModal()
     }
   }
 
   const switchTab = (tab: 'login' | 'register') => {
     setError('')
+    setPassword('')
+    setConfirmPassword('')
+    setShowPassword(false)
+    setShowConfirmPassword(false)
     openAuthModal(tab)
   }
 
@@ -65,6 +76,14 @@ export function AuthModal() {
       setError('请填写用户名和密码')
       return
     }
+    if (password.length < 6) {
+      setError('密码长度至少为 6 位')
+      return
+    }
+    if (password !== confirmPassword) {
+      setError('两次输入的密码不一致')
+      return
+    }
     setSubmitting(true)
     setError('')
     try {
@@ -75,6 +94,7 @@ export function AuthModal() {
         password,
       })
       setPassword('')
+      setConfirmPassword('')
       toast.success(
         platform.registerBonusCredits > 0
           ? `注册成功！已赠送 ${platform.registerBonusCredits} 积分`
@@ -137,7 +157,7 @@ export function AuthModal() {
 
         {authModalTab === 'register' && platform.registerBonusCredits > 0 && (
           <div className="flex items-center gap-2 rounded-xl border border-[#E5A918]/40 bg-[#E5A918]/10 px-3 py-2 text-xs font-medium text-foreground">
-            <SparklesIcon className="size-3.5 shrink-0 text-[#B88300] dark:text-[#E5A918]" />
+            <SparklesIcon className="size-3.5 shrink-0 text-[#7A5200] dark:text-[#E5A918]" />
             <span>新用户注册立即赠送 {platform.registerBonusCredits} 积分，立即可用！</span>
           </div>
         )}
@@ -161,7 +181,10 @@ export function AuthModal() {
                 id="auth-account"
                 autoComplete="username"
                 value={account}
-                onChange={(e) => setAccount(e.target.value)}
+                onChange={(e) => {
+                  setAccount(e.target.value)
+                  if (error) setError('')
+                }}
                 placeholder="输入用户名或邮箱"
                 className="h-9 rounded-xl text-xs"
               />
@@ -171,15 +194,28 @@ export function AuthModal() {
               <Label htmlFor="auth-login-password" className="text-xs font-semibold">
                 密码
               </Label>
-              <Input
-                id="auth-login-password"
-                type="password"
-                autoComplete="current-password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="输入密码"
-                className="h-9 rounded-xl text-xs"
-              />
+              <div className="relative">
+                <Input
+                  id="auth-login-password"
+                  type={showPassword ? 'text' : 'password'}
+                  autoComplete="current-password"
+                  value={password}
+                  onChange={(e) => {
+                    setPassword(e.target.value)
+                    if (error) setError('')
+                  }}
+                  placeholder="输入密码"
+                  className="h-9 rounded-xl pr-9 text-xs"
+                />
+                <button
+                  type="button"
+                  aria-label={showPassword ? '隐藏密码' : '显示密码'}
+                  onClick={() => setShowPassword((v) => !v)}
+                  className="absolute top-1/2 right-2.5 -translate-y-1/2 rounded p-1 text-muted-foreground hover:text-foreground"
+                >
+                  {showPassword ? <EyeOffIcon className="size-3.5" /> : <EyeIcon className="size-3.5" />}
+                </button>
+              </div>
             </div>
 
             <Button
@@ -205,7 +241,10 @@ export function AuthModal() {
                 id="auth-reg-username"
                 autoComplete="username"
                 value={username}
-                onChange={(e) => setUsername(e.target.value)}
+                onChange={(e) => {
+                  setUsername(e.target.value)
+                  if (error) setError('')
+                }}
                 placeholder="3~32 位字母、数字、下划线"
                 className="h-9 rounded-xl font-mono text-xs"
               />
@@ -240,19 +279,61 @@ export function AuthModal() {
               </div>
             </div>
 
-            <div className="space-y-1.5">
-              <Label htmlFor="auth-reg-password" className="text-xs font-semibold">
-                密码 <span className="text-destructive">*</span>
-              </Label>
-              <Input
-                id="auth-reg-password"
-                type="password"
-                autoComplete="new-password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="至少 6 位字符"
-                className="h-9 rounded-xl text-xs"
-              />
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label htmlFor="auth-reg-password" className="text-xs font-semibold">
+                  密码 <span className="text-destructive">*</span>
+                </Label>
+                <div className="relative">
+                  <Input
+                    id="auth-reg-password"
+                    type={showPassword ? 'text' : 'password'}
+                    autoComplete="new-password"
+                    value={password}
+                    onChange={(e) => {
+                      setPassword(e.target.value)
+                      if (error) setError('')
+                    }}
+                    placeholder="至少 6 位字符"
+                    className="h-9 rounded-xl pr-9 text-xs"
+                  />
+                  <button
+                    type="button"
+                    aria-label={showPassword ? '隐藏密码' : '显示密码'}
+                    onClick={() => setShowPassword((v) => !v)}
+                    className="absolute top-1/2 right-2.5 -translate-y-1/2 rounded p-1 text-muted-foreground hover:text-foreground"
+                  >
+                    {showPassword ? <EyeOffIcon className="size-3.5" /> : <EyeIcon className="size-3.5" />}
+                  </button>
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="auth-reg-confirm" className="text-xs font-semibold">
+                  确认密码 <span className="text-destructive">*</span>
+                </Label>
+                <div className="relative">
+                  <Input
+                    id="auth-reg-confirm"
+                    type={showConfirmPassword ? 'text' : 'password'}
+                    autoComplete="new-password"
+                    value={confirmPassword}
+                    onChange={(e) => {
+                      setConfirmPassword(e.target.value)
+                      if (error) setError('')
+                    }}
+                    placeholder="再次输入密码"
+                    className="h-9 rounded-xl pr-9 text-xs"
+                  />
+                  <button
+                    type="button"
+                    aria-label={showConfirmPassword ? '隐藏确认密码' : '显示确认密码'}
+                    onClick={() => setShowConfirmPassword((v) => !v)}
+                    className="absolute top-1/2 right-2.5 -translate-y-1/2 rounded p-1 text-muted-foreground hover:text-foreground"
+                  >
+                    {showConfirmPassword ? <EyeOffIcon className="size-3.5" /> : <EyeIcon className="size-3.5" />}
+                  </button>
+                </div>
+              </div>
             </div>
 
             <Button

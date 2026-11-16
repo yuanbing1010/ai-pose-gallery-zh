@@ -2,10 +2,13 @@ import { useEffect, useState, type FormEvent } from 'react'
 import { Link } from '@tanstack/react-router'
 import {
   CoinsIcon,
+  EyeIcon,
+  EyeOffIcon,
   HistoryIcon,
   KeyRoundIcon,
   LoaderCircleIcon,
   LogOutIcon,
+  RotateCcwIcon,
   ShieldCheckIcon,
   TicketIcon,
   UserRoundIcon,
@@ -54,9 +57,14 @@ export function AccountModal() {
 
   const [ledger, setLedger] = useState<CreditLedgerItem[]>([])
   const [loadingLedger, setLoadingLedger] = useState(false)
+  const [ledgerError, setLedgerError] = useState('')
+  const [ledgerReloadTick, setLedgerReloadTick] = useState(0)
 
   const [currentPassword, setCurrentPassword] = useState('')
   const [newPassword, setNewPassword] = useState('')
+  const [confirmNewPassword, setConfirmNewPassword] = useState('')
+  const [showCurPwd, setShowCurPwd] = useState(false)
+  const [showNewPwd, setShowNewPwd] = useState(false)
   const [savingPwd, setSavingPwd] = useState(false)
 
   useEffect(() => {
@@ -64,11 +72,12 @@ export function AccountModal() {
     let active = true
     const run = async () => {
       setLoadingLedger(true)
+      setLedgerError('')
       try {
         const res = await fetchLedgerApi(50)
         if (active) setLedger(res.items)
-      } catch {
-        // ignore
+      } catch (err) {
+        if (active) setLedgerError(err instanceof Error ? err.message : '积分流水加载失败')
       } finally {
         if (active) setLoadingLedger(false)
       }
@@ -80,7 +89,7 @@ export function AccountModal() {
       active = false
       window.clearTimeout(timer)
     }
-  }, [accountModalOpen, accountModalTab, user])
+  }, [accountModalOpen, accountModalTab, user, ledgerReloadTick])
 
   if (!user) return null
 
@@ -108,11 +117,18 @@ export function AccountModal() {
       toast.error('请输入当前密码以及至少 6 位的新密码')
       return
     }
+    if (newPassword !== confirmNewPassword) {
+      toast.error('两次输入的新密码不一致')
+      return
+    }
     setSavingPwd(true)
     try {
       await changePasswordApi({ currentPassword, newPassword })
       setCurrentPassword('')
       setNewPassword('')
+      setConfirmNewPassword('')
+      setShowCurPwd(false)
+      setShowNewPwd(false)
       toast.success('密码已修改')
     } catch (err) {
       toast.error(err instanceof Error ? err.message : '修改失败')
@@ -134,7 +150,19 @@ export function AccountModal() {
   ]
 
   return (
-    <Dialog open={accountModalOpen} onOpenChange={(open) => !open && closeAccountModal()}>
+    <Dialog
+      open={accountModalOpen}
+      onOpenChange={(open) => {
+        if (!open) {
+          setCurrentPassword('')
+          setNewPassword('')
+          setConfirmNewPassword('')
+          setShowCurPwd(false)
+          setShowNewPwd(false)
+          closeAccountModal()
+        }
+      }}
+    >
       <DialogContent className="max-h-[90dvh] w-[95vw] max-w-xl overflow-y-auto rounded-2xl p-5 sm:max-w-xl">
         <DialogHeader className="space-y-1">
           <div className="flex items-center justify-between gap-2 pr-6">
@@ -147,7 +175,7 @@ export function AccountModal() {
                 </span>
               )}
             </DialogTitle>
-            <div className="inline-flex items-center gap-1.5 rounded-full border border-[#E5A918]/40 bg-[#E5A918]/12 px-3 py-1 font-mono text-xs font-bold text-[#9A6B00] dark:text-[#E5A918]">
+            <div className="inline-flex items-center gap-1.5 rounded-full border border-[#E5A918]/40 bg-[#E5A918]/12 px-3 py-1 font-mono text-xs font-bold text-[#7A5200] dark:text-[#E5A918]">
               <CoinsIcon className="size-3.5" />
               <span>{user.creditBalance} 积分</span>
             </div>
@@ -191,7 +219,7 @@ export function AccountModal() {
                 <button
                   type="button"
                   onClick={() => openAccountModal('redeem')}
-                  className="mt-2 text-xs font-semibold text-[#D9381E] hover:underline"
+                  className="mt-2 text-xs font-semibold text-[#B82914] hover:underline dark:text-[#FF7A59]"
                 >
                   使用兑换码充值 →
                 </button>
@@ -273,6 +301,20 @@ export function AccountModal() {
                 <LoaderCircleIcon className="mr-2 size-4 animate-spin" />
                 正在加载流水记录…
               </div>
+            ) : ledgerError ? (
+              <div className="flex flex-col items-center gap-2 rounded-xl border border-destructive/35 bg-destructive/10 py-6 text-center text-xs text-destructive">
+                <span>{ledgerError}</span>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setLedgerReloadTick((n) => n + 1)}
+                  className="h-7 rounded-lg text-xs text-foreground"
+                >
+                  <RotateCcwIcon className="size-3" />
+                  <span>重试加载</span>
+                </Button>
+              </div>
             ) : ledger.length === 0 ? (
               <div className="py-8 text-center text-xs text-muted-foreground">暂无积分变动记录</div>
             ) : (
@@ -295,7 +337,7 @@ export function AccountModal() {
                         'shrink-0 font-mono text-sm font-bold tabular-nums',
                         item.delta >= 0
                           ? 'text-[#116E65] dark:text-[#4FD1C5]'
-                          : 'text-[#D9381E] dark:text-[#FF7A59]'
+                          : 'text-[#B82914] dark:text-[#FF7A59]'
                       )}
                     >
                       {item.delta >= 0 ? `+${item.delta}` : item.delta}
@@ -313,25 +355,63 @@ export function AccountModal() {
               <Label htmlFor="acct-cur-pwd" className="text-xs font-semibold">
                 当前密码
               </Label>
-              <Input
-                id="acct-cur-pwd"
-                type="password"
-                value={currentPassword}
-                onChange={(e) => setCurrentPassword(e.target.value)}
-                className="h-9 rounded-xl text-xs"
-              />
+              <div className="relative">
+                <Input
+                  id="acct-cur-pwd"
+                  type={showCurPwd ? 'text' : 'password'}
+                  autoComplete="current-password"
+                  value={currentPassword}
+                  onChange={(e) => setCurrentPassword(e.target.value)}
+                  className="h-9 rounded-xl pr-9 text-xs"
+                />
+                <button
+                  type="button"
+                  aria-label={showCurPwd ? '隐藏当前密码' : '显示当前密码'}
+                  onClick={() => setShowCurPwd((v) => !v)}
+                  className="absolute top-1/2 right-2.5 -translate-y-1/2 rounded p-1 text-muted-foreground hover:text-foreground"
+                >
+                  {showCurPwd ? <EyeOffIcon className="size-3.5" /> : <EyeIcon className="size-3.5" />}
+                </button>
+              </div>
             </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="acct-new-pwd" className="text-xs font-semibold">
-                新密码（至少 6 位）
-              </Label>
-              <Input
-                id="acct-new-pwd"
-                type="password"
-                value={newPassword}
-                onChange={(e) => setNewPassword(e.target.value)}
-                className="h-9 rounded-xl text-xs"
-              />
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label htmlFor="acct-new-pwd" className="text-xs font-semibold">
+                  新密码（至少 6 位）
+                </Label>
+                <div className="relative">
+                  <Input
+                    id="acct-new-pwd"
+                    type={showNewPwd ? 'text' : 'password'}
+                    autoComplete="new-password"
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    className="h-9 rounded-xl pr-9 text-xs"
+                  />
+                  <button
+                    type="button"
+                    aria-label={showNewPwd ? '隐藏新密码' : '显示新密码'}
+                    onClick={() => setShowNewPwd((v) => !v)}
+                    className="absolute top-1/2 right-2.5 -translate-y-1/2 rounded p-1 text-muted-foreground hover:text-foreground"
+                  >
+                    {showNewPwd ? <EyeOffIcon className="size-3.5" /> : <EyeIcon className="size-3.5" />}
+                  </button>
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="acct-confirm-pwd" className="text-xs font-semibold">
+                  确认新密码
+                </Label>
+                <Input
+                  id="acct-confirm-pwd"
+                  type={showNewPwd ? 'text' : 'password'}
+                  autoComplete="new-password"
+                  value={confirmNewPassword}
+                  onChange={(e) => setConfirmNewPassword(e.target.value)}
+                  placeholder="再次输入新密码"
+                  className="h-9 rounded-xl text-xs"
+                />
+              </div>
             </div>
             <Button type="submit" disabled={savingPwd} className="h-9 w-full rounded-xl text-xs font-bold">
               {savingPwd ? <LoaderCircleIcon className="size-4 animate-spin" /> : null}

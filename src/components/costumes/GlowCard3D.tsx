@@ -804,7 +804,7 @@ export function GlowCard3D({
     <div
       ref={stageRef}
       className={cn(
-        'relative h-[470px] w-full cursor-grab select-none active:cursor-grabbing sm:h-[530px]',
+        'relative h-[280px] w-full cursor-grab select-none active:cursor-grabbing sm:h-[460px] md:h-[520px]',
         className
       )}
       onPointerMove={(e) => {
@@ -830,12 +830,12 @@ export function GlowCard3D({
             style={{
               transform: `perspective(950px) rotateX(${fallbackTilt.rx}deg) rotateY(${fallbackTilt.ry}deg)`,
             }}
-            className="md-media-ring relative max-h-[460px] overflow-hidden rounded-[22px] shadow-[0_28px_54px_rgba(0,0,0,0.72)] transition-transform duration-150 ease-out"
+            className="md-media-ring relative max-h-[260px] overflow-hidden rounded-[22px] shadow-[0_28px_54px_rgba(0,0,0,0.72)] transition-transform duration-150 ease-out sm:max-h-[460px]"
           >
             <img
               src={imageUrl}
               alt={alt}
-              className="block max-h-[460px] w-auto max-w-full object-contain"
+              className="block max-h-[260px] w-auto max-w-full object-contain sm:max-h-[460px]"
             />
           </div>
         </div>

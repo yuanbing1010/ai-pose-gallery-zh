@@ -4,6 +4,7 @@ export interface Env {
   DB: D1Database
   BUCKET: R2Bucket
   ASSETS: Fetcher
+  US_RELAY?: DurableObjectNamespace
   APP_ENCRYPTION_KEY?: string
   DEV_ASSETS_ORIGIN?: string
   BOOTSTRAP_ADMIN_USERNAME?: string

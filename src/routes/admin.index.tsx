@@ -3,8 +3,11 @@ import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
 import {
   ActivityIcon,
   ArrowDownIcon,
+  ArrowRightIcon,
   ArrowUpIcon,
   CheckIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
   CoinsIcon,
   CopyIcon,
   ExternalLinkIcon,
@@ -30,6 +33,16 @@ import {
   getAdminNavItems,
   type AdminTab,
 } from '@/components/admin/auditHelpers'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
@@ -218,12 +231,15 @@ function AdminHomePage() {
   const [slots, setSlots] = useState<AdminProviderSlotDTO[]>([])
   const [activePid, setActivePid] = useState<ImageProviderId>('gpt')
   const [savingSlot, setSavingSlot] = useState(false)
+  const [savedSlotMetaKey, setSavedSlotMetaKey] = useState('')
   const [channelDialogOpen, setChannelDialogOpen] = useState(false)
   const [channelForm, setChannelForm] = useState<ChannelFormState | null>(null)
   const [savingChannel, setSavingChannel] = useState(false)
 
   // 03. Users & Credits
   const [userQuery, setUserQuery] = useState('')
+  const [appliedUserQuery, setAppliedUserQuery] = useState('')
+  const [usersOffset, setUsersOffset] = useState(0)
   const [users, setUsers] = useState<Array<PublicUser & { jobsCount: number }>>([])
   const [usersTotal, setUsersTotal] = useState(0)
   const [ledger, setLedger] = useState<CreditLedgerItem[]>([])
@@ -234,6 +250,7 @@ function AdminHomePage() {
 
   // 04. Redeem Codes
   const [codes, setCodes] = useState<RedeemCodeItem[]>([])
+  const [codeFilter, setCodeFilter] = useState<'all' | 'active' | 'disabled' | 'exhausted'>('all')
   const [newCodeCount, setNewCodeCount] = useState('5')
   const [newCodeCredits, setNewCodeCredits] = useState('50')
   const [newCodeMaxUses, setNewCodeMaxUses] = useState('1')
@@ -245,6 +262,15 @@ function AdminHomePage() {
   // 05. Platform Settings & Styles
   const [platformCfg, setPlatformCfg] = useState<PlatformConfig | null>(null)
   const [savingPlatform, setSavingPlatform] = useState(false)
+  const [savedPlatformJson, setSavedPlatformJson] = useState('')
+  const [confirmAction, setConfirmAction] = useState<{
+    title: string
+    description: string
+    confirmLabel: string
+    destructive?: boolean
+    run: () => Promise<void>
+  } | null>(null)
+  const [confirmBusy, setConfirmBusy] = useState(false)
   const [previewStyleKey, setPreviewStyleKey] = useState<string>('')
   const [styleDialogOpen, setStyleDialogOpen] = useState(false)
   const [styleForm, setStyleForm] = useState<StyleFormState | null>(null)
@@ -292,9 +318,20 @@ function AdminHomePage() {
           setSlots(pRes.slots)
           setSuppliers(pRes.suppliers)
           setPlatformCfg(sRes.platform)
+          setSavedSlotMetaKey(
+            JSON.stringify({
+              slots: pRes.slots.map((sl) => ({
+                id: sl.providerId,
+                enabled: sl.enabled,
+                creditCost: sl.creditCost,
+              })),
+              imagePassMode: sRes.platform.imagePassMode,
+            })
+          )
+          setSavedPlatformJson(JSON.stringify(sRes.platform))
         } else if (targetTab === 'users') {
           const [uRes, lRes] = await Promise.all([
-            fetchAdminUsersApi(userQuery, 60, 0),
+            fetchAdminUsersApi(appliedUserQuery.trim(), 60, usersOffset),
             fetchAdminLedgerApi(60),
           ])
           setUsers(uRes.users)
@@ -306,6 +343,7 @@ function AdminHomePage() {
         } else if (targetTab === 'safety') {
           const res = await fetchAdminSettingsApi()
           setPlatformCfg(res.platform)
+          setSavedPlatformJson(JSON.stringify(res.platform))
         } else if (targetTab === 'jobs') {
           const res = await fetchAdminGenerationsApi({
             status: jobStatusFilter === 'all' ? undefined : jobStatusFilter,
@@ -321,7 +359,7 @@ function AdminHomePage() {
         setLoading(false)
       }
     },
-    [appliedJobQuery, jobProviderFilter, jobStatusFilter, userQuery]
+    [appliedJobQuery, appliedUserQuery, jobProviderFilter, jobStatusFilter, usersOffset]
   )
 
   useEffect(() => {
@@ -331,6 +369,15 @@ function AdminHomePage() {
     }, 280)
     return () => window.clearTimeout(timer)
   }, [jobQuery, tab])
+
+  useEffect(() => {
+    if (tab !== 'users') return
+    const timer = window.setTimeout(() => {
+      setAppliedUserQuery(userQuery)
+      setUsersOffset(0)
+    }, 280)
+    return () => window.clearTimeout(timer)
+  }, [tab, userQuery])
 
   useEffect(() => {
     if (!bootstrapLoaded || user?.role !== 'admin') return
@@ -446,14 +493,18 @@ function AdminHomePage() {
     }
   }
 
-  const handleDeleteSupplier = async (s: SupplierDTO) => {
-    try {
-      const res = await deleteAdminSupplierApi(s.id)
-      setSuppliers(res.suppliers)
-      toast.success(`已删除供应商「${s.name}」`)
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : '删除失败')
-    }
+  const handleDeleteSupplier = (s: SupplierDTO) => {
+    setConfirmAction({
+      title: `删除供应商「${s.name}」`,
+      description: '删除后该供应商及其加密 API Key 将被永久移除，无法恢复。',
+      confirmLabel: '确认删除',
+      destructive: true,
+      run: async () => {
+        const res = await deleteAdminSupplierApi(s.id)
+        setSuppliers(res.suppliers)
+        toast.success(`已删除供应商「${s.name}」`)
+      },
+    })
   }
 
   // Slot & Channel handlers
@@ -477,7 +528,18 @@ function AdminHomePage() {
       setSlots(slotRes.slots)
       if (settingsRes) {
         setPlatformCfg(settingsRes.platform)
+        setSavedPlatformJson(JSON.stringify(settingsRes.platform))
       }
+      setSavedSlotMetaKey(
+        JSON.stringify({
+          slots: slotRes.slots.map((sl) => ({
+            id: sl.providerId,
+            enabled: sl.enabled,
+            creditCost: sl.creditCost,
+          })),
+          imagePassMode: settingsRes?.platform.imagePassMode ?? platformCfg?.imagePassMode,
+        })
+      )
       await refreshBootstrap()
       toast.success(`已保存「${getStudioArtist(activePid).name}」槽位配置与全局传参模式`)
     } catch (err) {
@@ -577,15 +639,19 @@ function AdminHomePage() {
     }
   }
 
-  const handleDeleteChannel = async (ch: ProviderChannelDTO) => {
-    try {
-      const res = await deleteAdminChannelApi(ch.id)
-      setSlots(res.slots)
-      await refreshBootstrap()
-      toast.success(`已删除渠道「${ch.name}」`)
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : '删除失败')
-    }
+  const handleDeleteChannel = (ch: ProviderChannelDTO) => {
+    setConfirmAction({
+      title: `删除路由渠道「${ch.name}」`,
+      description: '删除后该渠道不再参与模型容灾与负载均衡调度。',
+      confirmLabel: '确认删除',
+      destructive: true,
+      run: async () => {
+        const res = await deleteAdminChannelApi(ch.id)
+        setSlots(res.slots)
+        await refreshBootstrap()
+        toast.success(`已删除渠道「${ch.name}」`)
+      },
+    })
   }
 
   const handleSavePlatform = async (successMsg = '平台全局设置已保存') => {
@@ -594,6 +660,7 @@ function AdminHomePage() {
     try {
       const res = await updateAdminSettingsApi(platformCfg)
       setPlatformCfg(res.platform)
+      setSavedPlatformJson(JSON.stringify(res.platform))
       await refreshBootstrap()
       toast.success(successMsg)
     } catch (err) {
@@ -627,10 +694,23 @@ function AdminHomePage() {
 
   const handleToggleUserStatus = async (u: PublicUser & { jobsCount: number }) => {
     const nextStatus = u.status === 'active' ? 'disabled' : 'active'
-    try {
+    const exec = async () => {
       await updateUserStatusApi(u.id, { status: nextStatus })
       await loadTabData('users')
       toast.success(nextStatus === 'disabled' ? `已禁用账号 ${u.username}` : `已恢复账号 ${u.username}`)
+    }
+    if (nextStatus === 'disabled') {
+      setConfirmAction({
+        title: `禁用账号 @${u.username}`,
+        description: '禁用后该用户将无法登录或发起 AI 生成任务，可随时再次启用恢复。',
+        confirmLabel: '确认禁用',
+        destructive: true,
+        run: exec,
+      })
+      return
+    }
+    try {
+      await exec()
     } catch (err) {
       toast.error(err instanceof Error ? err.message : '操作失败')
     }
@@ -663,10 +743,23 @@ function AdminHomePage() {
 
   const handleToggleCodeStatus = async (item: RedeemCodeItem) => {
     const next = item.status === 'active' ? 'disabled' : 'active'
-    try {
+    const exec = async () => {
       await toggleAdminRedeemCodeApi(item.id, next)
       setCodes((prev) => prev.map((c) => (c.id === item.id ? { ...c, status: next } : c)))
       toast.success(next === 'active' ? '已启用兑换码' : '已停用兑换码')
+    }
+    if (next === 'disabled') {
+      setConfirmAction({
+        title: `停用兑换码 ${item.code}`,
+        description: '停用后用户将无法再兑换该卡密剩余额度，可随时重新启用。',
+        confirmLabel: '确认停用',
+        destructive: true,
+        run: exec,
+      })
+      return
+    }
+    try {
+      await exec()
     } catch (err) {
       toast.error(err instanceof Error ? err.message : '操作失败')
     }
@@ -919,11 +1012,19 @@ function AdminHomePage() {
       toast.error('请至少保留一个画风大类')
       return
     }
-    const nextCategories = styleCategories.filter((c) => c.id !== cat.id)
-    await persistStyleTaxonomy(nextCategories, styleSubcategories, `已删除大类「${cat.label}」`)
-    if (focusedCategoryId === cat.id) {
-      setFocusedCategoryId('all')
-    }
+    setConfirmAction({
+      title: `删除画风大类「${cat.label}」`,
+      description: '确定永久删除此画风大类？该操作将实时同步到前端图鉴。',
+      confirmLabel: '确认删除',
+      destructive: true,
+      run: async () => {
+        const nextCategories = styleCategories.filter((c) => c.id !== cat.id)
+        await persistStyleTaxonomy(nextCategories, styleSubcategories, `已删除大类「${cat.label}」`)
+        if (focusedCategoryId === cat.id) {
+          setFocusedCategoryId('all')
+        }
+      },
+    })
   }
 
   const handleMoveCategory = async (index: number, delta: -1 | 1) => {
@@ -1021,8 +1122,16 @@ function AdminHomePage() {
       toast.error(`小类「${sub.label}」下仍有 ${usedCount} 种画风，请先将画风调整至其他小类后再删除`)
       return
     }
-    const nextSubcategories = styleSubcategories.filter((s) => s.id !== sub.id)
-    await persistStyleTaxonomy(styleCategories, nextSubcategories, `已删除小类「${sub.label}」`)
+    setConfirmAction({
+      title: `删除画风小类「${sub.label}」`,
+      description: '确定永久删除此画风小类？',
+      confirmLabel: '确认删除',
+      destructive: true,
+      run: async () => {
+        const nextSubcategories = styleSubcategories.filter((s) => s.id !== sub.id)
+        await persistStyleTaxonomy(styleCategories, nextSubcategories, `已删除小类「${sub.label}」`)
+      },
+    })
   }
 
   const handleMoveSubcategory = async (subId: string, delta: -1 | 1) => {
@@ -1152,9 +1261,17 @@ function AdminHomePage() {
     setStyleDialogOpen(false)
   }
 
-  const handleDeleteStyle = async (item: StylePresetItem) => {
-    const nextPresets = styleCatalog.filter((s) => s.id !== item.id)
-    await persistStyleCatalog(nextPresets, `已删除画风「${item.label}」`)
+  const handleDeleteStyle = (item: StylePresetItem) => {
+    setConfirmAction({
+      title: `删除画风预设「${item.label}」`,
+      description: '删除后该画风将立即从前台画风图鉴与工作台下线，确定删除？',
+      confirmLabel: '确认删除',
+      destructive: true,
+      run: async () => {
+        const nextPresets = styleCatalog.filter((s) => s.id !== item.id)
+        await persistStyleCatalog(nextPresets, `已删除画风「${item.label}」`)
+      },
+    })
   }
 
   const handleMoveStyleById = async (styleId: string, delta: -1 | 1) => {
@@ -1168,6 +1285,25 @@ function AdminHomePage() {
     ;[nextPresets[idxA], nextPresets[idxB]] = [nextPresets[idxB], nextPresets[idxA]]
     await persistStyleCatalog(nextPresets, '画风排序已更新')
   }
+
+  const currentSlotMetaKey = JSON.stringify({
+    slots: slots.map((sl) => ({
+      id: sl.providerId,
+      enabled: sl.enabled,
+      creditCost: sl.creditCost,
+    })),
+    imagePassMode: platformCfg?.imagePassMode,
+  })
+  const slotDirty = Boolean(savedSlotMetaKey && currentSlotMetaKey !== savedSlotMetaKey)
+  const platformDirty = Boolean(platformCfg && savedPlatformJson && JSON.stringify(platformCfg) !== savedPlatformJson)
+  const filteredCodes = codes.filter((c) => {
+    const exhausted = c.usedCount >= c.maxUses
+    if (codeFilter === 'active') return c.status === 'active' && !exhausted
+    if (codeFilter === 'disabled') return c.status === 'disabled'
+    if (codeFilter === 'exhausted') return exhausted
+    return true
+  })
+  const activeAvailableCodes = codes.filter((c) => c.status === 'active' && c.usedCount < c.maxUses)
 
   return (
     <AdminShell
@@ -1198,38 +1334,66 @@ function AdminHomePage() {
               )}
 
               <div className="grid grid-cols-2 divide-x divide-y divide-zinc-200 border border-zinc-200 sm:grid-cols-4 sm:divide-y-0 dark:divide-zinc-800 dark:border-zinc-800">
-                <div className="p-5">
-                  <div className="text-xs font-medium text-zinc-500">01. 注册用户总数</div>
+                <button
+                  type="button"
+                  onClick={() => setTab('users')}
+                  className="group p-5 text-left transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-900/60"
+                >
+                  <div className="flex items-center justify-between text-xs font-medium text-zinc-500">
+                    <span>01. 注册用户总数</span>
+                    <ArrowRightIcon className="size-3.5 opacity-0 transition-opacity group-hover:opacity-100" />
+                  </div>
                   <div className="mt-2 font-mono text-2xl font-bold">{overview?.usersTotal ?? '—'}</div>
                   <div className="mt-1 text-xs text-zinc-500">
                     正常活跃：{overview?.activeUsersTotal ?? 0}
                   </div>
-                </div>
-                <div className="p-5">
-                  <div className="text-xs font-medium text-zinc-500">02. 积分累计消耗</div>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTab('redeem')}
+                  className="group p-5 text-left transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-900/60"
+                >
+                  <div className="flex items-center justify-between text-xs font-medium text-zinc-500">
+                    <span>02. 积分累计消耗</span>
+                    <ArrowRightIcon className="size-3.5 opacity-0 transition-opacity group-hover:opacity-100" />
+                  </div>
                   <div className="mt-2 font-mono text-2xl font-bold">{overview?.creditsConsumedTotal ?? '—'}</div>
                   <div className="mt-1 text-xs text-zinc-500">
-                    累计发放：{overview?.creditsIssuedTotal ?? 0}
+                    累计发放：{overview?.creditsIssuedTotal ?? 0} · 卡密 {overview?.redeemCodesTotal ?? 0}
                   </div>
-                </div>
-                <div className="p-5">
-                  <div className="text-xs font-medium text-zinc-500">03. 供应商 / 渠道</div>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTab('api')}
+                  className="group p-5 text-left transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-900/60"
+                >
+                  <div className="flex items-center justify-between text-xs font-medium text-zinc-500">
+                    <span>03. 供应商 / 渠道</span>
+                    <ArrowRightIcon className="size-3.5 opacity-0 transition-opacity group-hover:opacity-100" />
+                  </div>
                   <div className="mt-2 font-mono text-2xl font-bold">
                     {overview ? `${overview.suppliersTotal} / ${overview.channelsTotal}` : '—'}
                   </div>
                   <div className="mt-1 text-xs text-zinc-500">
-                    生图成功 {overview?.jobsSucceeded ?? 0} · 失败 {overview?.jobsFailed ?? 0}
+                    管理画师槽位与容灾路由
                   </div>
-                </div>
-                <div className="p-5">
-                  <div className="text-xs font-medium text-zinc-500">04. 云端存储空间</div>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTab('jobs')}
+                  className="group p-5 text-left transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-900/60"
+                >
+                  <div className="flex items-center justify-between text-xs font-medium text-zinc-500">
+                    <span>04. 云端存储 / 生图审计</span>
+                    <ArrowRightIcon className="size-3.5 opacity-0 transition-opacity group-hover:opacity-100" />
+                  </div>
                   <div className="mt-2 font-mono text-2xl font-bold">
                     {overview ? formatBytes(overview.r2TotalBytes) : '—'}
                   </div>
                   <div className="mt-1 text-xs text-zinc-500">
-                    对象数：{overview?.r2AssetsTotal ?? 0} · 卡密 {overview?.redeemCodesTotal ?? 0}
+                    成功 {overview?.jobsSucceeded ?? 0} · 失败 {overview?.jobsFailed ?? 0} · {overview?.r2AssetsTotal ?? 0} 对象
                   </div>
-                </div>
+                </button>
               </div>
             </div>
           )}
@@ -1425,7 +1589,12 @@ function AdminHomePage() {
                     </div>
                   )}
                 </div>
-                <div className="flex justify-end border-t border-zinc-200 px-5 py-3 dark:border-zinc-800">
+                <div className="flex flex-wrap items-center justify-end gap-3 border-t border-zinc-200 px-5 py-3 dark:border-zinc-800">
+                  {slotDirty && (
+                    <span className="border border-amber-500/50 bg-amber-500/10 px-2.5 py-1 font-mono text-[11px] font-semibold text-amber-800 dark:text-amber-300">
+                      有未保存的槽位 / 传参改动
+                    </span>
+                  )}
                   <Button size="sm" disabled={savingSlot} onClick={() => void handleSaveSlotAndPassMode()}>
                     {savingSlot ? <LoaderCircleIcon className="size-4 animate-spin" /> : <CheckIcon className="size-4" />}
                     保存配置
@@ -1545,7 +1714,12 @@ function AdminHomePage() {
                 <form
                   onSubmit={(e) => {
                     e.preventDefault()
-                    void loadTabData('users')
+                    setUsersOffset(0)
+                    if (appliedUserQuery === userQuery && usersOffset === 0) {
+                      void loadTabData('users')
+                    } else {
+                      setAppliedUserQuery(userQuery)
+                    }
                   }}
                   className="flex items-center gap-2"
                 >
@@ -1562,6 +1736,51 @@ function AdminHomePage() {
                 </form>
               </div>
 
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex flex-wrap items-center gap-1.5 text-xs">
+                  {(
+                    [
+                      { id: 'all', label: `全部 (${codes.length})` },
+                      { id: 'active', label: `可用 (${activeAvailableCodes.length})` },
+                      { id: 'exhausted', label: `已领完 (${codes.filter((c) => c.usedCount >= c.maxUses).length})` },
+                      { id: 'disabled', label: `已停用 (${codes.filter((c) => c.status === 'disabled').length})` },
+                    ] as const
+                  ).map((f) => (
+                    <button
+                      key={f.id}
+                      type="button"
+                      onClick={() => setCodeFilter(f.id)}
+                      className={`border px-2.5 py-1 font-mono text-xs transition-colors ${
+                        codeFilter === f.id
+                          ? 'border-zinc-950 bg-zinc-950 font-bold text-white dark:border-zinc-100 dark:bg-zinc-100 dark:text-zinc-950'
+                          : 'border-zinc-200 text-zinc-600 hover:border-zinc-400 dark:border-zinc-800 dark:text-zinc-400'
+                      }`}
+                    >
+                      {f.label}
+                    </button>
+                  ))}
+                </div>
+                {activeAvailableCodes.length > 0 && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="h-7 rounded-none text-xs"
+                    onClick={async () => {
+                      try {
+                        await navigator.clipboard.writeText(activeAvailableCodes.map((c) => c.code).join('\n'))
+                        toast.success(`已复制 ${activeAvailableCodes.length} 个可用兑换码`)
+                      } catch {
+                        toast.error('剪贴板复制失败')
+                      }
+                    }}
+                  >
+                    <CopyIcon className="size-3" />
+                    复制全部可用码
+                  </Button>
+                )}
+              </div>
+
               <div className="overflow-x-auto border border-zinc-200 dark:border-zinc-800">
                 <table className="w-full text-left font-mono text-xs">
                   <thead className="border-b border-zinc-200 bg-zinc-50 text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900">
@@ -1576,7 +1795,14 @@ function AdminHomePage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800">
-                    {users.map((u) => (
+                    {users.length === 0 ? (
+                      <tr>
+                        <td colSpan={7} className="px-4 py-8 text-center text-xs text-zinc-500">
+                          {appliedUserQuery.trim() ? `未找到匹配“${appliedUserQuery.trim()}”的用户账号。` : '暂无用户账号记录。'}
+                        </td>
+                      </tr>
+                    ) : (
+                      users.map((u) => (
                       <tr key={u.id} className="hover:bg-zinc-50/70 dark:hover:bg-zinc-900/50">
                         <td className="px-4 py-2.5">
                           <div className="font-sans font-bold">{u.displayName}</div>
@@ -1632,10 +1858,45 @@ function AdminHomePage() {
                           </div>
                         </td>
                       </tr>
-                    ))}
+                    ))
+                    )}
                   </tbody>
                 </table>
               </div>
+
+              {usersTotal > 0 && (
+                <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-zinc-600 dark:text-zinc-400">
+                  <span className="font-mono">
+                    第 {usersOffset + 1}–{Math.min(usersTotal, usersOffset + users.length)} 位 · 共 {usersTotal} 位用户
+                  </span>
+                  {usersTotal > 60 && (
+                    <div className="flex items-center gap-1.5">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="h-7 rounded-none text-xs"
+                        disabled={usersOffset === 0 || loading}
+                        onClick={() => setUsersOffset((o) => Math.max(0, o - 60))}
+                      >
+                        <ChevronLeftIcon className="size-3.5" />
+                        上一页
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="h-7 rounded-none text-xs"
+                        disabled={usersOffset + 60 >= usersTotal || loading}
+                        onClick={() => setUsersOffset((o) => o + 60)}
+                      >
+                        下一页
+                        <ChevronRightIcon className="size-3.5" />
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              )}
 
               <section className="space-y-3">
                 <h2 className="text-xs font-bold text-zinc-600 dark:text-zinc-400">
@@ -1765,7 +2026,14 @@ function AdminHomePage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800">
-                    {codes.map((c) => (
+                    {filteredCodes.length === 0 ? (
+                      <tr>
+                        <td colSpan={7} className="px-4 py-8 text-center font-sans text-xs text-zinc-500">
+                          {codes.length === 0 ? '暂无兑换码，可在上方表单批量生成。' : '当前筛选状态下无兑换码记录。'}
+                        </td>
+                      </tr>
+                    ) : (
+                      filteredCodes.map((c) => (
                       <tr key={c.id}>
                         <td className="px-4 py-2 font-bold">
                           <div className="inline-flex items-center gap-2">
@@ -1807,7 +2075,8 @@ function AdminHomePage() {
                           </Button>
                         </td>
                       </tr>
-                    ))}
+                    ))
+                    )}
                   </tbody>
                 </table>
               </div>
@@ -1872,7 +2141,11 @@ function AdminHomePage() {
                   <label className="block text-xs font-bold">允许用户自行解锁 18+ 图库</label>
                   <div className="flex h-9 items-center justify-between border border-zinc-200 px-3 dark:border-zinc-800">
                     <span className="text-xs text-zinc-500">
-                      {platformCfg.allowUserNsfwUnlock ? '允许年龄确认后解锁' : '全站强制锁定安全模式'}
+                      {platformCfg.allowUserNsfwUnlock
+                        ? '允许年龄确认后切换 SFW / 18+'
+                        : platformCfg.defaultSafeMode
+                          ? '全站强制锁定安全模式 (SFW)'
+                          : '全站强制开放完整图库 (18+)'}
                     </span>
                     <Switch
                       checked={platformCfg.allowUserNsfwUnlock}
@@ -1954,7 +2227,12 @@ function AdminHomePage() {
                   />
                 </div>
 
-                <div className="flex justify-end">
+                <div className="flex flex-wrap items-center justify-end gap-3">
+                  {platformDirty && (
+                    <span className="border border-amber-500/50 bg-amber-500/10 px-2.5 py-1 font-mono text-[11px] font-semibold text-amber-800 dark:text-amber-300">
+                      有未保存的策略 / 提示词更改
+                    </span>
+                  )}
                   <Button size="sm" disabled={savingPlatform} onClick={() => void handleSavePlatform()}>
                     {savingPlatform ? (
                       <LoaderCircleIcon className="size-4 animate-spin" />
@@ -2057,7 +2335,7 @@ function AdminHomePage() {
                               >
                                 <div className="flex items-center gap-2">
                                   <span className="truncate text-xs font-bold">{cat.label}</span>
-                                  <span className="shrink-0 font-mono text-[10px] text-zinc-400">
+                                  <span className="shrink-0 font-mono text-[11px] text-zinc-400">
                                     {cat.id}
                                   </span>
                                 </div>
@@ -2160,11 +2438,11 @@ function AdminHomePage() {
                             >
                               <div className="min-w-0 flex-1">
                                 <div className="flex flex-wrap items-center gap-2">
-                                  <span className="border border-zinc-300 bg-zinc-50 px-1.5 py-0.5 text-[10px] font-bold text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300">
+                                  <span className="border border-zinc-300 bg-zinc-50 px-1.5 py-0.5 text-[11px] font-bold text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300">
                                     {parentCatLabel}
                                   </span>
                                   <span className="text-xs font-bold">{sub.label}</span>
-                                  <span className="font-mono text-[10px] text-zinc-400">
+                                  <span className="font-mono text-[11px] text-zinc-400">
                                     {sub.id}
                                   </span>
                                 </div>
@@ -2177,7 +2455,7 @@ function AdminHomePage() {
                                     setAdminStyleCategoryFilter(sub.categoryId)
                                     setAdminStyleSubcategoryFilter(sub.id)
                                   }}
-                                  className="mr-1 border border-zinc-200 px-2 py-0.5 font-mono text-[10px] text-zinc-600 transition-colors hover:border-zinc-950 hover:text-zinc-950 dark:border-zinc-700 dark:text-zinc-400 dark:hover:border-zinc-200 dark:hover:text-zinc-100"
+                                  className="mr-1 border border-zinc-200 px-2 py-0.5 font-mono text-[11px] text-zinc-600 transition-colors hover:border-zinc-950 hover:text-zinc-950 dark:border-zinc-700 dark:text-zinc-400 dark:hover:border-zinc-200 dark:hover:text-zinc-100"
                                   title="在下方画风列表中仅看此小类"
                                 >
                                   {styleCount} 画风
@@ -2375,11 +2653,11 @@ function AdminHomePage() {
                             <div className="min-w-0 flex-1 space-y-1">
                               <div className="flex flex-wrap items-center gap-1.5">
                                 <span className="text-xs font-bold">{item.label}</span>
-                                <span className="border border-zinc-900/20 bg-zinc-100 px-1.5 py-0.5 text-[10px] font-bold text-zinc-800 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-200">
+                                <span className="border border-zinc-900/20 bg-zinc-100 px-1.5 py-0.5 text-[11px] font-bold text-zinc-800 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-200">
                                   {catLabel} / {subLabel}
                                 </span>
                                 {item.shortLabel && item.shortLabel !== item.label && (
-                                  <span className="border border-zinc-300 px-1.5 py-0.5 text-[10px] text-zinc-600 dark:border-zinc-700 dark:text-zinc-400">
+                                  <span className="border border-zinc-300 px-1.5 py-0.5 text-[11px] text-zinc-600 dark:border-zinc-700 dark:text-zinc-400">
                                     短标：{item.shortLabel}
                                   </span>
                                 )}
@@ -2674,7 +2952,7 @@ function AdminHomePage() {
                             <td className="px-3.5 py-3 whitespace-nowrap">
                               {!trace ? (
                                 <div className="space-y-1">
-                                  <span className="inline-block border border-zinc-300 px-1.5 py-0.5 text-[10px] text-zinc-500 dark:border-zinc-700">
+                                  <span className="inline-block border border-zinc-300 px-1.5 py-0.5 text-[11px] text-zinc-500 dark:border-zinc-700">
                                     历史记录
                                   </span>
                                   <div className="text-[11px] text-zinc-500">
@@ -2685,12 +2963,12 @@ function AdminHomePage() {
                                 <div className="space-y-1">
                                   <div className="flex flex-wrap items-center gap-1">
                                     {attemptCount === 0 ? (
-                                      <span className="border border-zinc-300 px-1.5 py-0.5 text-[10px] text-zinc-600 dark:border-zinc-700 dark:text-zinc-400">
+                                      <span className="border border-zinc-300 px-1.5 py-0.5 text-[11px] text-zinc-600 dark:border-zinc-700 dark:text-zinc-400">
                                         {j.status === 'processing' ? '调度中' : '0次调用'}
                                       </span>
                                     ) : attemptCount === 1 ? (
                                       <span
-                                        className={`border px-1.5 py-0.5 text-[10px] font-bold ${
+                                        className={`border px-1.5 py-0.5 text-[11px] font-bold ${
                                           j.status === 'succeeded'
                                             ? 'border-emerald-600/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400'
                                             : j.status === 'failed'
@@ -2707,21 +2985,21 @@ function AdminHomePage() {
                                     ) : (
                                       <>
                                         {hasFailover ? (
-                                          <span className="border border-amber-600/45 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-bold text-amber-800 dark:text-amber-300">
+                                          <span className="border border-amber-600/45 bg-amber-500/10 px-1.5 py-0.5 text-[11px] font-bold text-amber-800 dark:text-amber-300">
                                             切换{uniqueChannels}渠道
                                           </span>
                                         ) : hasRetry ? (
-                                          <span className="border border-sky-600/45 bg-sky-500/10 px-1.5 py-0.5 text-[10px] font-bold text-sky-800 dark:text-sky-300">
+                                          <span className="border border-sky-600/45 bg-sky-500/10 px-1.5 py-0.5 text-[11px] font-bold text-sky-800 dark:text-sky-300">
                                             重试{attemptCount}次
                                           </span>
                                         ) : null}
                                         {hasDowngrade && (
-                                          <span className="border border-purple-600/45 bg-purple-500/10 px-1.5 py-0.5 text-[10px] font-bold text-purple-800 dark:text-purple-300">
+                                          <span className="border border-purple-600/45 bg-purple-500/10 px-1.5 py-0.5 text-[11px] font-bold text-purple-800 dark:text-purple-300">
                                             降级重试
                                           </span>
                                         )}
                                         {!hasFailover && !hasRetry && !hasDowngrade && (
-                                          <span className="border border-zinc-400/50 px-1.5 py-0.5 text-[10px] font-bold">
+                                          <span className="border border-zinc-400/50 px-1.5 py-0.5 text-[11px] font-bold">
                                             {attemptCount}次调用
                                           </span>
                                         )}
@@ -3652,6 +3930,38 @@ function AdminHomePage() {
           )}
         </DialogContent>
       </Dialog>
+
+      <AlertDialog open={Boolean(confirmAction)} onOpenChange={(open) => !open && !confirmBusy && setConfirmAction(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{confirmAction?.title}</AlertDialogTitle>
+            <AlertDialogDescription>{confirmAction?.description}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={confirmBusy}>取消</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={confirmBusy}
+              className={confirmAction?.destructive ? 'bg-red-600 text-white hover:bg-red-700' : undefined}
+              onClick={async (e) => {
+                e.preventDefault()
+                if (!confirmAction) return
+                setConfirmBusy(true)
+                try {
+                  await confirmAction.run()
+                  setConfirmAction(null)
+                } catch (err) {
+                  toast.error(err instanceof Error ? err.message : '操作失败')
+                } finally {
+                  setConfirmBusy(false)
+                }
+              }}
+            >
+              {confirmBusy ? <LoaderCircleIcon className="size-3.5 animate-spin" /> : null}
+              <span>{confirmAction?.confirmLabel || '确认'}</span>
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </AdminShell>
   )
 }

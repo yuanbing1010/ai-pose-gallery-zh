@@ -23,11 +23,14 @@ import {
   ArrowRightIcon,
   ArrowUpRightIcon,
   CheckCircle2Icon,
+  CheckIcon,
   CircleAlertIcon,
   CoinsIcon,
+  CopyIcon,
   DicesIcon,
   DownloadIcon,
   EyeIcon,
+  FileTextIcon,
   GripVerticalIcon,
   ImagesIcon,
   ImagePlusIcon,
@@ -49,7 +52,7 @@ import {
   XIcon,
   ZoomInIcon,
 } from 'lucide-react'
-import { type ChangeEvent, type DragEvent, type ReactNode, useEffect, useRef, useState } from 'react'
+import { type ChangeEvent, type DragEvent, type ReactNode, useEffect, useEffectEvent, useRef, useState } from 'react'
 import { toast } from '@/lib/notifications'
 import { costumesQuery, portraitsQuery, posesQuery } from '@/api/gallery'
 import { ArtistLogo, AspectRatioLogo } from '@/components/studio/StudioEmblems'
@@ -83,7 +86,7 @@ import {
   fileToDataUrl,
   stitchRecipeCanvas,
 } from '@/services/aiGenerator'
-import { getEffectiveStyleCatalog } from '../../shared/studio'
+import { buildRecipePrompt, getEffectiveStyleCatalog } from '../../shared/studio'
 import { useStudio } from '@/store/studioStore'
 import type { GenerationHistoryItem } from '@/types/gallery'
 
@@ -320,6 +323,8 @@ function StudioPage() {
     clearRecipe,
     poseFrontOnly,
     setPoseFrontOnly,
+    sceneNote,
+    setSceneNote,
     toggleRecipePoseDepth,
     addExtraImage,
     removeExtraImage,
@@ -365,7 +370,9 @@ function StudioPage() {
   } | null>(null)
   const costumeViews = recipe.costume?.views?.filter((view) => view.原图 && view.缩略图) || []
 
-  const [sceneNote, setSceneNote] = useState('')
+  const [promptModalOpen, setPromptModalOpen] = useState(false)
+  const [copiedPrompt, setCopiedPrompt] = useState(false)
+  const dragDepthRef = useRef(0)
   const [hoveredRatio, setHoveredRatio] = useState<StudioAspectRatio | null>(null)
   const [styleModalOpen, setStyleModalOpen] = useState(false)
   const [styleModalInitialCat, setStyleModalInitialCat] = useState('all')
@@ -467,23 +474,25 @@ function StudioPage() {
     }
   }
 
-  useEffect(() => {
-    const onPaste = (e: ClipboardEvent) => {
-      const target = e.target as HTMLElement | null
-      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return
-      const items = Array.from(e.clipboardData?.items || [])
-      const files = items
-        .filter((it) => it.type.startsWith('image/'))
-        .map((it) => it.getAsFile())
-        .filter(Boolean) as File[]
-      if (files.length > 0) {
-        e.preventDefault()
-        void processFiles(files)
-      }
+  const handleWindowPaste = useEffectEvent((e: ClipboardEvent) => {
+    const target = e.target as HTMLElement | null
+    if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return
+    const items = Array.from(e.clipboardData?.items || [])
+    const files = items
+      .filter((it) => it.type.startsWith('image/'))
+      .map((it) => it.getAsFile())
+      .filter(Boolean) as File[]
+    if (files.length > 0) {
+      e.preventDefault()
+      void processFiles(files)
     }
+  })
+
+  useEffect(() => {
+    const onPaste = (e: ClipboardEvent) => handleWindowPaste(e)
     window.addEventListener('paste', onPaste)
     return () => window.removeEventListener('paste', onPaste)
-  })
+  }, [])
 
   const handleRandom = async () => {
     setAllDiceSpin((s) => s + 1)
@@ -554,6 +563,7 @@ function StudioPage() {
 
   const handleDropFiles = async (e: DragEvent<HTMLDivElement>) => {
     e.preventDefault()
+    dragDepthRef.current = 0
     setIsDragging(false)
     const files = Array.from(e.dataTransfer.files || [])
     await processFiles(files)
@@ -623,6 +633,16 @@ function StudioPage() {
   const activeStyleItem = styleCatalog.find((s) => s.id === activeStyleKey) ?? null
   const styleVisual = getStyleVisualMeta(activeStyleKey, activeStyleItem)
   const viewfinderStyleLabel = activeStyleItem?.label || '无预设（跟随参考图）'
+  const assembledPrompt = buildRecipePrompt(recipe, activeStyleKey, {
+    prefix: platform.defaultPromptPrefix,
+    suffix: platform.defaultPromptSuffix,
+    negativePrompt: platform.defaultNegativePrompt,
+    sceneNote,
+    stylePresets: platform.stylePresets,
+    styleCategories: platform.styleCategories,
+    styleSubcategories: platform.styleSubcategories,
+    stylePromptOverrides: platform.stylePromptOverrides,
+  })
   const succeededHistory = history.filter((h) => h.status === 'succeeded' && h.imageUrl)
   const recentHistory = succeededHistory.slice(0, 10)
   const previewArtist = previewResult ? getStudioArtist(previewResult.provider) : activeArtist
@@ -650,11 +670,18 @@ function StudioPage() {
   return (
     <div
       className="flex flex-col gap-2 md:min-h-0 md:flex-1"
-      onDragOver={(e) => {
+      onDragEnter={(e) => {
         e.preventDefault()
+        dragDepthRef.current += 1
         setIsDragging(true)
       }}
-      onDragLeave={() => setIsDragging(false)}
+      onDragOver={(e) => {
+        e.preventDefault()
+      }}
+      onDragLeave={() => {
+        dragDepthRef.current = Math.max(0, dragDepthRef.current - 1)
+        if (dragDepthRef.current === 0) setIsDragging(false)
+      }}
       onDrop={handleDropFiles}
     >
       {/* 极简控制台单行顶栏 */}
@@ -728,6 +755,16 @@ function StudioPage() {
                 <DicesIcon className="size-3.5 text-[#E5A918]" />
               </motion.span>
               <span>全随机</span>
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-7 rounded-full px-2.5 text-xs"
+              onClick={() => setPromptModalOpen(true)}
+            >
+              <FileTextIcon className="size-3.5" />
+              <span>提示词</span>
             </Button>
             {hasAnyRef && (
               <>
@@ -810,7 +847,7 @@ function StudioPage() {
                 <Link
                   to="/poses"
                   aria-label="前往姿势库选图"
-                  className="flex h-[104px] w-[78px] flex-col items-center justify-center gap-1.5 rounded-xl border border-dashed border-border bg-muted/25 text-[#D9381E] transition-colors hover:border-[#D9381E] hover:bg-muted/50 @[300px]/slot:h-28 @[300px]/slot:w-[84px] dark:text-[#FF7A59]"
+                  className="flex h-[104px] w-[78px] flex-col items-center justify-center gap-1.5 rounded-xl border border-dashed border-border bg-muted/25 text-[#B82914] transition-colors hover:border-[#D9381E] hover:bg-muted/50 @[300px]/slot:h-28 @[300px]/slot:w-[84px] dark:text-[#FF7A59]"
                 >
                   <PersonStandingIcon className="size-5.5" />
                   <span className="text-[11px] font-semibold">挑选姿势</span>
@@ -821,7 +858,7 @@ function StudioPage() {
             <div className="col-start-2 row-start-1 flex min-w-0 flex-col gap-1.5">
               <div className="flex items-center justify-between gap-1.5">
                 <div className="flex min-w-0 items-center gap-1.5">
-                  <span className="inline-flex shrink-0 items-center rounded-md bg-[#D9381E]/10 px-1.5 py-0.5 font-mono text-[11px] font-bold leading-none text-[#C23018] dark:bg-[#D9381E]/20 dark:text-[#FF7A59]">
+                  <span className="inline-flex shrink-0 items-center rounded-md bg-[#D9381E]/10 px-1.5 py-0.5 font-mono text-[11px] font-bold leading-none text-[#B82914] dark:bg-[#D9381E]/20 dark:text-[#FF7A59]">
                     姿势
                   </span>
                   {recipe.pose && (
@@ -1116,7 +1153,7 @@ function StudioPage() {
                 <Link
                   to="/portraits"
                   aria-label="前往人像库选图"
-                  className="flex h-[104px] w-[78px] flex-col items-center justify-center gap-1.5 rounded-xl border border-dashed border-border bg-muted/25 text-[#9A6B00] transition-colors hover:border-[#E5A918] hover:bg-muted/50 @[300px]/slot:h-28 @[300px]/slot:w-[84px] dark:text-[#E5A918]"
+                  className="flex h-[104px] w-[78px] flex-col items-center justify-center gap-1.5 rounded-xl border border-dashed border-border bg-muted/25 text-[#7A5200] transition-colors hover:border-[#E5A918] hover:bg-muted/50 @[300px]/slot:h-28 @[300px]/slot:w-[84px] dark:text-[#E5A918]"
                 >
                   <UserRoundIcon className="size-5.5" />
                   <span className="text-[11px] font-semibold">挑选人像</span>
@@ -1127,7 +1164,7 @@ function StudioPage() {
             <div className="col-start-2 row-start-1 flex min-w-0 flex-col gap-1">
               <div className="flex items-center justify-between gap-1.5">
                 <div className="flex min-w-0 items-center gap-1.5">
-                  <span className="inline-flex shrink-0 items-center rounded-md bg-[#E5A918]/14 px-1.5 py-0.5 font-mono text-[11px] font-bold leading-none text-[#9A6B00] dark:bg-[#E5A918]/20 dark:text-[#F5C443]">
+                  <span className="inline-flex shrink-0 items-center rounded-md bg-[#E5A918]/14 px-1.5 py-0.5 font-mono text-[11px] font-bold leading-none text-[#7A5200] dark:bg-[#E5A918]/20 dark:text-[#F5C443]">
                     人像
                   </span>
                   {recipe.portrait && (
@@ -1218,7 +1255,10 @@ function StudioPage() {
           ) : (
             <div className="flex min-w-0 items-center gap-1.5 truncate text-xs">
               <ImagePlusIcon className="size-3.5 shrink-0" />
-              <span className="truncate">
+              <span className="truncate sm:hidden">
+                {isDragging ? '松开添加到附加参考图' : '附加参考图 · 点击上传或粘贴'}
+              </span>
+              <span className="hidden truncate sm:inline">
                 {isDragging
                   ? '松开添加到附加参考图'
                   : '附加参考图（道具 / 背景 / 风格参考）：点击上传、拖拽图片或 Ctrl+V / ⌘V 粘贴'}
@@ -1336,7 +1376,7 @@ function StudioPage() {
                               selected
                                 ? 'bg-background/20 text-background'
                                 : available
-                                  ? 'bg-[#E5A918]/15 text-[#9A6B00] dark:text-[#E5A918]'
+                                  ? 'bg-[#E5A918]/15 text-[#7A5200] dark:text-[#E5A918]'
                                   : 'bg-muted text-muted-foreground'
                             )}
                           >
@@ -1429,7 +1469,7 @@ function StudioPage() {
               <div className="space-y-1 border-t border-border/70 pt-1.5">
                 <div className="flex flex-wrap items-center justify-between gap-1.5">
                   <span className="text-xs font-extrabold tracking-tight text-foreground sm:text-sm">画面细节</span>
-                  <span className="text-[11px] text-muted-foreground">
+                  <span className="text-xs text-muted-foreground">
                     点选灵感标签或输入补充描述（Cmd/Ctrl+Enter 生成）
                   </span>
                 </div>
@@ -1553,7 +1593,7 @@ function StudioPage() {
                     className={cn(
                       'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium',
                       isGenerating
-                        ? 'bg-[#E5A918]/15 text-[#9A6B00] dark:text-[#E5A918]'
+                        ? 'bg-[#E5A918]/15 text-[#7A5200] dark:text-[#E5A918]'
                         : generationError
                           ? 'bg-destructive/15 text-destructive'
                           : previewUrl
@@ -1703,8 +1743,8 @@ function StudioPage() {
                       className="pointer-events-none absolute top-1/2 left-1/2 size-96 -translate-x-1/2 -translate-y-1/2 rounded-full border border-foreground/[0.04]"
                     />
 
-                    <div className="relative flex items-center justify-center gap-3.5 sm:gap-5">
-                      <div className="flex items-center -space-x-3">
+                    <div className="relative flex max-w-full items-center justify-center gap-2 sm:gap-5">
+                      <div className="flex items-center -space-x-4 sm:-space-x-3">
                         {[
                           {
                             key: 'pose',
@@ -1733,7 +1773,7 @@ function StudioPage() {
                             <div
                               key={slot.key}
                               style={{ transform: `rotate(${(i - 1) * 5.5}deg)` }}
-                              className="flex h-24 w-[72px] shrink-0 items-center justify-center overflow-hidden rounded-xl border border-border bg-card shadow-sm transition-transform sm:h-28 sm:w-[84px]"
+                              className="flex h-[76px] w-[56px] shrink-0 items-center justify-center overflow-hidden rounded-xl border border-border bg-card shadow-sm transition-transform sm:h-28 sm:w-[84px]"
                             >
                               {slot.src ? (
                                 <img
@@ -1755,7 +1795,7 @@ function StudioPage() {
                         type="button"
                         onClick={() => openStylePicker('all')}
                         aria-label={`更换画风（当前：${viewfinderStyleLabel}）`}
-                        className="group relative flex size-28 shrink-0 cursor-pointer flex-col items-center justify-center overflow-hidden rounded-2xl border-2 border-[#D9381E]/85 bg-card shadow-md transition-transform hover:scale-[1.03] focus-visible:outline-2 focus-visible:outline-ring sm:size-32"
+                        className="group relative flex size-22 shrink-0 cursor-pointer flex-col items-center justify-center overflow-hidden rounded-2xl border-2 border-[#D9381E]/85 bg-card shadow-md transition-transform hover:scale-[1.03] focus-visible:outline-2 focus-visible:outline-ring sm:size-32"
                       >
                         {styleVisual.preview ? (
                           <>
@@ -1770,9 +1810,9 @@ function StudioPage() {
                           </>
                         ) : (
                           <div className="flex h-full w-full flex-col items-center justify-center gap-1.5 border border-dashed border-border/80 bg-muted/20 p-2 text-center">
-                            <WandSparklesIcon className="size-6 text-[#D9381E]" />
-                            <span className="text-xs font-bold text-foreground">{styleVisual.shortLabel}</span>
-                            <span className="text-xs text-muted-foreground">按原图直出</span>
+                            <WandSparklesIcon className="size-5 text-[#D9381E] sm:size-6" />
+                            <span className="text-[11px] font-bold text-foreground sm:text-xs">{styleVisual.shortLabel}</span>
+                            <span className="text-[11px] text-muted-foreground sm:text-xs">按原图直出</span>
                           </div>
                         )}
                       </button>
@@ -1909,7 +1949,7 @@ function StudioPage() {
                             {h.errorMessage || `${histArtist.name}刚打了会儿盹，再试一次吧~`}
                           </span>
                           {h.creditsRefunded > 0 && (
-                            <span className="rounded-full bg-[#116E65]/15 px-2 py-0.5 text-[10px] font-semibold text-[#116E65] dark:text-[#4FD1C5]">
+                            <span className="rounded-full bg-[#116E65]/15 px-2 py-0.5 text-[11px] font-semibold text-[#116E65] dark:text-[#4FD1C5]">
                               已退 {h.creditsRefunded} 积分
                             </span>
                           )}
@@ -2029,6 +2069,50 @@ function StudioPage() {
               <img src={stitchModalUrl} alt="参考拼图" className="max-h-[70dvh] w-auto rounded-lg object-contain" />
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* 组装提示词预览弹窗 */}
+      <Dialog
+        open={promptModalOpen}
+        onOpenChange={(o) => {
+          setPromptModalOpen(o)
+          if (!o) setCopiedPrompt(false)
+        }}
+      >
+        <DialogContent className="max-h-[85dvh] w-[94vw] max-w-2xl overflow-y-auto p-5 sm:max-w-2xl">
+          <DialogHeader className="flex flex-row flex-wrap items-start justify-between gap-3 pr-8">
+            <div className="space-y-1">
+              <DialogTitle className="flex items-center gap-2 text-base font-extrabold">
+                <FileTextIcon className="size-4 text-[#D9381E]" />
+                <span>组装提示词预览</span>
+              </DialogTitle>
+              <DialogDescription className="text-xs">
+                {activeArtist.name} · {viewfinderStyleLabel} · {aspectRatio}（共 {coreCount + extraImages.length} 张参考图）
+              </DialogDescription>
+            </div>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={async () => {
+                try {
+                  await navigator.clipboard.writeText(assembledPrompt)
+                  setCopiedPrompt(true)
+                  toast.success('已复制完整提示词')
+                } catch {
+                  toast.error('剪贴板复制失败，请手动选中复制')
+                }
+              }}
+              className="h-8 shrink-0 rounded-lg text-xs"
+            >
+              {copiedPrompt ? <CheckIcon className="size-3.5 text-emerald-600" /> : <CopyIcon className="size-3.5" />}
+              <span>{copiedPrompt ? '已复制' : '复制提示词'}</span>
+            </Button>
+          </DialogHeader>
+          <pre className="mt-2 max-h-[52dvh] overflow-y-auto rounded-xl border border-border bg-muted/60 p-3.5 font-mono text-xs leading-relaxed whitespace-pre-wrap text-foreground">
+            {assembledPrompt}
+          </pre>
         </DialogContent>
       </Dialog>
 

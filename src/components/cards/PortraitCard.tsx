@@ -120,7 +120,7 @@ export function PortraitCard({
           {/* 左上角：Top 10 人气微标 */}
           {item.热门 && (
             <div className="pointer-events-none absolute top-2 left-2 z-[4]">
-              <span className="inline-flex h-6 items-center gap-1 rounded-full bg-[#E5A918] px-2 text-[10px] font-bold text-zinc-950 shadow-sm">
+              <span className="inline-flex h-6 items-center gap-1 rounded-full bg-[#E5A918] px-2 text-[11px] font-bold text-zinc-950 shadow-sm">
                 <FlameIcon className="size-3" />
                 <span>TOP 10</span>
               </span>

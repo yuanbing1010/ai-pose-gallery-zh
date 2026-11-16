@@ -407,43 +407,114 @@ function isSafetyOrPolicyError(message: string): boolean {
   return /safety|prohibited|content_policy|moderation|blocked|nsfw|sexual|policy/i.test(message)
 }
 
-async function devProxyAwareFetch(url: string, init: RequestInit, env?: Env): Promise<Response> {
-  if (!env?.DEV_ASSETS_ORIGIN) {
-    return fetch(url, init)
-  }
+const GEO_RESTRICTED_HOSTS = new Set([
+  'api.openai.com',
+  'generativelanguage.googleapis.com',
+  'aiplatform.googleapis.com',
+  'api.x.ai',
+])
 
-  const req = new Request(url, init)
-  const headers = new Headers()
-  for (const key of ['content-type', 'authorization', 'x-goog-api-key']) {
-    const val = req.headers.get(key)
-    if (val) headers.set(key, val)
+function shouldRouteViaUsRelay(rawUrl: string): boolean {
+  try {
+    const host = new URL(rawUrl).hostname.toLowerCase()
+    return GEO_RESTRICTED_HOSTS.has(host) || host.endsWith('-aiplatform.googleapis.com')
+  } catch {
+    return false
   }
-  headers.set('x-dev-target-url', url)
-  headers.set('x-dev-method', req.method || 'POST')
-  const bodyBuf = req.body ? await req.arrayBuffer() : undefined
+}
 
-  const devOrigins = Array.from(
-    new Set([
-      env.DEV_ASSETS_ORIGIN.replace(/\/+$/, ''),
-      env.DEV_ASSETS_ORIGIN.replace('127.0.0.1', 'localhost').replace(/\/+$/, ''),
-      env.DEV_ASSETS_ORIGIN.replace('localhost', '127.0.0.1').replace(/\/+$/, ''),
-    ])
+function isGeoBlockedMessage(text: string): boolean {
+  return /country, region, or territory not supported|unsupported_country_region_territory|user location is not supported/i.test(
+    text
   )
+}
 
-  let lastErr: unknown
-  for (const origin of devOrigins) {
-    try {
-      return await fetch(`${origin}/__dev_upstream_fetch`, {
-        method: 'POST',
-        headers,
-        body: bodyBuf,
-        signal: init.signal,
-      })
-    } catch (err) {
-      lastErr = err
+async function sendViaUsRelay(
+  relayNamespace: DurableObjectNamespace,
+  targetUrl: string,
+  method: string,
+  sourceHeaders: Headers,
+  bodyBuf: ArrayBuffer | undefined,
+  signal?: AbortSignal | null
+): Promise<Response> {
+  const relayHeaders = new Headers()
+  sourceHeaders.forEach((val, key) => {
+    const lower = key.toLowerCase()
+    if (lower !== 'host' && lower !== 'content-length') {
+      relayHeaders.set(key, val)
+    }
+  })
+  relayHeaders.set('x-relay-target-url', targetUrl)
+  relayHeaders.set('x-relay-method', method)
+
+  const shard = Math.floor(Math.random() * 8)
+  const stub = relayNamespace.jurisdiction('us').getByName(`us-egress-${shard}`)
+  return stub.fetch('https://us-relay.internal/proxy', {
+    method: 'POST',
+    headers: relayHeaders,
+    body: bodyBuf,
+    signal,
+  })
+}
+
+async function devProxyAwareFetch(url: string, init: RequestInit, env?: Env): Promise<Response> {
+  const req = new Request(url, init)
+  const method = (req.method || 'POST').toUpperCase()
+  const bodyBuf =
+    method !== 'GET' && method !== 'HEAD' && req.body ? await req.arrayBuffer() : undefined
+
+  if (env?.DEV_ASSETS_ORIGIN) {
+    const headers = new Headers()
+    for (const key of ['content-type', 'authorization', 'x-goog-api-key']) {
+      const val = req.headers.get(key)
+      if (val) headers.set(key, val)
+    }
+    headers.set('x-dev-target-url', url)
+    headers.set('x-dev-method', method)
+
+    const devOrigins = Array.from(
+      new Set([
+        env.DEV_ASSETS_ORIGIN.replace(/\/+$/, ''),
+        env.DEV_ASSETS_ORIGIN.replace('127.0.0.1', 'localhost').replace(/\/+$/, ''),
+        env.DEV_ASSETS_ORIGIN.replace('localhost', '127.0.0.1').replace(/\/+$/, ''),
+      ])
+    )
+
+    let lastErr: unknown
+    for (const origin of devOrigins) {
+      try {
+        return await fetch(`${origin}/__dev_upstream_fetch`, {
+          method: 'POST',
+          headers,
+          body: bodyBuf,
+          signal: init.signal,
+        })
+      } catch (err) {
+        lastErr = err
+      }
+    }
+    throw lastErr ?? new Error('本地开发代理连接失败')
+  }
+
+  if (env?.US_RELAY && shouldRouteViaUsRelay(url)) {
+    return sendViaUsRelay(env.US_RELAY, url, method, req.headers, bodyBuf, init.signal)
+  }
+
+  const directRes = await fetch(url, {
+    method,
+    headers: req.headers,
+    body: bodyBuf,
+    signal: init.signal,
+  })
+
+  if (env?.US_RELAY && (directRes.status === 403 || directRes.status === 400)) {
+    const errText = await directRes.clone().text().catch(() => '')
+    if (isGeoBlockedMessage(errText)) {
+      return sendViaUsRelay(env.US_RELAY, url, method, req.headers, bodyBuf, init.signal)
     }
   }
-  throw lastErr ?? new Error('本地开发代理连接失败')
+
+  return directRes
 }
 
 async function fetchUpstream(url: string, init: RequestInit, env: Env): Promise<{ res: Response; json: any }> {

@@ -206,7 +206,7 @@ export function StyleBrowserPanel({
             className="pointer-events-none absolute inset-x-0 top-0 h-10 bg-gradient-to-b from-black/55 to-transparent"
           />
 
-          <span className="pointer-events-none absolute top-1.5 left-1.5 max-w-[calc(100%-34px)] truncate rounded-md bg-black/65 px-1.5 py-0.5 text-[10px] font-medium text-white backdrop-blur-xs">
+          <span className="pointer-events-none absolute top-1.5 left-1.5 max-w-[calc(100%-34px)] truncate rounded-md bg-black/70 px-1.5 py-0.5 text-[11px] font-medium text-white backdrop-blur-xs">
             {badgeText}
           </span>
 
@@ -300,7 +300,7 @@ export function StyleBrowserPanel({
         {/* 一级大类筛选轨 */}
         <div className="space-y-1.5">
           <div className="flex items-center gap-1.5">
-            <span className="w-7 shrink-0 font-mono text-[10px] font-bold tracking-wider text-muted-foreground uppercase">
+            <span className="w-7 shrink-0 font-mono text-[11px] font-bold tracking-wider text-muted-foreground uppercase">
               大类
             </span>
             <div
@@ -324,7 +324,7 @@ export function StyleBrowserPanel({
                 )}
               >
                 <span>全部</span>
-                <span className="font-mono text-[10px] opacity-75">{visualStyles.length}</span>
+                <span className="font-mono text-[11px] opacity-80">{visualStyles.length}</span>
               </button>
 
               {taxonomy.map((cat) => {
@@ -347,7 +347,7 @@ export function StyleBrowserPanel({
                     )}
                   >
                     <span>{cat.label}</span>
-                    <span className="font-mono text-[10px] opacity-75">{cat.count}</span>
+                    <span className="font-mono text-[11px] opacity-80">{cat.count}</span>
                   </button>
                 )
               })}
@@ -357,7 +357,7 @@ export function StyleBrowserPanel({
           {/* 二级小类筛选轨 */}
           {visibleSubcategories.length > 0 && (
             <div className="flex items-center gap-1.5">
-              <span className="w-7 shrink-0 font-mono text-[10px] font-bold tracking-wider text-muted-foreground uppercase">
+              <span className="w-7 shrink-0 font-mono text-[11px] font-bold tracking-wider text-muted-foreground uppercase">
                 小类
               </span>
               <div
@@ -407,7 +407,7 @@ export function StyleBrowserPanel({
                       )}
                     >
                       <span>{sub.label}</span>
-                      <span className="font-mono text-[10px] opacity-70">{sub.count}</span>
+                      <span className="font-mono text-[11px] opacity-80">{sub.count}</span>
                     </button>
                   )
                 })}
@@ -503,13 +503,13 @@ export function StyleBrowserPanel({
               <section key={section.category.id} className="space-y-2">
                 <div className="flex items-center justify-between gap-2 px-0.5">
                   <div className="flex items-center gap-1.5">
-                    <span className="font-mono text-[10px] font-bold text-muted-foreground">
+                    <span className="font-mono text-[11px] font-bold text-muted-foreground">
                       {String(idx + 1).padStart(2, '0')}
                     </span>
                     <h3 className="text-xs font-extrabold tracking-tight text-foreground">
                       {section.category.label}
                     </h3>
-                    <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] font-semibold text-muted-foreground">
+                    <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-[11px] font-semibold text-muted-foreground">
                       {section.items.length}
                     </span>
                   </div>

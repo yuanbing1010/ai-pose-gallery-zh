@@ -34,7 +34,7 @@ export function ShowcaseStageTabs<T extends string>({
             type="button"
             onClick={() => onChange(item.id)}
             className={cn(
-              'relative inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-medium transition-colors',
+              'relative inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-medium whitespace-nowrap transition-colors sm:gap-1.5 sm:px-3.5 sm:py-1.5 sm:text-xs',
               active ? 'text-black' : 'text-zinc-300 hover:text-white'
             )}
           >
@@ -117,8 +117,8 @@ export function ShowcaseDialog({
           </DialogClose>
 
           {/* 左侧：纯净暗房展示舞台 */}
-          <div className="relative flex min-h-[440px] flex-col items-center justify-between overflow-hidden bg-[#121215] px-6 pt-16 pb-6 sm:min-h-[560px]">
-            {stageTopLeft && <div className="absolute top-4 left-4 z-20">{stageTopLeft}</div>}
+          <div className="relative flex min-h-[300px] flex-col items-center justify-between overflow-hidden bg-[#121215] px-4 pt-14 pb-4 sm:min-h-[520px] sm:px-6 sm:pt-16 sm:pb-6">
+            {stageTopLeft && <div className="absolute top-3 left-3 z-20 pr-12 sm:top-4 sm:left-4 sm:pr-0">{stageTopLeft}</div>}
 
             <div className="relative z-10 flex w-full flex-1 items-center justify-center">{stageContent}</div>
 
@@ -126,7 +126,7 @@ export function ShowcaseDialog({
           </div>
 
           {/* 右侧：克制编排的信息与行动栏 */}
-          <div className="flex flex-col justify-between gap-6 border-t border-white/[0.08] bg-[#0E0E11] p-6 sm:p-7 md:border-t-0 md:border-l">
+          <div className="flex flex-col justify-between gap-4 border-t border-white/[0.08] bg-[#0E0E11] p-4 sm:gap-6 sm:p-7 md:border-t-0 md:border-l">
             <div className="space-y-5">
               <DialogHeader className="space-y-3 pr-9 text-left">
                 <div className="flex flex-wrap items-center gap-2">
@@ -156,7 +156,7 @@ export function ShowcaseDialog({
               {sidebarBody}
             </div>
 
-            <div className="flex items-center gap-2 pt-2">
+            <div className="sticky bottom-0 z-20 -mx-4 flex items-center gap-2 border-t border-white/[0.08] bg-[#0E0E11]/95 px-4 pt-3 pb-4 backdrop-blur-md md:static md:mx-0 md:border-t-0 md:bg-transparent md:p-0 md:pt-2 md:backdrop-blur-none">
               <motion.button
                 type="button"
                 whileTap={{ scale: 0.97 }}
