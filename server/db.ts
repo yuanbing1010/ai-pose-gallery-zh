@@ -8,6 +8,8 @@ import {
   mergePromptTemplate,
   normalizeStylePresetTaxonomy,
   type AdminProviderSlotDTO,
+  type AdminUserItem,
+  type AdminWechatConfigDTO,
   type CreditLedgerItem,
   type GenerationAuditTrace,
   type GenerationHistoryItem,
@@ -25,11 +27,14 @@ import {
   type SupplierDTO,
   type UserRole,
   type UserStatus,
+  type WechatLoginPublicInfo,
 } from '../shared/studio'
 import {
   decryptSecret,
+  encryptSecret,
   generateRedeemCode,
   hashPassword,
+  maskApiKey,
   randomTokenHex,
   sha256Hex,
 } from './crypto'
@@ -59,6 +64,10 @@ export interface UserRow {
   created_at: number
   updated_at: number
   last_login_at: number | null
+  wechat_openid?: string | null
+  wechat_nickname?: string | null
+  wechat_avatar_url?: string | null
+  admin_note?: string | null
 }
 
 export interface ProviderRow {
@@ -155,12 +164,41 @@ export function mapUserRow(row: UserRow): PublicUser {
     username: row.username,
     email: row.email,
     displayName: row.display_name,
+    avatarUrl: row.wechat_avatar_url || null,
+    hasPassword: Boolean(row.password_hash),
+    wechatBound: Boolean(row.wechat_openid),
+    wechatNickname: row.wechat_nickname || null,
     role: row.role,
     creditBalance: row.credit_balance,
     status: row.status,
     createdAt: row.created_at,
     lastLoginAt: row.last_login_at,
   }
+}
+
+export function mapAdminUserRow(
+  row: UserRow & { jobs_count?: number }
+): AdminUserItem {
+  return {
+    ...mapUserRow(row),
+    jobsCount: row.jobs_count || 0,
+    adminNote: row.admin_note || '',
+  }
+}
+
+export async function getUserWithOAuthById(db: D1Database, userId: string): Promise<UserRow | null> {
+  return db
+    .prepare(
+      `SELECT u.*,
+              oa.openid AS wechat_openid,
+              oa.nickname AS wechat_nickname,
+              oa.avatar_url AS wechat_avatar_url
+       FROM users u
+       LEFT JOIN oauth_accounts oa ON oa.user_id = u.id AND oa.provider = 'wechat_open'
+       WHERE u.id = ?`
+    )
+    .bind(userId)
+    .first<UserRow>()
 }
 
 export function mapJobRow(
@@ -762,21 +800,24 @@ export async function createUserWithBonus(
     username: string
     email: string | null
     displayName: string
+    adminNote?: string
     passwordHash: string
     role: UserRole
     initialCredits: number
     bonusNote?: string
+    operatorId?: string | null
   }
 ): Promise<PublicUser> {
   const now = Date.now()
   const credits = Math.max(0, Math.floor(params.initialCredits))
+  const adminNote = (params.adminNote || '').trim().slice(0, 120)
   const stmts: D1PreparedStatement[] = [
     db
       .prepare(
         `INSERT INTO users (
           id, username, username_lower, email, email_lower, display_name,
-          password_hash, role, credit_balance, status, created_at, updated_at, last_login_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)`
+          admin_note, password_hash, role, credit_balance, status, created_at, updated_at, last_login_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)`
       )
       .bind(
         params.id,
@@ -785,6 +826,7 @@ export async function createUserWithBonus(
         params.email,
         params.email ? params.email.toLowerCase() : null,
         params.displayName,
+        adminNote,
         params.passwordHash,
         params.role,
         credits,
@@ -800,9 +842,17 @@ export async function createUserWithBonus(
         .prepare(
           `INSERT INTO credit_ledger (
             id, user_id, delta, balance_after, type, ref_id, note, operator_id, created_at
-          ) VALUES (?, ?, ?, ?, 'register_bonus', NULL, ?, NULL, ?)`
+          ) VALUES (?, ?, ?, ?, 'register_bonus', NULL, ?, ?, ?)`
         )
-        .bind(crypto.randomUUID(), params.id, credits, credits, params.bonusNote || '新用户注册赠送积分', now)
+        .bind(
+          crypto.randomUUID(),
+          params.id,
+          credits,
+          credits,
+          params.bonusNote || '新用户注册赠送积分',
+          params.operatorId ?? null,
+          now
+        )
     )
   }
 
@@ -813,6 +863,10 @@ export async function createUserWithBonus(
     username: params.username,
     email: params.email,
     displayName: params.displayName,
+    avatarUrl: null,
+    hasPassword: Boolean(params.passwordHash),
+    wechatBound: false,
+    wechatNickname: null,
     role: params.role,
     creditBalance: credits,
     status: 'active',
@@ -851,9 +905,16 @@ export async function resolveSessionUser(
   const now = Date.now()
   const row = await db
     .prepare(
-      `SELECT u.*, s.id AS session_id, s.expires_at AS session_expires_at, s.last_seen_at AS session_last_seen
+      `SELECT u.*,
+              oa.openid AS wechat_openid,
+              oa.nickname AS wechat_nickname,
+              oa.avatar_url AS wechat_avatar_url,
+              s.id AS session_id,
+              s.expires_at AS session_expires_at,
+              s.last_seen_at AS session_last_seen
        FROM sessions s
        JOIN users u ON u.id = s.user_id
+       LEFT JOIN oauth_accounts oa ON oa.user_id = u.id AND oa.provider = 'wechat_open'
        WHERE s.token_hash = ?`
     )
     .bind(tokenHash)
@@ -1426,6 +1487,7 @@ export function mapLedgerRow(row: {
   id: string
   user_id: string
   username?: string
+  user_admin_note?: string
   delta: number
   balance_after: number
   type: CreditLedgerItem['type']
@@ -1438,6 +1500,7 @@ export function mapLedgerRow(row: {
     id: row.id,
     userId: row.user_id,
     username: row.username,
+    ...(row.user_admin_note ? { userAdminNote: row.user_admin_note } : {}),
     delta: row.delta,
     balanceAfter: row.balance_after,
     type: row.type,
@@ -1445,5 +1508,300 @@ export function mapLedgerRow(row: {
     note: row.note,
     operatorId: row.operator_id,
     createdAt: row.created_at,
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 微信开放平台 OAuth 配置与账号关联
+// ---------------------------------------------------------------------------
+
+interface StoredWechatOAuthRow {
+  enabled: boolean
+  appId: string
+  appSecretEncrypted: string
+  appSecretHint: string
+  callbackBaseUrl: string
+  updatedAt: number
+}
+
+const WECHAT_SETTINGS_KEY = 'wechat_oauth_config'
+
+function getEnvWechatFallback(env: Env): { appId: string; appSecret: string } {
+  return {
+    appId: (env.WECHAT_APP_ID || '').trim(),
+    appSecret: (env.WECHAT_APP_SECRET || '').trim(),
+  }
+}
+
+async function readStoredWechatConfig(
+  db: D1Database
+): Promise<{ exists: boolean; data: StoredWechatOAuthRow }> {
+  const row = await db
+    .prepare(`SELECT value_json, updated_at FROM system_settings WHERE key = ?`)
+    .bind(WECHAT_SETTINGS_KEY)
+    .first<{ value_json: string; updated_at: number }>()
+  if (!row) {
+    return {
+      exists: false,
+      data: {
+        enabled: false,
+        appId: '',
+        appSecretEncrypted: '',
+        appSecretHint: '',
+        callbackBaseUrl: '',
+        updatedAt: 0,
+      },
+    }
+  }
+  try {
+    const parsed = JSON.parse(row.value_json) as Partial<StoredWechatOAuthRow>
+    return {
+      exists: true,
+      data: {
+        enabled: Boolean(parsed.enabled),
+        appId: typeof parsed.appId === 'string' ? parsed.appId.trim() : '',
+        appSecretEncrypted:
+          typeof parsed.appSecretEncrypted === 'string' ? parsed.appSecretEncrypted : '',
+        appSecretHint: typeof parsed.appSecretHint === 'string' ? parsed.appSecretHint : '',
+        callbackBaseUrl:
+          typeof parsed.callbackBaseUrl === 'string' ? parsed.callbackBaseUrl.trim() : '',
+        updatedAt:
+          typeof parsed.updatedAt === 'number' ? parsed.updatedAt : row.updated_at || 0,
+      },
+    }
+  } catch {
+    return {
+      exists: true,
+      data: {
+        enabled: false,
+        appId: '',
+        appSecretEncrypted: '',
+        appSecretHint: '',
+        callbackBaseUrl: '',
+        updatedAt: row.updated_at || 0,
+      },
+    }
+  }
+}
+
+export async function getAdminWechatConfig(env: Env): Promise<AdminWechatConfigDTO> {
+  const { exists, data } = await readStoredWechatConfig(env.DB)
+  const envFallback = getEnvWechatFallback(env)
+  const hasEnvFallback = Boolean(envFallback.appId && envFallback.appSecret)
+  return {
+    enabled: exists ? data.enabled : hasEnvFallback,
+    appId: data.appId,
+    hasAppSecret: Boolean(data.appSecretEncrypted),
+    appSecretHint: data.appSecretHint,
+    callbackBaseUrl: data.callbackBaseUrl,
+    hasEnvFallback,
+    envAppIdHint: envFallback.appId ? maskApiKey(envFallback.appId) : '',
+    updatedAt: data.updatedAt,
+  }
+}
+
+export async function resolveRuntimeWechatConfig(env: Env): Promise<{
+  enabled: boolean
+  appId: string
+  appSecret: string
+  callbackBaseUrl: string
+}> {
+  const { exists, data } = await readStoredWechatConfig(env.DB)
+  const envFallback = getEnvWechatFallback(env)
+  const hasEnvFallback = Boolean(envFallback.appId && envFallback.appSecret)
+  const decryptedSecret = data.appSecretEncrypted
+    ? (await decryptSecret(data.appSecretEncrypted, env.APP_ENCRYPTION_KEY)).trim()
+    : ''
+  return {
+    enabled: exists ? data.enabled : hasEnvFallback,
+    appId: data.appId || envFallback.appId,
+    appSecret: decryptedSecret || envFallback.appSecret,
+    callbackBaseUrl: data.callbackBaseUrl,
+  }
+}
+
+export async function getPublicWechatLoginInfo(env: Env): Promise<WechatLoginPublicInfo> {
+  const cfg = await resolveRuntimeWechatConfig(env)
+  return {
+    enabled: cfg.enabled,
+    configured: Boolean(cfg.appId && cfg.appSecret),
+  }
+}
+
+export async function saveWechatOAuthConfig(
+  env: Env,
+  patch: {
+    enabled?: boolean
+    appId?: string
+    appSecret?: string
+    clearAppSecret?: boolean
+    callbackBaseUrl?: string
+  }
+): Promise<AdminWechatConfigDTO> {
+  const { exists, data } = await readStoredWechatConfig(env.DB)
+  const envFallback = getEnvWechatFallback(env)
+  const hasEnvFallback = Boolean(envFallback.appId && envFallback.appSecret)
+  const now = Date.now()
+
+  let nextEncrypted = data.appSecretEncrypted
+  let nextHint = data.appSecretHint
+  if (patch.clearAppSecret) {
+    nextEncrypted = ''
+    nextHint = ''
+  } else if (typeof patch.appSecret === 'string' && patch.appSecret.trim()) {
+    const plain = patch.appSecret.trim()
+    nextEncrypted = await encryptSecret(plain, env.APP_ENCRYPTION_KEY)
+    nextHint = maskApiKey(plain)
+  }
+
+  const nextStored: StoredWechatOAuthRow = {
+    enabled:
+      typeof patch.enabled === 'boolean'
+        ? patch.enabled
+        : exists
+          ? data.enabled
+          : hasEnvFallback,
+    appId: typeof patch.appId === 'string' ? patch.appId.trim() : data.appId,
+    appSecretEncrypted: nextEncrypted,
+    appSecretHint: nextHint,
+    callbackBaseUrl:
+      typeof patch.callbackBaseUrl === 'string'
+        ? patch.callbackBaseUrl.trim().replace(/\/+$/, '')
+        : data.callbackBaseUrl,
+    updatedAt: now,
+  }
+
+  await env.DB.prepare(
+    `INSERT INTO system_settings (key, value_json, updated_at)
+     VALUES (?, ?, ?)
+     ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at`
+  )
+    .bind(WECHAT_SETTINGS_KEY, JSON.stringify(nextStored), now)
+    .run()
+
+  return getAdminWechatConfig(env)
+}
+
+export interface OAuthAccountRow {
+  id: string
+  user_id: string
+  provider: 'wechat_open'
+  openid: string
+  unionid: string | null
+  nickname: string
+  avatar_url: string
+  created_at: number
+  updated_at: number
+}
+
+export async function findWechatOAuthBinding(
+  db: D1Database,
+  openid: string,
+  unionid: string | null
+): Promise<OAuthAccountRow | null> {
+  const byOpenId = await db
+    .prepare(`SELECT * FROM oauth_accounts WHERE provider = 'wechat_open' AND openid = ? LIMIT 1`)
+    .bind(openid)
+    .first<OAuthAccountRow>()
+  if (byOpenId) return byOpenId
+
+  if (unionid) {
+    return db
+      .prepare(
+        `SELECT * FROM oauth_accounts WHERE provider = 'wechat_open' AND unionid = ? LIMIT 1`
+      )
+      .bind(unionid)
+      .first<OAuthAccountRow>()
+  }
+  return null
+}
+
+export async function createWechatUserWithBonus(
+  db: D1Database,
+  params: {
+    userId: string
+    username: string
+    displayName: string
+    initialCredits: number
+    bonusNote?: string
+    openid: string
+    unionid: string | null
+    nickname: string
+    avatarUrl: string
+  }
+): Promise<PublicUser> {
+  const now = Date.now()
+  const credits = Math.max(0, Math.floor(params.initialCredits))
+  const stmts: D1PreparedStatement[] = [
+    db
+      .prepare(
+        `INSERT INTO users (
+          id, username, username_lower, email, email_lower, display_name,
+          password_hash, role, credit_balance, status, created_at, updated_at, last_login_at
+        ) VALUES (?, ?, ?, NULL, NULL, ?, '', 'user', ?, 'active', ?, ?, ?)`
+      )
+      .bind(
+        params.userId,
+        params.username,
+        params.username.toLowerCase(),
+        params.displayName,
+        credits,
+        now,
+        now,
+        now
+      ),
+    db
+      .prepare(
+        `INSERT INTO oauth_accounts (
+          id, user_id, provider, openid, unionid, nickname, avatar_url, created_at, updated_at
+        ) VALUES (?, ?, 'wechat_open', ?, ?, ?, ?, ?, ?)`
+      )
+      .bind(
+        crypto.randomUUID(),
+        params.userId,
+        params.openid,
+        params.unionid,
+        params.nickname,
+        params.avatarUrl,
+        now,
+        now
+      ),
+  ]
+
+  if (credits > 0) {
+    stmts.push(
+      db
+        .prepare(
+          `INSERT INTO credit_ledger (
+            id, user_id, delta, balance_after, type, ref_id, note, operator_id, created_at
+          ) VALUES (?, ?, ?, ?, 'register_bonus', NULL, ?, NULL, ?)`
+        )
+        .bind(
+          crypto.randomUUID(),
+          params.userId,
+          credits,
+          credits,
+          params.bonusNote || '微信新用户注册赠送积分',
+          now
+        )
+    )
+  }
+
+  await db.batch(stmts)
+
+  return {
+    id: params.userId,
+    username: params.username,
+    email: null,
+    displayName: params.displayName,
+    avatarUrl: params.avatarUrl || null,
+    hasPassword: false,
+    wechatBound: true,
+    wechatNickname: params.nickname || null,
+    role: 'user',
+    creditBalance: credits,
+    status: 'active',
+    createdAt: now,
+    lastLoginAt: now,
   }
 }

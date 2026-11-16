@@ -76,3 +76,37 @@ export function sanitizeGalleryAssetPath(raw: string): string | null {
   if (!clean.startsWith('img/') && !clean.startsWith('thumbs/')) return null
   return clean
 }
+
+export function sanitizeReturnToPath(raw: unknown): string {
+  if (typeof raw !== 'string') return '/'
+  const trimmed = raw.trim()
+  if (!trimmed.startsWith('/') || trimmed.startsWith('//') || trimmed.includes('\\')) {
+    return '/'
+  }
+  for (let i = 0; i < trimmed.length; i++) {
+    if (trimmed.charCodeAt(i) < 32) return '/'
+  }
+  return trimmed.slice(0, 500) || '/'
+}
+
+export function sanitizeCallbackBaseUrl(raw: unknown): { valid: boolean; value: string } {
+  if (raw === undefined || raw === null) return { valid: true, value: '' }
+  if (typeof raw !== 'string') return { valid: false, value: '' }
+  const trimmed = raw.trim().replace(/\/+$/, '')
+  if (!trimmed) return { valid: true, value: '' }
+  try {
+    const url = new URL(trimmed)
+    const isLocalHttp =
+      url.protocol === 'http:' && (url.hostname === 'localhost' || url.hostname === '127.0.0.1')
+    if (url.protocol !== 'https:' && !isLocalHttp) {
+      return { valid: false, value: '' }
+    }
+    if (url.username || url.password || url.search || url.hash) {
+      return { valid: false, value: '' }
+    }
+    const cleanPath = url.pathname === '/' ? '' : url.pathname.replace(/\/+$/, '')
+    return { valid: true, value: `${url.origin}${cleanPath}` }
+  } catch {
+    return { valid: false, value: '' }
+  }
+}

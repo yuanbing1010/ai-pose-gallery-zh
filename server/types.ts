@@ -12,6 +12,8 @@ export interface Env {
   GEMINI_API_KEY?: string
   OPENAI_API_KEY?: string
   XAI_API_KEY?: string
+  WECHAT_APP_ID?: string
+  WECHAT_APP_SECRET?: string
 }
 
 export interface AppVariables {

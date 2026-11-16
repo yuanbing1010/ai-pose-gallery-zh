@@ -15,8 +15,11 @@ import {
   createSession,
   createUserWithBonus,
   getAdminProviderSlots,
+  getAdminWechatConfig,
   getPlatformConfig,
   getSuppliers,
+  getUserWithOAuthById,
+  mapAdminUserRow,
   mapJobRow,
   mapLedgerRow,
   mapUserRow,
@@ -25,6 +28,7 @@ import {
   sanitizeStylePresetsInput,
   sanitizeStyleSubcategoriesInput,
   savePlatformConfig,
+  saveWechatOAuthConfig,
   type ChannelRow,
   type JobRow,
   type ProviderRow,
@@ -33,7 +37,13 @@ import {
 } from '../db'
 import { requireAdmin, setSessionCookie } from '../middleware'
 import type { AppEnv } from '../types'
-import { parseIntSafe, validatePassword, validateUsername } from '../validation'
+import {
+  parseIntSafe,
+  sanitizeCallbackBaseUrl,
+  validateEmail,
+  validatePassword,
+  validateUsername,
+} from '../validation'
 
 export const adminRoutes = new Hono<AppEnv>()
 
@@ -97,6 +107,7 @@ adminRoutes.get('/overview', async (c) => {
     supplierStats,
     channelStats,
     assetsStats,
+    platformCfg,
   ] = await Promise.all([
     c.env.DB.prepare(
       `SELECT COUNT(*) AS total,
@@ -125,6 +136,7 @@ adminRoutes.get('/overview', async (c) => {
          (SELECT COUNT(*) FROM uploaded_assets) + (SELECT COUNT(*) FROM generation_jobs WHERE result_r2_key IS NOT NULL) AS total_files,
          COALESCE((SELECT SUM(bytes) FROM uploaded_assets), 0) + COALESCE((SELECT SUM(result_bytes) FROM generation_jobs), 0) AS total_bytes`
     ).first<{ total_files: number; total_bytes: number }>(),
+    getPlatformConfig(c.env.DB),
   ])
 
   const payload: AdminOverviewPayload = {
@@ -142,6 +154,7 @@ adminRoutes.get('/overview', async (c) => {
     r2AssetsTotal: assetsStats?.total_files ?? 0,
     r2TotalBytes: assetsStats?.total_bytes ?? 0,
     encryptionConfigured: Boolean(c.env.APP_ENCRYPTION_KEY?.trim()),
+    allowRegistration: platformCfg.allowRegistration,
   }
 
   c.header('Cache-Control', 'no-store')
@@ -674,40 +687,104 @@ adminRoutes.put('/settings', async (c) => {
   return c.json({ platform: next })
 })
 
+adminRoutes.get('/wechat', async (c) => {
+  const wechat = await getAdminWechatConfig(c.env)
+  c.header('Cache-Control', 'no-store')
+  return c.json({ wechat })
+})
+
+adminRoutes.put('/wechat', async (c) => {
+  let body: Record<string, unknown>
+  try {
+    body = await c.req.json()
+  } catch {
+    return c.json({ error: { message: '请求体格式错误' } }, 400)
+  }
+
+  let callbackBaseUrl: string | undefined
+  if (body.callbackBaseUrl !== undefined) {
+    const check = sanitizeCallbackBaseUrl(body.callbackBaseUrl)
+    if (!check.valid) {
+      return c.json(
+        {
+          error: {
+            message: '回调基础地址必须为合法的 https:// 域名（本地联调可填 http://localhost 或 http://127.0.0.1）',
+          },
+        },
+        400
+      )
+    }
+    callbackBaseUrl = check.value
+  }
+
+  let appId: string | undefined
+  if (typeof body.appId === 'string') {
+    const cleanId = body.appId.trim()
+    if (cleanId && !/^[a-zA-Z0-9_-]{4,64}$/.test(cleanId)) {
+      return c.json({ error: { message: '微信 AppID 格式不正确' } }, 400)
+    }
+    appId = cleanId
+  }
+
+  const wechat = await saveWechatOAuthConfig(c.env, {
+    enabled: typeof body.enabled === 'boolean' ? body.enabled : undefined,
+    appId,
+    appSecret: typeof body.appSecret === 'string' ? body.appSecret : undefined,
+    clearAppSecret: body.clearAppSecret === true,
+    callbackBaseUrl,
+  })
+  c.header('Cache-Control', 'no-store')
+  return c.json({ wechat })
+})
+
 adminRoutes.get('/users', async (c) => {
   const q = (c.req.query('q') || '').trim().toLowerCase()
+  const filter = (c.req.query('filter') || 'all').trim()
   const limit = Math.min(100, Math.max(1, Number(c.req.query('limit') || '50') || 50))
   const offset = Math.max(0, Number(c.req.query('offset') || '0') || 0)
 
-  const whereClause = q
-    ? `WHERE u.username_lower LIKE ? OR u.email_lower LIKE ? OR LOWER(u.display_name) LIKE ?`
-    : ''
-  const pattern = `%${q}%`
+  const clauses: string[] = []
+  const bindings: unknown[] = []
 
-  const listStmt = q
-    ? c.env.DB.prepare(
-        `SELECT u.*, COUNT(j.id) AS jobs_count
-         FROM users u
-         LEFT JOIN generation_jobs j ON j.user_id = u.id
-         ${whereClause}
-         GROUP BY u.id
-         ORDER BY u.created_at DESC
-         LIMIT ? OFFSET ?`
-      ).bind(pattern, pattern, pattern, limit, offset)
-    : c.env.DB.prepare(
-        `SELECT u.*, COUNT(j.id) AS jobs_count
-         FROM users u
-         LEFT JOIN generation_jobs j ON j.user_id = u.id
-         GROUP BY u.id
-         ORDER BY u.created_at DESC
-         LIMIT ? OFFSET ?`
-      ).bind(limit, offset)
+  if (q) {
+    const pattern = `%${q}%`
+    clauses.push(
+      `(u.username_lower LIKE ? OR u.email_lower LIKE ? OR LOWER(u.display_name) LIKE ? OR LOWER(COALESCE(u.admin_note, '')) LIKE ? OR LOWER(COALESCE(oa.nickname, '')) LIKE ?)`
+    )
+    bindings.push(pattern, pattern, pattern, pattern, pattern)
+  }
 
-  const countStmt = q
-    ? c.env.DB.prepare(
-        `SELECT COUNT(*) AS total FROM users u ${whereClause}`
-      ).bind(pattern, pattern, pattern)
-    : c.env.DB.prepare(`SELECT COUNT(*) AS total FROM users`)
+  if (filter === 'active') {
+    clauses.push(`u.status = 'active'`)
+  } else if (filter === 'disabled') {
+    clauses.push(`u.status = 'disabled'`)
+  } else if (filter === 'admin') {
+    clauses.push(`u.role = 'admin'`)
+  }
+
+  const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : ''
+
+  const listStmt = c.env.DB.prepare(
+    `SELECT u.*,
+            MAX(oa.openid) AS wechat_openid,
+            MAX(oa.nickname) AS wechat_nickname,
+            MAX(oa.avatar_url) AS wechat_avatar_url,
+            COUNT(j.id) AS jobs_count
+     FROM users u
+     LEFT JOIN oauth_accounts oa ON oa.user_id = u.id AND oa.provider = 'wechat_open'
+     LEFT JOIN generation_jobs j ON j.user_id = u.id
+     ${whereClause}
+     GROUP BY u.id
+     ORDER BY u.created_at DESC
+     LIMIT ? OFFSET ?`
+  ).bind(...bindings, limit, offset)
+
+  const countStmt = c.env.DB.prepare(
+    `SELECT COUNT(DISTINCT u.id) AS total
+     FROM users u
+     LEFT JOIN oauth_accounts oa ON oa.user_id = u.id AND oa.provider = 'wechat_open'
+     ${whereClause}`
+  ).bind(...bindings)
 
   const [listRes, countRes] = await Promise.all([
     listStmt.all<UserRow & { jobs_count: number }>(),
@@ -716,11 +793,172 @@ adminRoutes.get('/users', async (c) => {
 
   c.header('Cache-Control', 'no-store')
   return c.json({
-    users: (listRes.results || []).map((row) => ({
-      ...mapUserRow(row),
-      jobsCount: row.jobs_count || 0,
-    })),
+    users: (listRes.results || []).map((row) => mapAdminUserRow(row)),
     total: countRes?.total ?? 0,
+  })
+})
+
+adminRoutes.post('/users', async (c) => {
+  const adminUser = c.get('user')!
+  let body: Record<string, unknown>
+  try {
+    body = await c.req.json()
+  } catch {
+    return c.json({ error: { message: '请求体格式错误' } }, 400)
+  }
+
+  const username = validateUsername(body.username)
+  if (!username) {
+    return c.json({ error: { message: '用户名需为 3~32 位字母、数字、下划线或点/连字符' } }, 400)
+  }
+
+  const password = validatePassword(body.password)
+  if (!password) {
+    return c.json({ error: { message: '初始密码长度需在 6~128 位之间' } }, 400)
+  }
+
+  const emailCheck = validateEmail(body.email)
+  if (!emailCheck.valid) {
+    return c.json({ error: { message: '邮箱格式不正确' } }, 400)
+  }
+
+  const platform = await getPlatformConfig(c.env.DB)
+  const initialCredits =
+    body.initialCredits !== undefined && body.initialCredits !== ''
+      ? parseIntSafe(body.initialCredits, 0, 1_000_000)
+      : platform.registerBonusCredits
+  if (initialCredits === null) {
+    return c.json({ error: { message: '初始积分必须为 0~1000000 的整数' } }, 400)
+  }
+
+  const adminNote = typeof body.adminNote === 'string' ? body.adminNote.trim().slice(0, 120) : ''
+  const displayNameRaw = typeof body.displayName === 'string' ? body.displayName.trim() : ''
+  const displayName = (displayNameRaw || adminNote || username).slice(0, 40)
+  const role = body.role === 'admin' ? 'admin' : 'user'
+
+  const existingName = await c.env.DB.prepare(
+    `SELECT id FROM users WHERE username_lower = ?`
+  )
+    .bind(username.toLowerCase())
+    .first<{ id: string }>()
+  if (existingName) {
+    return c.json({ error: { message: '该用户名已被占用' } }, 409)
+  }
+
+  if (emailCheck.value) {
+    const existingEmail = await c.env.DB.prepare(
+      `SELECT id FROM users WHERE email_lower = ?`
+    )
+      .bind(emailCheck.value.toLowerCase())
+      .first<{ id: string }>()
+    if (existingEmail) {
+      return c.json({ error: { message: '该邮箱已被占用' } }, 409)
+    }
+  }
+
+  const passwordHash = await hashPassword(password)
+  const created = await createUserWithBonus(c.env.DB, {
+    id: crypto.randomUUID(),
+    username,
+    email: emailCheck.value,
+    displayName,
+    adminNote,
+    passwordHash,
+    role,
+    initialCredits,
+    bonusNote: `管理员创建账号赠送 ${initialCredits} 积分`,
+    operatorId: adminUser.id,
+  })
+
+  c.header('Cache-Control', 'no-store')
+  return c.json(
+    {
+      user: {
+        ...created,
+        jobsCount: 0,
+        adminNote,
+      },
+    },
+    201
+  )
+})
+
+adminRoutes.patch('/users/:id', async (c) => {
+  const adminUser = c.get('user')!
+  const targetUserId = c.req.param('id')
+  let body: Record<string, unknown>
+  try {
+    body = await c.req.json()
+  } catch {
+    return c.json({ error: { message: '请求体格式错误' } }, 400)
+  }
+
+  const target = await c.env.DB.prepare(`SELECT * FROM users WHERE id = ?`)
+    .bind(targetUserId)
+    .first<UserRow>()
+  if (!target) {
+    return c.json({ error: { message: '用户不存在' } }, 404)
+  }
+
+  const nextStatus =
+    body.status === 'active' || body.status === 'disabled' ? body.status : target.status
+  const nextRole = body.role === 'user' || body.role === 'admin' ? body.role : target.role
+
+  if (targetUserId === adminUser.id && (nextStatus !== target.status || nextRole !== target.role)) {
+    return c.json({ error: { message: '不能修改当前登录管理员自身的状态或角色' } }, 400)
+  }
+
+  const nextAdminNote =
+    typeof body.adminNote === 'string'
+      ? body.adminNote.trim().slice(0, 120)
+      : target.admin_note || ''
+
+  const nextDisplayName =
+    typeof body.displayName === 'string' && body.displayName.trim()
+      ? body.displayName.trim().slice(0, 40)
+      : target.display_name
+
+  let nextPasswordHash = target.password_hash
+  let passwordChanged = false
+  if (typeof body.newPassword === 'string' && body.newPassword.length > 0) {
+    const validPwd = validatePassword(body.newPassword)
+    if (!validPwd) {
+      return c.json({ error: { message: '重置密码长度需在 6~128 位之间' } }, 400)
+    }
+    nextPasswordHash = await hashPassword(validPwd)
+    passwordChanged = true
+  }
+
+  await c.env.DB.prepare(
+    `UPDATE users
+     SET display_name = ?, admin_note = ?, password_hash = ?, status = ?, role = ?, updated_at = ?
+     WHERE id = ?`
+  )
+    .bind(
+      nextDisplayName,
+      nextAdminNote,
+      nextPasswordHash,
+      nextStatus,
+      nextRole,
+      Date.now(),
+      targetUserId
+    )
+    .run()
+
+  if (nextStatus === 'disabled' || (passwordChanged && targetUserId !== adminUser.id)) {
+    await c.env.DB.prepare(`DELETE FROM sessions WHERE user_id = ?`).bind(targetUserId).run()
+  }
+
+  const updated = await getUserWithOAuthById(c.env.DB, targetUserId)
+  const jobCountRow = await c.env.DB.prepare(
+    `SELECT COUNT(*) AS cnt FROM generation_jobs WHERE user_id = ?`
+  )
+    .bind(targetUserId)
+    .first<{ cnt: number }>()
+
+  c.header('Cache-Control', 'no-store')
+  return c.json({
+    user: updated ? mapAdminUserRow({ ...updated, jobs_count: jobCountRow?.cnt ?? 0 }) : null,
   })
 })
 
@@ -788,16 +1026,14 @@ adminRoutes.patch('/users/:id/status', async (c) => {
     await c.env.DB.prepare(`DELETE FROM sessions WHERE user_id = ?`).bind(targetUserId).run()
   }
 
-  const updated = await c.env.DB.prepare(`SELECT * FROM users WHERE id = ?`)
-    .bind(targetUserId)
-    .first<UserRow>()
+  const updated = await getUserWithOAuthById(c.env.DB, targetUserId)
   return c.json({ user: updated ? mapUserRow(updated) : null })
 })
 
 adminRoutes.get('/ledger', async (c) => {
   const limit = Math.min(200, Math.max(1, Number(c.req.query('limit') || '80') || 80))
   const res = await c.env.DB.prepare(
-    `SELECT l.*, u.username
+    `SELECT l.*, u.username, u.admin_note AS user_admin_note
      FROM credit_ledger l
      LEFT JOIN users u ON u.id = l.user_id
      ORDER BY l.created_at DESC

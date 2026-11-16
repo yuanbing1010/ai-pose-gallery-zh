@@ -1,5 +1,5 @@
 import { Hono } from 'hono'
-import { claimRedeemCode, mapLedgerRow } from '../db'
+import { claimRedeemCode, getUserWithOAuthById, mapLedgerRow, mapUserRow } from '../db'
 import { requireAuth } from '../middleware'
 import type { AppEnv } from '../types'
 
@@ -52,4 +52,44 @@ accountRoutes.post('/redeem', async (c) => {
       400
     )
   }
+})
+
+accountRoutes.post('/wechat/unbind', async (c) => {
+  const user = c.get('user')!
+  const row = await c.env.DB.prepare(`SELECT id, password_hash FROM users WHERE id = ?`)
+    .bind(user.id)
+    .first<{ id: string; password_hash: string }>()
+  if (!row) {
+    return c.json({ error: { message: '账号不存在' } }, 404)
+  }
+
+  const bound = await c.env.DB.prepare(
+    `SELECT id FROM oauth_accounts WHERE user_id = ? AND provider = 'wechat_open' LIMIT 1`
+  )
+    .bind(user.id)
+    .first<{ id: string }>()
+
+  if (bound && !row.password_hash) {
+    return c.json(
+      {
+        error: {
+          message: '当前账号尚未设置登录密码，请先设置登录密码后再解绑微信，以免无法登录',
+        },
+      },
+      400
+    )
+  }
+
+  await c.env.DB.prepare(
+    `DELETE FROM oauth_accounts WHERE user_id = ? AND provider = 'wechat_open'`
+  )
+    .bind(user.id)
+    .run()
+
+  const fresh = await getUserWithOAuthById(c.env.DB, user.id)
+  c.header('Cache-Control', 'no-store')
+  return c.json({
+    ok: true,
+    user: fresh ? mapUserRow(fresh) : null,
+  })
 })

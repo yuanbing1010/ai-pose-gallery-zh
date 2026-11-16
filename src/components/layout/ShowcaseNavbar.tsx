@@ -33,6 +33,7 @@ export function ShowcaseNavbar() {
   const active = activeNavTo(pathname)
   const {
     user,
+    platform,
     recipe,
     isGenerating,
     history,
@@ -41,6 +42,8 @@ export function ShowcaseNavbar() {
   } = useStudio()
   const { theme, setTheme } = useTheme()
   const [mobileOpen, setMobileOpen] = useState(false)
+  const [avatarErrorUrl, setAvatarErrorUrl] = useState<string | null>(null)
+  const showAvatar = Boolean(user?.avatarUrl && avatarErrorUrl !== user.avatarUrl)
 
   const selectedCount = [recipe.portrait, recipe.costume, recipe.pose].filter(Boolean).length
   const hasRunningJob = isGenerating || history.some((item) => item.status === 'processing')
@@ -149,7 +152,7 @@ export function ShowcaseNavbar() {
                       className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-3.5 py-2.5 text-xs font-semibold text-primary-foreground"
                     >
                       <LogInIcon className="size-3.5" />
-                      <span>登录 / 注册</span>
+                      <span>{platform.allowRegistration ? '登录 / 注册' : '登录账号'}</span>
                     </button>
                   )}
                 </div>
@@ -218,9 +221,19 @@ export function ShowcaseNavbar() {
                 type="button"
                 onClick={() => openAccountModal('overview')}
                 title="个人账户与流水"
-                className="hidden h-9 max-w-[120px] shrink-0 items-center gap-1.5 rounded-full border border-border bg-card px-3 text-xs font-semibold text-foreground transition-colors hover:bg-muted sm:inline-flex"
+                className="hidden h-9 max-w-[130px] shrink-0 items-center gap-1.5 rounded-full border border-border bg-card px-3 text-xs font-semibold text-foreground transition-colors hover:bg-muted sm:inline-flex"
               >
-                <UserRoundIcon className="size-3.5 shrink-0 text-muted-foreground" />
+                {showAvatar && user.avatarUrl ? (
+                  <img
+                    src={user.avatarUrl}
+                    alt={user.displayName}
+                    referrerPolicy="no-referrer"
+                    onError={() => setAvatarErrorUrl(user.avatarUrl || null)}
+                    className="size-4.5 shrink-0 rounded-full object-cover"
+                  />
+                ) : (
+                  <UserRoundIcon className="size-3.5 shrink-0 text-muted-foreground" />
+                )}
                 <span className="truncate">{user.displayName}</span>
               </button>
 

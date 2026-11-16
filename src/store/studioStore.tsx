@@ -27,12 +27,14 @@ import {
   redeemCodeApi,
   registerApi,
   startGenerationStreamApi,
+  unbindWechatApi,
   uploadReferenceFileApi,
   type StreamGenerationProgress,
 } from '@/lib/apiClient'
 import { dataUrlToBlob, stitchRecipeCanvas } from '@/services/aiGenerator'
 import {
   DEFAULT_PLATFORM_CONFIG,
+  DEFAULT_WECHAT_LOGIN_INFO,
   PROVIDER_ORDER,
   getEffectiveStyleCatalog,
   getStudioArtist,
@@ -49,6 +51,7 @@ import type {
   PublicUser,
   RecipeState,
   StudioAspectRatio,
+  WechatLoginPublicInfo,
 } from '@/types/gallery'
 
 const PREFS_KEY = 'pose_atlas_client_prefs_v4'
@@ -148,6 +151,7 @@ interface StudioZustandStore {
   providersLoaded: boolean
   platform: PlatformConfig
   providers: ProviderPublicInfo[]
+  wechatLogin: WechatLoginPublicInfo
   recipe: RecipeState
   selectedProvider: ImageProviderId
   stylePreset: string
@@ -171,6 +175,7 @@ interface StudioZustandStore {
   setProvidersLoaded: (val: boolean) => void
   setPlatform: (val: PlatformConfig) => void
   setProviders: (val: ProviderPublicInfo[]) => void
+  setWechatLogin: (val: WechatLoginPublicInfo) => void
   setRecipe: (updater: Updater<RecipeState>) => void
   setSelectedProvider: (val: ImageProviderId) => void
   setStylePreset: (val: string) => void
@@ -201,6 +206,7 @@ export const useStudioStore = create<StudioZustandStore>((set) => {
     providersLoaded: false,
     platform: DEFAULT_PLATFORM_CONFIG,
     providers: DEFAULT_PUBLIC_PROVIDERS,
+    wechatLogin: DEFAULT_WECHAT_LOGIN_INFO,
     recipe: rec,
     selectedProvider: prefs.selectedProvider,
     stylePreset: prefs.stylePreset,
@@ -225,6 +231,7 @@ export const useStudioStore = create<StudioZustandStore>((set) => {
     setProvidersLoaded: (providersLoaded) => set({ providersLoaded }),
     setPlatform: (platform) => set({ platform }),
     setProviders: (providers) => set({ providers }),
+    setWechatLogin: (wechatLogin) => set({ wechatLogin }),
     setRecipe: (updater) =>
       set((s) => ({ recipe: typeof updater === 'function' ? updater(s.recipe) : updater })),
     setSelectedProvider: (selectedProvider) => set({ selectedProvider }),
@@ -259,6 +266,7 @@ interface StudioContextValue {
   providersLoaded: boolean
   platform: PlatformConfig
   providers: ProviderPublicInfo[]
+  wechatLogin: WechatLoginPublicInfo
   hydrated: boolean
   recipe: RecipeState
   selectedProvider: ImageProviderId
@@ -291,6 +299,7 @@ interface StudioContextValue {
     password: string
   }) => Promise<PublicUser>
   logout: () => Promise<void>
+  unbindWechat: () => Promise<PublicUser | null>
   redeemCode: (code: string) => Promise<{ credits: number; creditBalance: number }>
   setSelectedProvider: (id: ImageProviderId) => void
   setStylePreset: (preset: string) => void
@@ -330,6 +339,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     providersLoaded,
     platform,
     providers,
+    wechatLogin,
     recipe,
     selectedProvider,
     stylePreset,
@@ -353,6 +363,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     setProvidersLoaded,
     setPlatform,
     setProviders,
+    setWechatLogin,
     setRecipe,
     setSelectedProvider,
     setStylePreset,
@@ -422,6 +433,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       setUser(data.user)
       setPlatform(data.platform)
       setProviders(data.providers)
+      setWechatLogin(data.wechatLogin ?? DEFAULT_WECHAT_LOGIN_INFO)
       setProvidersLoaded(true)
 
       setSafeMode(data.platform.defaultSafeMode)
@@ -479,6 +491,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     setSelectedProvider,
     setStylePreset,
     setUser,
+    setWechatLogin,
   ])
 
   const refreshBootstrapIfStale = useCallback(
@@ -493,6 +506,44 @@ export function StudioProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     void refreshBootstrap()
   }, [refreshBootstrap])
+
+  // 处理微信 OAuth 回调重定向回前端后的状态提示并清理 URL 参数
+  const wxCallbackHandledRef = useRef(false)
+  useEffect(() => {
+    if (wxCallbackHandledRef.current || typeof window === 'undefined') return
+    const url = new URL(window.location.href)
+    const wxStatus = url.searchParams.get('wx_status')
+    if (!wxStatus) return
+    wxCallbackHandledRef.current = true
+    const wxCredits = Number(url.searchParams.get('wx_credits') || '0')
+    const wxMessage = url.searchParams.get('wx_message') || ''
+    url.searchParams.delete('wx_status')
+    url.searchParams.delete('wx_credits')
+    url.searchParams.delete('wx_message')
+    window.history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`)
+
+    const timer = window.setTimeout(() => {
+      if (wxStatus === 'login') {
+        toast.success('微信登录成功，欢迎回来！')
+      } else if (wxStatus === 'registered') {
+        toast.success(
+          wxCredits > 0
+            ? `微信注册成功！已赠送 ${wxCredits} 积分`
+            : '微信注册成功！'
+        )
+      } else if (wxStatus === 'bound') {
+        toast.success('微信账号已成功绑定')
+        setAccountModalTab('security')
+        setAccountModalOpen(true)
+      } else if (wxStatus === 'cancelled') {
+        toast.info(wxMessage || '已取消微信授权')
+      } else if (wxStatus === 'error') {
+        toast.error(wxMessage || '微信登录失败，请重试')
+      }
+    }, 80)
+
+    return () => window.clearTimeout(timer)
+  }, [setAccountModalOpen, setAccountModalTab])
 
   useEffect(() => {
     const onFocusOrVisible = () => {
@@ -610,6 +661,12 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     setPreviewUrl('')
     setAccountModalOpen(false)
     await refreshBootstrap()
+  }
+
+  const unbindWechat = async () => {
+    const res = await unbindWechatApi()
+    setUser(res.user)
+    return res.user
   }
 
   const redeemCode = async (code: string) => {
@@ -1087,6 +1144,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
         providersLoaded,
         platform,
         providers,
+        wechatLogin,
         hydrated: idbHydrated,
         recipe,
         selectedProvider,
@@ -1114,6 +1172,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
         login,
         register,
         logout,
+        unbindWechat,
         redeemCode,
         setSelectedProvider,
         setStylePreset,

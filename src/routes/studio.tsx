@@ -710,7 +710,7 @@ function StudioPage() {
         </div>
 
         <div className="flex flex-wrap items-center gap-1.5">
-          {!user && bootstrapLoaded && platform.registerBonusCredits > 0 && (
+          {!user && bootstrapLoaded && platform.allowRegistration && platform.registerBonusCredits > 0 && (
             <Button
               type="button"
               variant="outline"

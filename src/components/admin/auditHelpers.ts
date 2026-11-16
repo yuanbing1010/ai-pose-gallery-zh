@@ -26,20 +26,95 @@ export const ADMIN_TABS: readonly AdminTab[] = [
   'jobs',
 ]
 
-export function getAdminNavItems(): Array<{
+export interface AdminNavItemMeta {
   id: AdminTab
   code: string
   label: string
-}> {
+  group: 'operations' | 'models' | 'policy'
+}
+
+export interface AdminNavGroupMeta {
+  id: 'operations' | 'models' | 'policy'
+  label: string
+  items: AdminNavItemMeta[]
+}
+
+export interface AdminConfirmAction {
+  title: string
+  description: string
+  confirmLabel: string
+  destructive?: boolean
+  run: () => Promise<void>
+}
+
+export const ADMIN_INPUT_CLS = 'h-8 rounded-none font-mono text-xs'
+export const ADMIN_TEXT_INPUT_CLS = 'h-8 rounded-none text-xs'
+export const ADMIN_SELECT_CLS = 'h-8 rounded-none text-xs'
+export const ADMIN_BTN_CLS = 'h-8 rounded-none text-xs'
+export const ADMIN_BTN_SM_CLS = 'h-7 rounded-none text-xs'
+export const ADMIN_DIALOG_CLS = 'rounded-none border-zinc-950 dark:border-zinc-200'
+
+export function getAdminNavItems(): AdminNavItemMeta[] {
   return [
-    { id: 'overview', code: '00', label: '系统总览' },
-    { id: 'suppliers', code: '01', label: '供应商管理' },
-    { id: 'api', code: '02', label: '模型渠道与定价' },
-    { id: 'users', code: '03', label: '用户与积分流水' },
-    { id: 'redeem', code: '04', label: '兑换码卡密' },
-    { id: 'safety', code: '05', label: '安全、分类与画风' },
-    { id: 'jobs', code: '06', label: '生成记录审计' },
+    { id: 'overview', code: '00', label: '系统总览', group: 'operations' },
+    { id: 'users', code: '01', label: '成员与积分', group: 'operations' },
+    { id: 'redeem', code: '02', label: '兑换码卡密', group: 'operations' },
+    { id: 'suppliers', code: '03', label: '供应商凭证', group: 'models' },
+    { id: 'api', code: '04', label: '模型渠道定价', group: 'models' },
+    { id: 'jobs', code: '05', label: '生成记录审计', group: 'models' },
+    { id: 'safety', code: '06', label: '准入、画风与模板', group: 'policy' },
   ]
+}
+
+export function getAdminNavGroups(): AdminNavGroupMeta[] {
+  const items = getAdminNavItems()
+  return [
+    {
+      id: 'operations',
+      label: '运营与成员',
+      items: items.filter((i) => i.group === 'operations'),
+    },
+    {
+      id: 'models',
+      label: '模型与链路',
+      items: items.filter((i) => i.group === 'models'),
+    },
+    {
+      id: 'policy',
+      label: '安全与内容',
+      items: items.filter((i) => i.group === 'policy'),
+    },
+  ]
+}
+
+export function formatAdminBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`
+}
+
+export function formatAdminDateTime(ts: number): string {
+  return new Date(ts).toLocaleString('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+}
+
+export function formatAdminShortDuration(ms: number | null): string {
+  if (ms === null || !Number.isFinite(ms)) return '—'
+  const safe = Math.max(0, Math.round(ms))
+  if (safe < 1000) return `${safe}ms`
+  return `${(safe / 1000).toFixed(1)}s`
+}
+
+export function generateRandomPassword(length = 10): string {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789'
+  const buf = new Uint8Array(length)
+  crypto.getRandomValues(buf)
+  return Array.from(buf, (b) => alphabet[b % alphabet.length]).join('')
 }
 
 export const AUDIT_STATUS_META: Record<

@@ -8,9 +8,42 @@ import {
 } from './db'
 import type { AppEnv } from './types'
 
+export const WECHAT_STATE_COOKIE_NAME = 'pose_atlas_wx_state'
+const WECHAT_STATE_TTL_SEC = 10 * 60
+
 export function isSecureRequest(c: Context<AppEnv>): boolean {
   const proto = c.req.header('x-forwarded-proto') || new URL(c.req.url).protocol.replace(':', '')
-  return proto === 'https'
+  return proto.split(',')[0].trim().toLowerCase() === 'https'
+}
+
+export function getRequestOrigin(c: Context<AppEnv>): string {
+  const proto = isSecureRequest(c) ? 'https' : 'http'
+  const forwardedHost = c.req.header('x-forwarded-host')?.split(',')[0]?.trim()
+  const hostHeader = c.req.header('host')?.trim()
+  const rawHost = forwardedHost || hostHeader || new URL(c.req.url).host
+  const safeHost = /^[a-zA-Z0-9.-]+(:\d{1,5})?$/.test(rawHost)
+    ? rawHost
+    : new URL(c.req.url).host
+  return `${proto}://${safeHost}`
+}
+
+export function setWechatStateCookie(c: Context<AppEnv>, rawToken: string): void {
+  setCookie(c, WECHAT_STATE_COOKIE_NAME, rawToken, {
+    path: '/',
+    httpOnly: true,
+    sameSite: 'Lax',
+    secure: isSecureRequest(c),
+    maxAge: WECHAT_STATE_TTL_SEC,
+  })
+}
+
+export function clearWechatStateCookie(c: Context<AppEnv>): void {
+  deleteCookie(c, WECHAT_STATE_COOKIE_NAME, {
+    path: '/',
+    httpOnly: true,
+    sameSite: 'Lax',
+    secure: isSecureRequest(c),
+  })
 }
 
 export function setSessionCookie(c: Context<AppEnv>, rawToken: string): void {

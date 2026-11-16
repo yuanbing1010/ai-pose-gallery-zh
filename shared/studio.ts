@@ -1065,11 +1065,41 @@ export interface PublicUser {
   username: string
   email: string | null
   displayName: string
+  avatarUrl?: string | null
+  hasPassword?: boolean
+  wechatBound?: boolean
+  wechatNickname?: string | null
   role: UserRole
   creditBalance: number
   status: UserStatus
   createdAt: number
   lastLoginAt: number | null
+}
+
+export interface AdminUserItem extends PublicUser {
+  jobsCount: number
+  adminNote: string
+}
+
+export interface WechatLoginPublicInfo {
+  enabled: boolean
+  configured: boolean
+}
+
+export const DEFAULT_WECHAT_LOGIN_INFO: WechatLoginPublicInfo = {
+  enabled: false,
+  configured: false,
+}
+
+export interface AdminWechatConfigDTO {
+  enabled: boolean
+  appId: string
+  hasAppSecret: boolean
+  appSecretHint: string
+  callbackBaseUrl: string
+  hasEnvFallback: boolean
+  envAppIdHint: string
+  updatedAt: number
 }
 
 export interface ProviderPublicInfo {
@@ -1085,6 +1115,7 @@ export interface BootstrapPayload {
   user: PublicUser | null
   platform: PlatformConfig
   providers: ProviderPublicInfo[]
+  wechatLogin?: WechatLoginPublicInfo
 }
 
 export interface SupplierDTO {
@@ -1145,6 +1176,7 @@ export interface CreditLedgerItem {
   id: string
   userId: string
   username?: string
+  userAdminNote?: string
   delta: number
   balanceAfter: number
   type: CreditLedgerType
@@ -1337,4 +1369,5 @@ export interface AdminOverviewPayload {
   r2AssetsTotal: number
   r2TotalBytes: number
   encryptionConfigured: boolean
+  allowRegistration?: boolean
 }

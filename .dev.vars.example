@@ -8,3 +8,7 @@ DEV_ASSETS_ORIGIN=http://localhost:5173
 # 可选：首次启动自动初始化首个管理员账号（若已初始化管理员则忽略）
 # BOOTSTRAP_ADMIN_USERNAME=admin
 # BOOTSTRAP_ADMIN_PASSWORD=change-me-strong-password
+
+# 可选：微信开放平台（网站应用）扫码登录凭证兜底配置（也可直接在 /admin 管理端配置并加密存库）
+# WECHAT_APP_ID=wx1234567890abcdef
+# WECHAT_APP_SECRET=your-wechat-open-platform-app-secret

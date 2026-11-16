@@ -96,7 +96,7 @@ function AdminJobDetailPage() {
     return (
       <AdminShell
         activeTab="jobs"
-        directoryLabel={`06. 生成记录审计 / 详情 ${jobId.slice(0, 8)}`}
+        directoryLabel={`05. 生成记录审计 / 详情 ${jobId.slice(0, 8)}`}
         headerLeftExtra={backButton}
         loading={loading}
         onRefresh={() => void detailQuery.refetch()}
@@ -113,7 +113,7 @@ function AdminJobDetailPage() {
     return (
       <AdminShell
         activeTab="jobs"
-        directoryLabel={`06. 生成记录审计 / 详情 ${jobId.slice(0, 8)}`}
+        directoryLabel={`05. 生成记录审计 / 详情 ${jobId.slice(0, 8)}`}
         headerLeftExtra={backButton}
         loading={loading}
         onRefresh={() => void detailQuery.refetch()}
@@ -193,7 +193,7 @@ function AdminJobDetailPage() {
   return (
     <AdminShell
       activeTab="jobs"
-      directoryLabel={`06. 生成记录审计 / 详情 ${job.id.slice(0, 8)}`}
+      directoryLabel={`05. 生成记录审计 / 详情 ${job.id.slice(0, 8)}`}
       headerLeftExtra={backButton}
       loading={loading}
       onRefresh={() => void detailQuery.refetch()}

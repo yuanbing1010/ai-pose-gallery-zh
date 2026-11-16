@@ -2,6 +2,8 @@ export type {
   AdminOverviewPayload,
   AdminProviderConfig,
   AdminProviderSlotDTO,
+  AdminUserItem,
+  AdminWechatConfigDTO,
   AspectRatioOption,
   BootstrapPayload,
   CostumeItem,
@@ -41,6 +43,7 @@ export type {
   SupplierDTO,
   UserRole,
   UserStatus,
+  WechatLoginPublicInfo,
 } from '../../shared/studio'
 
 export interface StudioClientPrefs {

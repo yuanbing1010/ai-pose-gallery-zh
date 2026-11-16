@@ -1,6 +1,8 @@
 import type {
   AdminOverviewPayload,
   AdminProviderSlotDTO,
+  AdminUserItem,
+  AdminWechatConfigDTO,
   BootstrapPayload,
   CreditLedgerItem,
   GenerationHistoryItem,
@@ -94,13 +96,27 @@ export function logoutApi(): Promise<{ ok: boolean }> {
 }
 
 export function changePasswordApi(payload: {
-  currentPassword: string
+  currentPassword?: string
   newPassword: string
-}): Promise<{ ok: boolean }> {
+}): Promise<{ ok: boolean; hasPassword?: boolean }> {
   return requestJson('/api/auth/change-password', {
     method: 'POST',
     body: JSON.stringify(payload),
   })
+}
+
+export function startWechatAuthApi(payload: {
+  intent: 'login' | 'bind'
+  returnTo?: string
+}): Promise<{ authorizeUrl: string; iframeUrl: string; expiresAt: number }> {
+  return requestJson('/api/auth/wechat/start', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export function unbindWechatApi(): Promise<{ ok: boolean; user: PublicUser | null }> {
+  return requestJson('/api/account/wechat/unbind', { method: 'POST' })
 }
 
 export function fetchLedgerApi(limit = 50): Promise<{
@@ -414,6 +430,23 @@ export function updateAdminSettingsApi(patch: Partial<PlatformConfig>): Promise<
   })
 }
 
+export function fetchAdminWechatApi(): Promise<{ wechat: AdminWechatConfigDTO }> {
+  return requestJson('/api/admin/wechat')
+}
+
+export function updateAdminWechatApi(payload: {
+  enabled?: boolean
+  appId?: string
+  appSecret?: string
+  clearAppSecret?: boolean
+  callbackBaseUrl?: string
+}): Promise<{ wechat: AdminWechatConfigDTO }> {
+  return requestJson('/api/admin/wechat', {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  })
+}
+
 export function uploadAdminStylePreviewApi(params: {
   file: Blob
   filename: string
@@ -431,16 +464,53 @@ export function uploadAdminStylePreviewApi(params: {
   })
 }
 
-export function fetchAdminUsersApi(q = '', limit = 50, offset = 0): Promise<{
-  users: Array<PublicUser & { jobsCount: number }>
+export function fetchAdminUsersApi(
+  q = '',
+  limit = 50,
+  offset = 0,
+  filter: 'all' | 'active' | 'disabled' | 'admin' = 'all'
+): Promise<{
+  users: AdminUserItem[]
   total: number
 }> {
   const qs = new URLSearchParams({
     q,
     limit: String(limit),
     offset: String(offset),
+    filter,
   })
   return requestJson(`/api/admin/users?${qs.toString()}`)
+}
+
+export function createAdminUserApi(payload: {
+  username: string
+  password: string
+  displayName?: string
+  adminNote?: string
+  email?: string
+  initialCredits?: number
+  role?: UserRole
+}): Promise<{ user: AdminUserItem }> {
+  return requestJson('/api/admin/users', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export function updateAdminUserApi(
+  userId: string,
+  patch: {
+    displayName?: string
+    adminNote?: string
+    newPassword?: string
+    status?: UserStatus
+    role?: UserRole
+  }
+): Promise<{ user: AdminUserItem | null }> {
+  return requestJson(`/api/admin/users/${encodeURIComponent(userId)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(patch),
+  })
 }
 
 export function adjustUserCreditsApi(
