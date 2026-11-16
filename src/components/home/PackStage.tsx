@@ -1689,7 +1689,7 @@ export function PackStage({
                 </span>
               </div>
             </div>
-            <span className="hp-foot hp-l">造角牌盲盒</span>
+            <span className="hp-foot hp-l">角色配方盲盒</span>
             <span className="hp-foot hp-r">3 cards</span>
           </div>
 
@@ -1697,9 +1697,9 @@ export function PackStage({
             <i className="hp-fin" />
             <b className="hp-mark hp-sm">CASTDECK</b>
             <p className="hp-blurb">
-              造角牌 · CASTDECK
+              姿势 × 服装 × 人像参考工作台
               <br />
-              姿势 · 服装 · 人像三合一包
+              3-IN-1 角色配方卡包
             </p>
           </div>
 

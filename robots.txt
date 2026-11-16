@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://castdeck.ai/sitemap.xml
+Sitemap: https://castdeck.geminirun.com/sitemap.xml

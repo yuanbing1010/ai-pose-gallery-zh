@@ -11,7 +11,8 @@
     "db:migrate:local": "wrangler d1 migrations apply ai-pose-gallery-db --local",
     "db:migrate:remote": "wrangler d1 migrations apply ai-pose-gallery-db --remote",
     "build": "tsc -b && vite build",
-    "deploy": "bash scripts/build.sh && wrangler deploy",
+    "build:dist": "node scripts/build-dist.mjs",
+    "deploy": "node scripts/build-dist.mjs && wrangler deploy",
     "lint": "oxlint",
     "impeccable": "impeccable detect src/",
     "preview": "vite preview"

@@ -96,7 +96,7 @@ function GuidePage() {
         <div className="space-y-1.5">
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
             <span className="inline-block h-px w-5 bg-foreground/40" aria-hidden="true" />
-            <span>CASTDECK 造角牌 · 创作指南</span>
+            <span>CASTDECK · 创作指南</span>
           </div>
           <h1 className="text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
             使用指南与创作规范

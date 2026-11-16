@@ -33,8 +33,8 @@ export function AppSidebar() {
                   <LayersIcon className="size-4" />
                 </div>
                 <div className="grid flex-1 text-left leading-tight">
-                  <span className="truncate text-sm font-extrabold tracking-tight">CASTDECK · 造角牌</span>
-                  <span className="truncate text-[11px] text-muted-foreground">三合一角色灵感与画风合成台</span>
+                  <span className="truncate text-sm font-extrabold tracking-tight">CASTDECK</span>
+                  <span className="truncate text-[11px] text-muted-foreground">姿势 × 服装 × 人像参考工作台</span>
                 </div>
               </Link>
             </SidebarMenuButton>

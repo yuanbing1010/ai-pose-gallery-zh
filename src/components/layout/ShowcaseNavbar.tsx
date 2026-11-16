@@ -66,9 +66,11 @@ export function ShowcaseNavbar() {
                 <SheetHeader>
                   <SheetTitle className="flex items-center gap-2.5 text-left">
                     <BrandMark />
-                    <span className="flex flex-col leading-none">
-                      <span className="font-mono text-sm font-bold tracking-tight">CAST.DECK</span>
-                      <span className="text-[11px] font-medium text-muted-foreground">造角牌</span>
+                    <span className="flex flex-col gap-0.5 leading-none">
+                      <span className="font-mono text-sm font-bold tracking-tight">CASTDECK</span>
+                      <span className="text-[11px] font-medium text-muted-foreground">
+                        姿势 × 服装 × 人像参考工作台
+                      </span>
                     </span>
                   </SheetTitle>
                 </SheetHeader>
@@ -139,13 +141,8 @@ export function ShowcaseNavbar() {
 
             <Link to="/" className="group flex items-center gap-2.5">
               <BrandMark className="transition-transform duration-200 group-hover:scale-105 group-active:scale-95" />
-              <span className="flex items-baseline gap-1.5">
-                <span className="font-mono text-sm font-bold tracking-tight text-foreground">
-                  CAST.DECK
-                </span>
-                <span className="hidden text-xs font-medium text-muted-foreground sm:inline">
-                  造角牌
-                </span>
+              <span className="font-mono text-sm font-bold tracking-tight text-foreground">
+                CAST.DECK
               </span>
             </Link>
           </div>

@@ -13,7 +13,7 @@
     {
       "binding": "DB",
       "database_name": "ai-pose-gallery-db",
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      "database_id": "a98bb0b0-b534-4e03-be71-294a9bfd0685",
       "migrations_dir": "migrations"
     }
   ],
