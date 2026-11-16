@@ -20,6 +20,7 @@ import {
   ApiError,
   deleteGenerationApi,
   fetchBootstrap,
+  fetchGenerationByIdApi,
   fetchGenerationsApi,
   loginApi,
   logoutApi,
@@ -377,22 +378,45 @@ export function StudioProvider({ children }: { children: ReactNode }) {
 
   const isGeneratingRef = useRef(false)
   const abortRef = useRef<AbortController | null>(null)
+  const lastBootstrapAtRef = useRef(0)
+  const prevProcessingIdsRef = useRef<Set<string>>(new Set())
 
   const refreshHistory = useCallback(async () => {
     try {
       const res = await fetchGenerationsApi(60, 0)
+      const finishedFromProcessing = res.items.find(
+        (x) => prevProcessingIdsRef.current.has(x.id) && x.status === 'succeeded' && x.imageUrl
+      )
+      const failedFromProcessing = res.items.find(
+        (x) => prevProcessingIdsRef.current.has(x.id) && x.status === 'failed'
+      )
+      prevProcessingIdsRef.current = new Set(
+        res.items.filter((x) => x.status === 'processing').map((x) => x.id)
+      )
+
       setHistory(res.items)
       setUser((prev) => (prev ? { ...prev, creditBalance: res.creditBalance } : prev))
-      setPreviewUrl((prev) => {
-        if (prev && res.items.some((x) => x.imageUrl === prev)) return prev
-        return res.items.find((x) => x.status === 'succeeded' && x.imageUrl)?.imageUrl || ''
-      })
+      if (finishedFromProcessing) {
+        setPreviewUrl(finishedFromProcessing.imageUrl)
+        setGenerationError('')
+        toast.success('云端角色作品已生成并保存到作品集')
+      } else if (failedFromProcessing) {
+        const msg = failedFromProcessing.errorMessage || '生成失败，积分已全额退还'
+        setGenerationError(msg)
+        toast.error(msg)
+      } else {
+        setPreviewUrl((prev) => {
+          if (prev && res.items.some((x) => x.imageUrl === prev)) return prev
+          return res.items.find((x) => x.status === 'succeeded' && x.imageUrl)?.imageUrl || ''
+        })
+      }
     } catch {
       // ignore if logged out
     }
-  }, [setHistory, setPreviewUrl, setUser])
+  }, [setGenerationError, setHistory, setPreviewUrl, setUser])
 
   const refreshBootstrap = useCallback(async () => {
+    lastBootstrapAtRef.current = Date.now()
     try {
       const data = await fetchBootstrap()
       setUser(data.user)
@@ -457,9 +481,34 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     setUser,
   ])
 
+  const refreshBootstrapIfStale = useCallback(
+    (maxAgeMs = 8000) => {
+      if (Date.now() - lastBootstrapAtRef.current >= maxAgeMs) {
+        void refreshBootstrap()
+      }
+    },
+    [refreshBootstrap]
+  )
+
   useEffect(() => {
     void refreshBootstrap()
   }, [refreshBootstrap])
+
+  useEffect(() => {
+    const onFocusOrVisible = () => {
+      if (document.visibilityState === 'hidden') return
+      refreshBootstrapIfStale(10_000)
+      if (useStudioStore.getState().user && !isGeneratingRef.current) {
+        void refreshHistory()
+      }
+    }
+    window.addEventListener('focus', onFocusOrVisible)
+    document.addEventListener('visibilitychange', onFocusOrVisible)
+    return () => {
+      window.removeEventListener('focus', onFocusOrVisible)
+      document.removeEventListener('visibilitychange', onFocusOrVisible)
+    }
+  }, [refreshBootstrapIfStale, refreshHistory])
 
   // 本地草稿配方恢复（含未登录时上传的本地图片）
   useEffect(() => {
@@ -507,14 +556,15 @@ export function StudioProvider({ children }: { children: ReactNode }) {
 
   // Only persist safeMode when the user explicitly toggles it (never overwrite platform.defaultSafeMode on mount)
 
-  // 轮询未完成的云端任务（例如刷新页面后仍有 processing 任务）
+  // 轮询未完成的云端任务（例如刷新页面 / 切换后台 / SSE 重连恢复后的 processing 任务）
   useEffect(() => {
     if (!user || isGenerating) return
-    const hasProcessing = history.some((item) => item.status === 'processing')
-    if (!hasProcessing) return
+    const processingIds = history.filter((item) => item.status === 'processing').map((item) => item.id)
+    if (processingIds.length === 0) return
+    prevProcessingIdsRef.current = new Set(processingIds)
     const timer = window.setInterval(() => {
       void refreshHistory()
-    }, 3000)
+    }, 2000)
     return () => window.clearInterval(timer)
   }, [user, isGenerating, history, refreshHistory])
 
@@ -523,6 +573,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
   const openAuthModal = (tab: AuthModalTab = 'login') => {
     setAuthModalTab(tab)
     setAuthModalOpen(true)
+    refreshBootstrapIfStale(0)
   }
   const closeAuthModal = () => setAuthModalOpen(false)
   const openAccountModal = (tab: AccountModalTab = 'overview') => {
@@ -558,6 +609,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     setHistory([])
     setPreviewUrl('')
     setAccountModalOpen(false)
+    await refreshBootstrap()
   }
 
   const redeemCode = async (code: string) => {
@@ -854,7 +906,12 @@ export function StudioProvider({ children }: { children: ReactNode }) {
   }
 
   const startGeneration = async (sceneNote = '') => {
-    if (!idbHydrated || isGeneratingRef.current) return
+    if (idbHydrated === false || isGeneratingRef.current || history.some((x) => x.status === 'processing')) {
+      if (history.some((x) => x.status === 'processing')) {
+        toast.info('当前已有作品正在云端绘制，请稍候完成')
+      }
+      return
+    }
 
     if (!user) {
       toast.info('请先登录或注册账号后再开始生成')
@@ -882,10 +939,18 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       return
     }
 
+    const clientStartedAt = Date.now()
+    let activeJobId: string | null = null
     isGeneratingRef.current = true
     setIsGenerating(true)
     setGenerationError('')
-    setGenerationProgress({ stage: 'uploading', message: '正在上传并校验参考素材…', percent: 5 })
+    setGenerationProgress({
+      stage: 'uploading',
+      message: '正在上传并校验参考素材…',
+      startedAt: clientStartedAt,
+      stageStartedAt: clientStartedAt,
+      percent: 5,
+    })
     const controller = new AbortController()
     abortRef.current = controller
 
@@ -903,6 +968,15 @@ export function StudioProvider({ children }: { children: ReactNode }) {
         stitchedR2Key = stitchedRes.r2Key
       }
 
+      const pendingSummary =
+        [
+          uploadedRecipe.pose?.姿势名称,
+          uploadedRecipe.costume?.服装名称,
+          uploadedRecipe.portrait?.发型名称,
+        ]
+          .filter(Boolean)
+          .join(' + ') || '自定义合成'
+
       const result = await startGenerationStreamApi(
         {
           idempotencyKey: crypto.randomUUID(),
@@ -916,20 +990,78 @@ export function StudioProvider({ children }: { children: ReactNode }) {
         {
           signal: controller.signal,
           onProgress: (p) => {
-            setGenerationProgress(p)
-            if (typeof p.creditBalance === 'number') {
-              const nextBal = p.creditBalance
+            const normalized: StreamGenerationProgress = {
+              ...p,
+              startedAt: p.startedAt ?? clientStartedAt,
+              stageStartedAt: p.stageStartedAt ?? Date.now(),
+            }
+            setGenerationProgress(normalized)
+            if (typeof normalized.creditBalance === 'number') {
+              const nextBal = normalized.creditBalance
               setUser((prev) => (prev ? { ...prev, creditBalance: nextBal } : prev))
+            }
+            if (normalized.jobId) {
+              activeJobId = normalized.jobId
+              prevProcessingIdsRef.current.add(normalized.jobId)
+              setHistory((prev) => {
+                const idx = prev.findIndex((item) => item.id === normalized.jobId)
+                if (idx >= 0) {
+                  const next = [...prev]
+                  next[idx] = { ...next[idx], liveProgress: normalized }
+                  return next
+                }
+                const placeholder: GenerationHistoryItem = {
+                  id: normalized.jobId!,
+                  createdAt: normalized.startedAt ?? clientStartedAt,
+                  status: 'processing',
+                  creditsCost: providerMeta.creditCost,
+                  creditsRefunded: 0,
+                  provider: selectedProvider,
+                  model: providerMeta.artist.name,
+                  prompt: '',
+                  aspectRatio,
+                  stylePreset,
+                  imageUrl: '',
+                  recipeSummary: pendingSummary,
+                  liveProgress: normalized,
+                }
+                return [placeholder, ...prev]
+              })
             }
           },
         }
       )
 
+      prevProcessingIdsRef.current.delete(result.job.id)
       setUser((prev) => (prev ? { ...prev, creditBalance: result.creditBalance } : prev))
       setPreviewUrl(result.job.imageUrl)
       setHistory((prev) => [result.job, ...prev.filter((x) => x.id !== result.job.id)])
       toast.success('角色作品已生成并保存到云端作品集')
     } catch (e) {
+      // 若已建单后流连接被浏览器中断（例如移动端切后台或网络抖动），向服务端确认真实任务状态，避免误报失败
+      if (activeJobId && !(e instanceof ApiError)) {
+        try {
+          const latest = await fetchGenerationByIdApi(activeJobId)
+          if (latest.job.status === 'processing') {
+            setGenerationError('')
+            setHistory((prev) => [latest.job, ...prev.filter((x) => x.id !== latest.job.id)])
+            prevProcessingIdsRef.current.add(latest.job.id)
+            toast.info('连接短暂中断，云端仍在继续绘制并自动同步进度')
+            return
+          }
+          if (latest.job.status === 'succeeded' && latest.job.imageUrl) {
+            prevProcessingIdsRef.current.delete(latest.job.id)
+            setPreviewUrl(latest.job.imageUrl)
+            setHistory((prev) => [latest.job, ...prev.filter((x) => x.id !== latest.job.id)])
+            void refreshHistory()
+            toast.success('角色作品已在云端生成并保存')
+            return
+          }
+        } catch {
+          // fall through to normal error handling
+        }
+      }
+
       if (e instanceof ApiError && e.status === 401) {
         setUser(null)
         openAuthModal('login')

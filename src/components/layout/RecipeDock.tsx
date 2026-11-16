@@ -58,6 +58,7 @@ export function RecipeDock() {
   const {
     recipe,
     isGenerating,
+    history,
     setPortrait,
     setCostume,
     setPose,
@@ -84,6 +85,7 @@ export function RecipeDock() {
   const extraCount = (recipe.extraImages || []).length
   const coreSlotsFilled = [recipe.portrait, recipe.costume, recipe.pose].filter(Boolean).length
   const hasAnyItem = coreSlotsFilled > 0 || extraCount > 0
+  const hasRunningJob = isGenerating || history.some((item) => item.status === 'processing')
   const isFullReady = coreSlotsFilled === 3
   const isHome = pathname === '/'
 
@@ -211,7 +213,7 @@ export function RecipeDock() {
               isFullReady ? 'bg-[#D9381E] text-white hover:bg-[#C23018]' : 'bg-primary text-primary-foreground hover:opacity-90'
             )}
           >
-            <span>{isGenerating ? '绘制中…' : '去合成'}</span>
+            <span>{hasRunningJob ? '绘制中…' : '去合成'}</span>
             <ArrowRightIcon className="size-3" />
           </Link>
         </div>
@@ -489,13 +491,13 @@ export function RecipeDock() {
                     : 'bg-primary text-primary-foreground hover:opacity-90'
                 )}
               >
-                {isFullReady && !isGenerating && (
+                {isFullReady && !hasRunningJob && (
                   <span
                     aria-hidden="true"
                     className="cta-sheen-bar pointer-events-none absolute inset-y-0 left-0 w-10 bg-gradient-to-r from-transparent via-white/40 to-transparent"
                   />
                 )}
-                {isGenerating ? (
+                {hasRunningJob ? (
                   <>
                     <LoaderCircleIcon className="size-3.5 animate-spin sm:size-4" />
                     <span>绘制中…</span>

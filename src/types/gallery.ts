@@ -25,6 +25,7 @@ export type {
   PortraitItem,
   PoseGroup,
   PoseItem,
+  PromptTemplateConfig,
   ProviderChannelDTO,
   ProviderModelOption,
   ProviderParamsMap,

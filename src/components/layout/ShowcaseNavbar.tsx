@@ -34,6 +34,8 @@ export function ShowcaseNavbar() {
   const {
     user,
     recipe,
+    isGenerating,
+    history,
     openAuthModal,
     openAccountModal,
   } = useStudio()
@@ -41,6 +43,7 @@ export function ShowcaseNavbar() {
   const [mobileOpen, setMobileOpen] = useState(false)
 
   const selectedCount = [recipe.portrait, recipe.costume, recipe.pose].filter(Boolean).length
+  const hasRunningJob = isGenerating || history.some((item) => item.status === 'processing')
   const isStudio = active === '/studio'
   const isDark =
     theme === 'dark' ||
@@ -249,9 +252,19 @@ export function ShowcaseNavbar() {
               isStudio ? 'ring-2 ring-ring' : ''
             }`}
           >
-            <SparklesIcon className="size-3.5 shrink-0" />
-            <span className="sm:hidden">{selectedCount > 0 ? `合成 ${selectedCount}/3` : '合成台'}</span>
-            <span className="hidden sm:inline">{selectedCount > 0 ? `合成台 (${selectedCount}/3)` : '进入合成台'}</span>
+            {hasRunningJob && !isStudio ? (
+              <>
+                <span aria-hidden="true" className="size-2 shrink-0 animate-pulse rounded-full bg-[#E5A918]" />
+                <span className="sm:hidden">绘制中…</span>
+                <span className="hidden sm:inline">云端绘制中…</span>
+              </>
+            ) : (
+              <>
+                <SparklesIcon className="size-3.5 shrink-0" />
+                <span className="sm:hidden">{selectedCount > 0 ? `合成 ${selectedCount}/3` : '合成台'}</span>
+                <span className="hidden sm:inline">{selectedCount > 0 ? `合成台 (${selectedCount}/3)` : '进入合成台'}</span>
+              </>
+            )}
           </Link>
         </div>
       </div>

@@ -30,10 +30,22 @@ authRoutes.get('/bootstrap', async (c) => {
     getPlatformConfig(c.env.DB),
     getPublicProviders(c.env),
   ])
+  const sanitizedPlatform = {
+    ...platform,
+    defaultPromptPrefix: '',
+    defaultPromptSuffix: '',
+    defaultNegativePrompt: '',
+    promptTemplate: undefined,
+    stylePresets: platform.stylePresets.map((item) => ({
+      ...item,
+      prompt: '',
+      negativePrompt: undefined,
+    })),
+  }
   c.header('Cache-Control', 'no-store')
   return c.json({
     user: freshRow && freshRow.status === 'active' ? mapUserRow(freshRow) : null,
-    platform,
+    platform: sanitizedPlatform,
     providers,
   })
 })

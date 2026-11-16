@@ -533,6 +533,83 @@ function joinChineseClauses(parts: string[], conj = '或'): string {
   return `${parts.slice(0, -1).join('、')}${conj}${parts[parts.length - 1]}`
 }
 
+export interface PromptTemplateConfig {
+  intro: string
+  poseClause: string
+  costumeClause: string
+  portraitFullClause: string
+  portraitWithPoseOnlyClause: string
+  portraitOnlyClause: string
+  facelessClause: string
+  defaultPersonClause: string
+  extraClause: string
+  followStyleClause: string
+  baseConstraints: string
+  posePriorityConstraint: string
+  poseOnlyPriorityConstraint: string
+  faceVisibilityConstraint: string
+  portraitBuiltinNegative: string
+}
+
+export const DEFAULT_PROMPT_TEMPLATE: PromptTemplateConfig = {
+  intro: '请根据提供的 {{总数}} 张参考图（{{参考图序}}），生成一张完整的人物{{媒介}}：',
+  poseClause:
+    '让人物严格按照{{姿势图}}中人体模型的身体动作、四肢姿态、头部朝向与镜头角度摆姿势，明确区分正脸与后脑勺朝向（非纯粹背身时必须清晰展现头部正面或侧面轮廓）。',
+  costumeClause:
+    '让人物穿上{{服装图}}中展示的整套服装和配饰，每件单品的颜色、款式、面料与配饰都以{{服装图}}为准。',
+  portraitFullClause:
+    '人物的身份长相、脸型、五官特征、神态、发色与肤色严格以{{人像图}}为准（不沿用{{人像图}}的原始肢体动作与拍摄角度）；确保头身比例自然协调，双眉、双眼、鼻梁与嘴唇完整清晰显露在发丝之外，头发与刘海仅自然分布于头顶、两侧鬓角与脑后，严禁垂落头发遮挡眼睛或覆盖整张面部。',
+  portraitWithPoseOnlyClause:
+    '人物的身份长相、脸型、五官特征、神态、发色与肤色与原有服装严格以{{人像图}}为准（不沿用{{人像图}}的原始肢体动作与拍摄角度）；确保头身比例自然协调，双眉、双眼、鼻梁与嘴唇完整清晰显露在发丝之外，头发与刘海仅自然分布于头顶、两侧鬓角与脑后，严禁垂落头发遮挡眼睛或覆盖整张面部。',
+  portraitOnlyClause:
+    '{{人像图}}中的人物，保持其面部特征、脸型、五官、发型、发色、肤色一致，并确保眉眼鼻唇五官清晰外露、不被头发遮盖面部。',
+  facelessClause: '生成无五官展示人物，全身肤色自然统一。',
+  defaultPersonClause: '生成五官清晰、肤色自然的单一人物。',
+  extraClause: '{{附图列表}}，按标注或合理画面关系自然融入图像。',
+  followStyleClause: '沿用{{基准风格图}}参考图原本的视觉质感与成像风格。',
+  baseConstraints:
+    '1) 画面中没有任何文字、标志或水印。2) 确保人物从头到脚每处的肤色一致，头部、颈部、身体比例协调，服装及饰品穿戴自然贴合。',
+  posePriorityConstraint:
+    '人物的身体动作、四肢姿态、头部角度与镜头视角严格以{{姿势图}}为唯一事实依据（仅借鉴结构与朝向，不保留其无五官白模质感），忽略{{非姿势图}}中的原有动作与站位。',
+  poseOnlyPriorityConstraint:
+    '人物的身体动作、四肢姿态、头部角度与镜头视角严格以{{姿势图}}为唯一事实依据。',
+  faceVisibilityConstraint:
+    '面部区域必须保持干净完整与清晰可见：除非参考姿势明确为纯背面仅见后脑勺，否则人物五官（眉眼、鼻、嘴）必须朝向合理且完全不被头发、刘海或阴影遮盖。',
+  portraitBuiltinNegative:
+    '头发遮住整张脸，刘海完全挡住眼睛和五官，无五官空白脸，正反面头部朝向混淆',
+}
+
+export function mergePromptTemplate(
+  raw?: Partial<PromptTemplateConfig> | null
+): PromptTemplateConfig {
+  const src = raw && typeof raw === 'object' ? raw : {}
+  const pick = (key: keyof PromptTemplateConfig): string => {
+    const val = src[key]
+    return typeof val === 'string' ? val.trim().slice(0, 1500) : DEFAULT_PROMPT_TEMPLATE[key]
+  }
+  return {
+    intro: pick('intro'),
+    poseClause: pick('poseClause'),
+    costumeClause: pick('costumeClause'),
+    portraitFullClause: pick('portraitFullClause'),
+    portraitWithPoseOnlyClause: pick('portraitWithPoseOnlyClause'),
+    portraitOnlyClause: pick('portraitOnlyClause'),
+    facelessClause: pick('facelessClause'),
+    defaultPersonClause: pick('defaultPersonClause'),
+    extraClause: pick('extraClause'),
+    followStyleClause: pick('followStyleClause'),
+    baseConstraints: pick('baseConstraints'),
+    posePriorityConstraint: pick('posePriorityConstraint'),
+    poseOnlyPriorityConstraint: pick('poseOnlyPriorityConstraint'),
+    faceVisibilityConstraint: pick('faceVisibilityConstraint'),
+    portraitBuiltinNegative: pick('portraitBuiltinNegative'),
+  }
+}
+
+function renderPromptVars(template: string, vars: Record<string, string>): string {
+  return template.replace(/\{\{([^}]+)\}\}/g, (_, key: string) => vars[key.trim()] ?? '').trim()
+}
+
 export function buildRecipePrompt(
   recipe: RecipeState,
   stylePreset = 'none',
@@ -543,12 +620,14 @@ export function buildRecipePrompt(
     negativePrompt?: string
     stylePrompt?: string
     styleNegativePrompt?: string
+    promptTemplate?: Partial<PromptTemplateConfig> | null
     stylePromptOverrides?: Record<string, string>
     stylePresets?: StylePresetItem[]
     styleCategories?: StyleCategoryItem[]
     styleSubcategories?: StyleSubcategoryItem[]
   }
 ): string {
+  const tpl = mergePromptTemplate(promptOverrides?.promptTemplate)
   let idx = 0
   const poseIdx = recipe.pose ? idx++ : null
   const costumeIdx = recipe.costume ? idx++ : null
@@ -579,52 +658,44 @@ export function buildRecipePrompt(
 
   if (poseIdx !== null) {
     const poseTag = refTag(poseIdx)
-    // const poseSubjectDesc =
-    //   portraitIdx !== null && costumeIdx !== null
-    //     ? `最终画面中的人物是${refTag(portraitIdx)}中的人物，穿着${refTag(costumeIdx)}的服装`
-    //     : portraitIdx !== null
-    //       ? `最终画面中的人物是${refTag(portraitIdx)}中的人物`
-    //       : costumeIdx !== null
-    //         ? `最终画面中展示的人物穿着${refTag(costumeIdx)}的服装`
-    //         : '最终画面请生成自然完整的单一主体'
-    bullets.push(
-      `• 姿势：让人物严格按照${poseTag}中人体模型的脸部倾斜角度、身体动作和镜头角度摆姿势。`
-    )
+    const poseLine = renderPromptVars(tpl.poseClause, { 姿势图: poseTag })
+    if (poseLine) bullets.push(`• 姿势：${poseLine}`)
   }
 
   if (costumeIdx !== null) {
     const costumeTag = refTag(costumeIdx)
-    bullets.push(
-      `• 服装：让人物穿上${costumeTag}中展示的整套服装和配饰，每件单品的颜色、款式、面料与配饰都以${costumeTag}为准。`
-    )
+    const costumeLine = renderPromptVars(tpl.costumeClause, { 服装图: costumeTag })
+    if (costumeLine) bullets.push(`• 服装：${costumeLine}`)
   }
 
   if (portraitIdx !== null) {
     const portraitTag = refTag(portraitIdx)
-    if (poseIdx !== null && costumeIdx !== null) {
-      bullets.push(
-        `• 人物：仅仅只把${portraitTag}的面部特征、脸型、五官、发型、发色、肤色复制到人物的头部并确保头身比例协调，不复制${portraitTag}中的头部倾斜角度、身体动作、姿势等其他任何细节。`
-      )
-    } else if (poseIdx !== null) {
-      bullets.push(
-        `• 人物：仅仅只把${portraitTag}的面部特征、脸型、五官、发型、发色、肤色以及原有服装复制到人物的头部并确保头身比例协调，不复制${portraitTag}中的头部倾斜角度、身体动作、姿势等其他任何细节。`
-      )
-    } else {
-      bullets.push(
-        `• 人物：${portraitTag}中的人物，保持其面部特征、脸型、五官、发型、发色、肤色一致。`
-      )
-    }
-  } else if (faceless) {
-    bullets.push('• 人物：生成无五官展示人物，全身肤色自然统一。')
+    const poseTagOrEmpty = poseIdx !== null ? refTag(poseIdx) : ''
+    const personTemplate =
+      poseIdx !== null && costumeIdx !== null
+        ? tpl.portraitFullClause
+        : poseIdx !== null
+          ? tpl.portraitWithPoseOnlyClause
+          : tpl.portraitOnlyClause
+    const personLine = renderPromptVars(personTemplate, {
+      人像图: portraitTag,
+      姿势图: poseTagOrEmpty,
+    })
+    if (personLine) bullets.push(`• 人物：${personLine}`)
   } else {
-    bullets.push('• 人物：生成五官清晰、肤色自然的单一人物。')
+    const personLine = renderPromptVars(
+      faceless ? tpl.facelessClause : tpl.defaultPersonClause,
+      {}
+    )
+    if (personLine) bullets.push(`• 人物：${personLine}`)
   }
 
   if (extraRefs.length > 0) {
     const extraList = extraRefs
       .map((item) => (item.name ? `${refTag(item.index)}（${item.name}）` : refTag(item.index)))
       .join('、')
-    bullets.push(`• 补充参考：${extraList}，按标注或合理画面关系自然融入图像。`)
+    const extraLine = renderPromptVars(tpl.extraClause, { 附图列表: extraList })
+    if (extraLine) bullets.push(`• 补充参考：${extraLine}`)
   }
 
   const resolvedStyle = resolveStyleInfo(stylePreset, {
@@ -642,9 +713,11 @@ export function buildRecipePrompt(
       .map(refTag)
     const styleFollowClause =
       baseStyleRefs.length > 0
-        ? `沿用${joinChineseClauses(baseStyleRefs, '与')}参考图原本的视觉质感与成像风格。`
+        ? renderPromptVars(tpl.followStyleClause, {
+            基准风格图: joinChineseClauses(baseStyleRefs, '与'),
+          })
         : '自然真实的视觉质感与协调光影。'
-    bullets.push(`• 风格：${styleFollowClause}`)
+    if (styleFollowClause) bullets.push(`• 风格：${styleFollowClause}`)
   }
 
   const rawSceneNote = promptOverrides?.sceneNote?.trim() || ''
@@ -652,21 +725,42 @@ export function buildRecipePrompt(
     bullets.push(`• 额外要求：${ensureSentenceEnd(rawSceneNote)}`)
   }
 
-  const constraintItems: string[] = ['1) 画面中没有任何文字、标志或水印。2) 确保人物从头到脚每处的肤色一致，头部、颈部、身体比例协调，服装及饰品穿戴自然贴合。']
+  const constraintItems: string[] = []
+  const baseConstraintText = renderPromptVars(tpl.baseConstraints, {})
+  if (baseConstraintText) constraintItems.push(baseConstraintText)
+  let nextConstraintNum = baseConstraintText
+    ? baseConstraintText.includes('2)')
+      ? 3
+      : 2
+    : 1
+
   if (poseIdx !== null) {
     const poseTag = refTag(poseIdx)
     const nonPoseTags = [costumeIdx, portraitIdx, ...extraRefs.map((item) => item.index)]
       .filter((n): n is number => n !== null)
       .map(refTag)
     if (nonPoseTags.length > 0) {
-      constraintItems.push(
-        `3) 人物的脸部倾斜角度、身体动作和姿势严格以${poseTag}为唯一事实依据，如果${joinChineseClauses(nonPoseTags, '或')}中也有任何脸部倾斜角度、身体动作或姿势，请直接忽略并严格参考${poseTag}。`
-      )
+      const clause = renderPromptVars(tpl.posePriorityConstraint, {
+        姿势图: poseTag,
+        非姿势图: joinChineseClauses(nonPoseTags, '或'),
+      })
+      if (clause) constraintItems.push(`${nextConstraintNum++}) ${clause}`)
     } else {
-      constraintItems.push(`3) 人物的脸部倾斜角度、身体动作和姿势严格以${poseTag}为唯一事实依据。`)
+      const clause = renderPromptVars(tpl.poseOnlyPriorityConstraint, {
+        姿势图: poseTag,
+      })
+      if (clause) constraintItems.push(`${nextConstraintNum++}) ${clause}`)
     }
   }
-  bullets.push(`• 约束：${constraintItems.join('')}`)
+  if (portraitIdx !== null) {
+    const clause = renderPromptVars(tpl.faceVisibilityConstraint, {
+      人像图: refTag(portraitIdx),
+    })
+    if (clause) constraintItems.push(`${nextConstraintNum++}) ${clause}`)
+  }
+  if (constraintItems.length > 0) {
+    bullets.push(`• 约束：${constraintItems.join('')}`)
+  }
 
   const isPhotoCategory =
     !resolvedStyle.categoryId ||
@@ -676,18 +770,27 @@ export function buildRecipePrompt(
     )
   const subjectMedia = isPhotoCategory ? '照片' : '图像'
 
+  const builtinPortraitNegative =
+    portraitIdx !== null ? renderPromptVars(tpl.portraitBuiltinNegative, {}) : ''
   const effectiveNegative = mergeNegativePrompts(
-    promptOverrides?.negativePrompt,
-    promptOverrides?.styleNegativePrompt ?? resolvedStyle.negativePrompt
+    mergeNegativePrompts(
+      promptOverrides?.negativePrompt,
+      promptOverrides?.styleNegativePrompt ?? resolvedStyle.negativePrompt
+    ),
+    builtinPortraitNegative
   )
 
   const headerTags = Array.from({ length: totalRefs }, (_, i) => refTag(i)).join('、')
-  const headerRefDesc =
-    totalRefs === 1 ? `（${headerTags}）` : `（依次为${headerTags}）`
+  const headerRefDesc = totalRefs === 1 ? headerTags : `依次为${headerTags}`
+  const introLine = renderPromptVars(tpl.intro, {
+    总数: String(totalRefs),
+    参考图序: headerRefDesc,
+    媒介: subjectMedia,
+  })
 
   const lines: string[] = [
     ...(promptOverrides?.prefix?.trim() ? [promptOverrides.prefix.trim()] : []),
-    `请根据提供的 ${totalRefs} 张参考图${headerRefDesc}，生成一张完整的人物${subjectMedia}：`,
+    ...(introLine ? [introLine] : []),
     ...bullets,
     ...(effectiveNegative ? [`避免：${effectiveNegative}`] : []),
     ...(promptOverrides?.suffix?.trim() ? [promptOverrides.suffix.trim()] : []),
@@ -734,6 +837,7 @@ export interface PlatformConfig {
   defaultPromptPrefix: string
   defaultPromptSuffix: string
   defaultNegativePrompt: string
+  promptTemplate?: PromptTemplateConfig
   styleCategories: StyleCategoryItem[]
   styleSubcategories: StyleSubcategoryItem[]
   stylePresets: StylePresetItem[]
@@ -751,6 +855,7 @@ export const DEFAULT_PLATFORM_CONFIG: PlatformConfig = {
   defaultPromptPrefix: '',
   defaultPromptSuffix: '',
   defaultNegativePrompt: '',
+  promptTemplate: { ...DEFAULT_PROMPT_TEMPLATE },
   styleCategories: [
     { id: 'acg', label: 'ACG' },
   ],
@@ -1130,6 +1235,25 @@ export interface GenerationAttemptTrace {
   safetyBlocked?: boolean | null
 }
 
+export type GenerationLiveStage =
+  | 'uploading'
+  | 'deducted'
+  | 'resolving_refs'
+  | 'generating'
+  | 'retrying'
+  | 'downloading_output'
+  | 'saving'
+
+export interface GenerationLiveState {
+  stage: GenerationLiveStage
+  message: string
+  attempt?: number
+  totalAttempts?: number
+  startedAt?: number
+  stageStartedAt?: number
+  percent?: number
+}
+
 export interface GenerationAuditTrace {
   version: 1
   startedAt: number
@@ -1139,6 +1263,7 @@ export interface GenerationAuditTrace {
   creditsRefunded: number
   imagePassMode: ImagePassMode
   sendStitchedSheet: boolean
+  liveState?: GenerationLiveState | null
   promptBreakdown: {
     prefix: string
     suffix: string
@@ -1192,6 +1317,7 @@ export interface GenerationHistoryItem {
   imageUrl: string
   recipeSummary: string
   errorMessage?: string | null
+  liveProgress?: GenerationLiveState | null
   snapshot?: GenerationSnapshot
   auditTrace?: GenerationAuditTrace | null
 }

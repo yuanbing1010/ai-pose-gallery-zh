@@ -19,6 +19,7 @@ import {
   LoaderCircleIcon,
   PencilIcon,
   PlusIcon,
+  RotateCcwIcon,
   SearchIcon,
   ShieldAlertIcon,
   TagIcon,
@@ -75,6 +76,7 @@ import {
 import { toast } from '@/lib/notifications'
 import { getStyleVisualMeta } from '@/lib/stylePresets'
 import {
+  DEFAULT_PROMPT_TEMPLATE,
   DEFAULT_PROVIDER_PARAMS,
   NONE_STYLE_PRESET,
   PROVIDER_META,
@@ -84,6 +86,7 @@ import {
   getEffectiveStyleCategories,
   getEffectiveStyleSubcategories,
   getStudioArtist,
+  mergePromptTemplate,
   normalizeStylePresetTaxonomy,
 } from '../../shared/studio'
 import type {
@@ -97,6 +100,7 @@ import type {
   ImagePassMode,
   ImageProviderId,
   PlatformConfig,
+  PromptTemplateConfig,
   ProviderChannelDTO,
   PublicUser,
   RedeemCodeItem,
@@ -272,6 +276,7 @@ function AdminHomePage() {
   } | null>(null)
   const [confirmBusy, setConfirmBusy] = useState(false)
   const [previewStyleKey, setPreviewStyleKey] = useState<string>('')
+  const [previewScenario, setPreviewScenario] = useState<'all' | 'no_portrait' | 'no_costume' | 'portrait_only'>('all')
   const [styleDialogOpen, setStyleDialogOpen] = useState(false)
   const [styleForm, setStyleForm] = useState<StyleFormState | null>(null)
   const [savingStyle, setSavingStyle] = useState(false)
@@ -820,52 +825,64 @@ function AdminHomePage() {
       ? previewStyleKey
       : styleCatalog[0]?.id || 'none'
 
+  const sampleRecipe = {
+    portrait:
+      previewScenario === 'all' || previewScenario === 'no_costume' || previewScenario === 'portrait_only'
+        ? {
+            id: 'sample-p',
+            分区: '正脸',
+            发长: '短发',
+            发型名称: '示例发型',
+            标题: '示例人像',
+            宽: 512,
+            高: 512,
+            字节数: 1024,
+            精选: false,
+            热门: false,
+            缩略图: '',
+            原图: '',
+            检索: '',
+          }
+        : null,
+    costume:
+      previewScenario === 'all' || previewScenario === 'no_portrait'
+        ? {
+            id: 'sample-c',
+            分类: '日常',
+            服装名称: '示例服装',
+            标签: [],
+            关键词: '',
+            缩略图: '',
+            预览图: '',
+            原图: '',
+            检索: '',
+          }
+        : null,
+    pose:
+      previewScenario === 'all' || previewScenario === 'no_portrait' || previewScenario === 'no_costume'
+        ? {
+            id: 'sample-pose',
+            体系: '全身',
+            姿势编号: 'P001',
+            分类: '站姿',
+            姿势名称: '示例姿势',
+            角度: '正面',
+            缩略图: '',
+            原图: '',
+            检索: '',
+          }
+        : null,
+    extraImages: [],
+  }
+
   const samplePrompt = buildRecipePrompt(
-    {
-      portrait: {
-        id: 'sample-p',
-        分区: '正脸',
-        发长: '短发',
-        发型名称: '示例发型',
-        标题: '示例人像',
-        宽: 512,
-        高: 512,
-        字节数: 1024,
-        精选: false,
-        热门: false,
-        缩略图: '',
-        原图: '',
-        检索: '',
-      },
-      costume: {
-        id: 'sample-c',
-        分类: '日常',
-        服装名称: '示例服装',
-        标签: [],
-        关键词: '',
-        缩略图: '',
-        预览图: '',
-        原图: '',
-        检索: '',
-      },
-      pose: {
-        id: 'sample-pose',
-        体系: '全身',
-        姿势编号: 'P001',
-        分类: '站姿',
-        姿势名称: '示例姿势',
-        角度: '正面',
-        缩略图: '',
-        原图: '',
-        检索: '',
-      },
-      extraImages: [],
-    },
+    sampleRecipe,
     effectivePreviewStyle,
     {
       prefix: platformCfg?.defaultPromptPrefix,
       suffix: platformCfg?.defaultPromptSuffix,
       negativePrompt: platformCfg?.defaultNegativePrompt,
+      promptTemplate: platformCfg?.promptTemplate,
       styleCategories,
       styleSubcategories,
       stylePresets: styleCatalog,
@@ -2736,14 +2753,178 @@ function AdminHomePage() {
               </section>
 
               <section className="space-y-4 border border-zinc-200 p-5 dark:border-zinc-800">
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-200 pb-3 dark:border-zinc-800">
+                  <div>
+                    <div className="text-xs font-bold">结构化提示词模板配置</div>
+                    <p className="mt-0.5 text-[11px] text-zinc-500">
+                      生图支持只选 1～3 个参考槽位，以下模板按实际参考图存在与否自动拼装；留空对应段落则跳过输出。
+                      <span className="ml-1 font-mono text-zinc-700 dark:text-zinc-300">
+                        可用变量：{'{{总数}} {{参考图序}} {{媒介}} {{姿势图}} {{服装图}} {{人像图}} {{附图列表}} {{非姿势图}} {{基准风格图}}'}
+                      </span>
+                    </p>
+                  </div>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="h-7 rounded-none text-xs"
+                    onClick={() =>
+                      setPlatformCfg({
+                        ...platformCfg,
+                        promptTemplate: { ...DEFAULT_PROMPT_TEMPLATE },
+                      })
+                    }
+                  >
+                    <RotateCcwIcon className="size-3" />
+                    恢复默认模板
+                  </Button>
+                </div>
+
+                {(() => {
+                  const tpl = mergePromptTemplate(platformCfg.promptTemplate)
+                  const updateTplField = (key: keyof PromptTemplateConfig, value: string) => {
+                    setPlatformCfg({
+                      ...platformCfg,
+                      promptTemplate: {
+                        ...tpl,
+                        [key]: value,
+                      },
+                    })
+                  }
+                  const fields: Array<{
+                    key: keyof PromptTemplateConfig
+                    label: string
+                    rows?: number
+                    hint: string
+                  }> = [
+                    { key: 'intro', label: '开篇总指令', rows: 2, hint: '支持 {{总数}} {{参考图序}} {{媒介}}' },
+                    { key: 'poseClause', label: '• 姿势规则（传了姿势图时）', rows: 2, hint: '支持 {{姿势图}}' },
+                    { key: 'costumeClause', label: '• 服装规则（传了服装图时）', rows: 2, hint: '支持 {{服装图}}' },
+                    {
+                      key: 'portraitFullClause',
+                      label: '• 人物规则（有姿势 + 服装 + 人像时）',
+                      rows: 3,
+                      hint: '支持 {{人像图}} {{姿势图}}',
+                    },
+                    {
+                      key: 'portraitWithPoseOnlyClause',
+                      label: '• 人物规则（有姿势 + 人像，无服装时）',
+                      rows: 3,
+                      hint: '保留人像自身穿搭；支持 {{人像图}} {{姿势图}}',
+                    },
+                    {
+                      key: 'portraitOnlyClause',
+                      label: '• 人物规则（无姿势图，有人像时）',
+                      rows: 2,
+                      hint: '支持 {{人像图}}',
+                    },
+                    {
+                      key: 'facelessClause',
+                      label: '• 人物规则（无人像，有姿势 + 服装时）',
+                      rows: 2,
+                      hint: '无脸素体服装展示场景',
+                    },
+                    {
+                      key: 'defaultPersonClause',
+                      label: '• 人物规则（仅姿势/附图等其余组合）',
+                      rows: 2,
+                      hint: '无独立人像时的兜底规则',
+                    },
+                    { key: 'extraClause', label: '• 补充参考规则（有额外附图时）', rows: 2, hint: '支持 {{附图列表}}' },
+                    {
+                      key: 'followStyleClause',
+                      label: '• 无预设画风跟随（选择“跟随原图”时）',
+                      rows: 2,
+                      hint: '支持 {{基准风格图}}',
+                    },
+                    { key: 'baseConstraints', label: '• 约束 1-2（画面与肤色比例）', rows: 2, hint: '留空则省略' },
+                    {
+                      key: 'posePriorityConstraint',
+                      label: '• 约束 3（姿势唯一依据 · 含其他图）',
+                      rows: 2,
+                      hint: '支持 {{姿势图}} {{非姿势图}}',
+                    },
+                    {
+                      key: 'poseOnlyPriorityConstraint',
+                      label: '• 约束 3（姿势唯一依据 · 仅姿势图）',
+                      rows: 2,
+                      hint: '支持 {{姿势图}}',
+                    },
+                    {
+                      key: 'faceVisibilityConstraint',
+                      label: '• 约束 4（五官可见防遮挡 · 有人像时）',
+                      rows: 2,
+                      hint: '防止头发/刘海糊脸',
+                    },
+                    {
+                      key: 'portraitBuiltinNegative',
+                      label: '默认人像防遮脸负面词（自动合并入「避免：」）',
+                      rows: 2,
+                      hint: '留空则不追加内置负面词',
+                    },
+                  ]
+
+                  return (
+                    <div className="grid gap-3.5 sm:grid-cols-2">
+                      {fields.map((f) => (
+                        <div key={f.key} className="space-y-1">
+                          <div className="flex items-center justify-between gap-2">
+                            <label className="text-xs font-bold">{f.label}</label>
+                            <span className="font-mono text-[10px] text-zinc-500">{f.hint}</span>
+                          </div>
+                          <Textarea
+                            rows={f.rows ?? 2}
+                            value={tpl[f.key]}
+                            onChange={(e) => updateTplField(f.key, e.target.value)}
+                            className="font-mono text-xs leading-relaxed"
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  )
+                })()}
+
+                <div className="flex flex-wrap items-center justify-end gap-3 border-t border-zinc-200 pt-3 dark:border-zinc-800">
+                  {platformDirty && (
+                    <span className="border border-amber-500/50 bg-amber-500/10 px-2.5 py-1 font-mono text-[11px] font-semibold text-amber-800 dark:text-amber-300">
+                      有未保存的模板 / 策略更改
+                    </span>
+                  )}
+                  <Button size="sm" disabled={savingPlatform} onClick={() => void handleSavePlatform()}>
+                    {savingPlatform ? (
+                      <LoaderCircleIcon className="size-4 animate-spin" />
+                    ) : (
+                      <CheckIcon className="size-4" />
+                    )}
+                    保存全部策略与提示词模板
+                  </Button>
+                </div>
+              </section>
+
+              <section className="space-y-4 border border-zinc-200 p-5 dark:border-zinc-800">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div className="text-xs font-bold text-zinc-600 dark:text-zinc-400">
                     服务端指令实时预览
                   </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs text-zinc-500">模拟所选画风：</span>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Select
+                      value={previewScenario}
+                      onValueChange={(v) =>
+                        setPreviewScenario(v as 'all' | 'no_portrait' | 'no_costume' | 'portrait_only')
+                      }
+                    >
+                      <SelectTrigger className="h-8 w-44 rounded-none text-xs">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">场景：姿势 + 服装 + 人像</SelectItem>
+                        <SelectItem value="no_portrait">场景：姿势 + 服装（无人像）</SelectItem>
+                        <SelectItem value="no_costume">场景：姿势 + 人像（无服装）</SelectItem>
+                        <SelectItem value="portrait_only">场景：仅人像（单图）</SelectItem>
+                      </SelectContent>
+                    </Select>
                     <Select value={effectivePreviewStyle} onValueChange={setPreviewStyleKey}>
-                      <SelectTrigger className="h-8 w-64 rounded-none text-xs">
+                      <SelectTrigger className="h-8 w-56 rounded-none text-xs">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>

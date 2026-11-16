@@ -3,6 +3,7 @@ import {
   DEFAULT_PROVIDER_PARAMS,
   PROVIDER_META,
   PROVIDER_ORDER,
+  mergePromptTemplate,
   type AdminOverviewPayload,
   type ImageProviderId,
   type PlatformConfig,
@@ -652,6 +653,10 @@ adminRoutes.put('/settings', async (c) => {
       typeof body.defaultNegativePrompt === 'string'
         ? body.defaultNegativePrompt.trim().slice(0, 1000)
         : current.defaultNegativePrompt,
+    promptTemplate:
+      body.promptTemplate !== undefined
+        ? mergePromptTemplate(body.promptTemplate)
+        : current.promptTemplate ?? mergePromptTemplate(null),
     styleCategories: nextStyleCategories,
     styleSubcategories: nextStyleSubcategories,
     stylePresets: nextStylePresets,

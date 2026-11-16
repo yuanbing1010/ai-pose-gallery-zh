@@ -14,6 +14,7 @@ import type {
   UserRole,
   UserStatus,
 } from '@/types/gallery'
+import type { GenerationLiveStage } from '../../shared/studio'
 
 export class ApiError extends Error {
   status: number
@@ -160,8 +161,12 @@ export function deleteGenerationApi(id: string): Promise<{ ok: boolean }> {
 }
 
 export interface StreamGenerationProgress {
-  stage: 'deducted' | 'generating' | 'saving' | 'uploading'
+  stage: GenerationLiveStage
   message: string
+  attempt?: number
+  totalAttempts?: number
+  startedAt?: number
+  stageStartedAt?: number
   percent?: number
   jobId?: string
   creditBalance?: number

@@ -6,6 +6,7 @@ import {
   type GeminiParams,
   type GenerationAttemptTrace,
   type GenerationAttemptTriggerType,
+  type GenerationLiveStage,
   type GenerationTraceReference,
   type GptParams,
   type GrokParams,
@@ -50,6 +51,10 @@ export interface GenerationTraceContext {
   delayMs: number
   onAttempt: (attempt: GenerationAttemptTrace) => void
   onReferencesResolved?: (refs: GenerationTraceReference[]) => void
+  onStage?: (
+    stage: Extract<GenerationLiveStage, 'resolving_refs' | 'generating' | 'downloading_output'>,
+    message: string
+  ) => void | Promise<void>
 }
 
 interface LoadedImage {
@@ -767,6 +772,10 @@ export async function runServerGeneration(params: {
   const preflightStartedAt = Date.now()
   let resolvedAll: Array<{ source: ResolvedSource; ref: string; loaded?: LoadedImage }>
   try {
+    await traceContext?.onStage?.(
+      'resolving_refs',
+      `正在准备 ${allSources.length} 张参考图（${!forceBytes && canPassPublicUrls ? '外链直连' : '读取转码'}）…`
+    )
     resolvedAll = await Promise.all(allSources.map(resolveRefValue))
     if (traceContext?.onReferencesResolved) {
       traceContext.onReferencesResolved(
@@ -889,6 +898,7 @@ export async function runServerGeneration(params: {
     attemptState.current = attempt
 
     try {
+      await traceContext?.onStage?.('generating', '已提交云端模型，正在绘制出图…')
       const result = await fetchUpstream(
         spec.url,
         {
@@ -1430,6 +1440,7 @@ export async function runServerGeneration(params: {
   }
 
   try {
+    await traceContext?.onStage?.('downloading_output', '云端已出图，正在回传高清原图…')
     const outRes = await devProxyAwareFetch(
       outUrl.toString(),
       { method: 'GET', signal: AbortSignal.timeout(45_000) },

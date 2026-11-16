@@ -209,20 +209,7 @@
     inset: 0;
     z-index: 4;
     border-radius: inherit;
-.hp-card {
-    width: var(--cw);
-    height: var(--ch);
-    margin: calc(var(--ch) / -2) 0 0 calc(var(--cw) / -2);
     pointer-events: none;
-    --px: 50;
-    --py: 50;
-    --hyp: 0;
-}
-
-.hp-stage[data-phase='opened'] .hp-card {
-    pointer-events: auto;
-    cursor: pointer;
-}
     box-shadow: inset 0 0 0 1px var(--md-ring-media);
 }
 
@@ -386,20 +373,7 @@
     position: absolute;
     inset: 0;
     transform-style: preserve-3d;
-.hp-card {
-    width: var(--cw);
-    height: var(--ch);
-    margin: calc(var(--ch) / -2) 0 0 calc(var(--cw) / -2);
     pointer-events: none;
-    --px: 50;
-    --py: 50;
-    --hyp: 0;
-}
-
-.hp-stage[data-phase='opened'] .hp-card {
-    pointer-events: auto;
-    cursor: pointer;
-}
 }
 
 .hp-scene.hp-flat {
@@ -418,20 +392,7 @@
     border-radius: 50%;
     background: radial-gradient(closest-side, rgba(25, 20, 12, 0.32), transparent);
     filter: blur(6px);
-.hp-card {
-    width: var(--cw);
-    height: var(--ch);
-    margin: calc(var(--ch) / -2) 0 0 calc(var(--cw) / -2);
     pointer-events: none;
-    --px: 50;
-    --py: 50;
-    --hyp: 0;
-}
-
-.hp-stage[data-phase='opened'] .hp-card {
-    pointer-events: auto;
-    cursor: pointer;
-}
 }
 
 .hp-pack,
@@ -484,20 +445,7 @@
     position: absolute;
     inset: 0;
     z-index: 1;
-.hp-card {
-    width: var(--cw);
-    height: var(--ch);
-    margin: calc(var(--ch) / -2) 0 0 calc(var(--cw) / -2);
     pointer-events: none;
-    --px: 50;
-    --py: 50;
-    --hyp: 0;
-}
-
-.hp-stage[data-phase='opened'] .hp-card {
-    pointer-events: auto;
-    cursor: pointer;
-}
     background: linear-gradient(90deg, transparent 2.4%, rgba(255, 255, 255, 0.72) 3%, rgba(255, 255, 255, 0.28) 5%, transparent 9%);
     -webkit-mask: linear-gradient(transparent 7%, #000 13% 48%, transparent 84%);
     mask: linear-gradient(transparent 7%, #000 13% 48%, transparent 84%);
@@ -512,20 +460,7 @@
     height: var(--ph);
     margin: calc(var(--ph) / -2) 0 0 calc(var(--pw) / -2);
     transform-style: preserve-3d;
-.hp-card {
-    width: var(--cw);
-    height: var(--ch);
-    margin: calc(var(--ch) / -2) 0 0 calc(var(--cw) / -2);
     pointer-events: none;
-    --px: 50;
-    --py: 50;
-    --hyp: 0;
-}
-
-.hp-stage[data-phase='opened'] .hp-card {
-    pointer-events: auto;
-    cursor: pointer;
-}
 }
 
 .hp-rays {
@@ -679,20 +614,7 @@
     z-index: 3;
     background: #0b0d1c;
     opacity: 0;
-.hp-card {
-    width: var(--cw);
-    height: var(--ch);
-    margin: calc(var(--ch) / -2) 0 0 calc(var(--cw) / -2);
     pointer-events: none;
-    --px: 50;
-    --py: 50;
-    --hyp: 0;
-}
-
-.hp-stage[data-phase='opened'] .hp-card {
-    pointer-events: auto;
-    cursor: pointer;
-}
 }
 
 .hp-lips {
@@ -733,10 +655,6 @@
     width: var(--cw);
     height: var(--ch);
     margin: calc(var(--ch) / -2) 0 0 calc(var(--cw) / -2);
-.hp-card {
-    width: var(--cw);
-    height: var(--ch);
-    margin: calc(var(--ch) / -2) 0 0 calc(var(--cw) / -2);
     pointer-events: none;
     --px: 50;
     --py: 50;
@@ -746,10 +664,6 @@
 .hp-stage[data-phase='opened'] .hp-card {
     pointer-events: auto;
     cursor: pointer;
-}
-    --px: 50;
-    --py: 50;
-    --hyp: 0;
 }
 
 .hp-face,
@@ -763,20 +677,7 @@
     background: linear-gradient(135deg, rgba(255, 255, 255, 0.72), rgba(190, 196, 212, 0.55) 50%, rgba(255, 255, 255, 0.45));
     transform: translateZ(-2px);
     box-shadow: 0 22px 38px -14px rgba(18, 18, 28, 0.42);
-.hp-card {
-    width: var(--cw);
-    height: var(--ch);
-    margin: calc(var(--ch) / -2) 0 0 calc(var(--cw) / -2);
     pointer-events: none;
-    --px: 50;
-    --py: 50;
-    --hyp: 0;
-}
-
-.hp-stage[data-phase='opened'] .hp-card {
-    pointer-events: auto;
-    cursor: pointer;
-}
 }
 .dark .hp-bevel {
     background: linear-gradient(135deg, rgba(255, 255, 255, 0.24), rgba(82, 82, 91, 0.55) 50%, rgba(255, 255, 255, 0.16));
@@ -964,20 +865,7 @@
     inset: 0;
     z-index: 2;
     border-radius: inherit;
-.hp-card {
-    width: var(--cw);
-    height: var(--ch);
-    margin: calc(var(--ch) / -2) 0 0 calc(var(--cw) / -2);
     pointer-events: none;
-    --px: 50;
-    --py: 50;
-    --hyp: 0;
-}
-
-.hp-stage[data-phase='opened'] .hp-card {
-    pointer-events: auto;
-    cursor: pointer;
-}
     background: var(--rainbow) calc(var(--px) * 1%) calc(var(--py) * 1%) / 400% 400%;
     mix-blend-mode: color-dodge;
     opacity: calc(0.08 + var(--hyp) * 0.28);
@@ -988,20 +876,7 @@
     inset: 0;
     width: 100%;
     height: 100%;
-.hp-card {
-    width: var(--cw);
-    height: var(--ch);
-    margin: calc(var(--ch) / -2) 0 0 calc(var(--cw) / -2);
     pointer-events: none;
-    --px: 50;
-    --py: 50;
-    --hyp: 0;
-}
-
-.hp-stage[data-phase='opened'] .hp-card {
-    pointer-events: auto;
-    cursor: pointer;
-}
     z-index: 25;
 }
 

@@ -5,6 +5,7 @@ import {
   PROVIDER_ORDER,
   formatUserFacingGenerationError,
   getStudioArtist,
+  mergePromptTemplate,
   normalizeStylePresetTaxonomy,
   type AdminProviderSlotDTO,
   type CreditLedgerItem,
@@ -176,17 +177,35 @@ export function mapJobRow(
     snapshot = undefined
   }
   let auditTrace: GenerationAuditTrace | null | undefined
-  if (isAdmin) {
-    if (row.trace_json) {
-      try {
-        auditTrace = JSON.parse(row.trace_json) as GenerationAuditTrace
-      } catch {
-        auditTrace = null
-      }
-    } else {
-      auditTrace = null
+  let parsedTrace: GenerationAuditTrace | null = null
+  if (row.trace_json) {
+    try {
+      parsedTrace = JSON.parse(row.trace_json) as GenerationAuditTrace
+    } catch {
+      parsedTrace = null
     }
   }
+  if (isAdmin) {
+    auditTrace = parsedTrace
+  }
+  const liveProgress =
+    row.status === 'processing' && parsedTrace?.liveState
+      ? {
+          stage: parsedTrace.liveState.stage,
+          message: parsedTrace.liveState.message,
+          attempt: parsedTrace.liveState.attempt,
+          totalAttempts: parsedTrace.liveState.totalAttempts,
+          startedAt: parsedTrace.liveState.startedAt ?? parsedTrace.startedAt ?? row.created_at,
+          stageStartedAt: parsedTrace.liveState.stageStartedAt,
+          percent: parsedTrace.liveState.percent,
+        }
+      : row.status === 'processing'
+        ? {
+            stage: 'generating' as const,
+            message: `${artistName}正在云端绘制作品…`,
+            startedAt: parsedTrace?.startedAt ?? row.created_at,
+          }
+        : undefined
   return {
     id: row.id,
     userId: row.user_id,
@@ -217,6 +236,7 @@ export function mapJobRow(
         ? row.error_message
         : formatUserFacingGenerationError(row.error_message, row.provider)
       : row.error_message,
+    ...(liveProgress ? { liveProgress } : {}),
     snapshot,
   }
 }
@@ -481,6 +501,7 @@ export async function getPlatformConfig(db: D1Database): Promise<PlatformConfig>
         typeof parsed.defaultNegativePrompt === 'string'
           ? parsed.defaultNegativePrompt.trim().slice(0, 1000)
           : DEFAULT_PLATFORM_CONFIG.defaultNegativePrompt,
+      promptTemplate: mergePromptTemplate(parsed.promptTemplate),
       styleCategories,
       styleSubcategories,
       stylePresets,

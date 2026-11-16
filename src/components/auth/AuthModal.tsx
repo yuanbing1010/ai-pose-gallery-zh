@@ -13,6 +13,7 @@ export function AuthModal() {
   const {
     authModalOpen,
     authModalTab,
+    bootstrapLoaded,
     platform,
     openAuthModal,
     closeAuthModal,
@@ -96,8 +97,8 @@ export function AuthModal() {
       setPassword('')
       setConfirmPassword('')
       toast.success(
-        platform.registerBonusCredits > 0
-          ? `注册成功！已赠送 ${platform.registerBonusCredits} 积分`
+        user.creditBalance > 0
+          ? `注册成功！已赠送 ${user.creditBalance} 积分`
           : '注册成功！'
       )
       if (user.role === 'admin') {
@@ -112,7 +113,7 @@ export function AuthModal() {
 
   return (
     <Dialog open={authModalOpen} onOpenChange={handleOpenChange}>
-      <DialogContent className="max-w-md rounded-2xl p-6">
+      <DialogContent className="max-h-[90dvh] w-[95vw] max-w-md overflow-y-auto rounded-2xl p-5 sm:p-6">
         <DialogHeader className="space-y-1.5">
           <div className="flex items-center gap-2.5">
             <BrandMark />
@@ -155,7 +156,7 @@ export function AuthModal() {
           </button>
         </div>
 
-        {authModalTab === 'register' && platform.registerBonusCredits > 0 && (
+        {authModalTab === 'register' && bootstrapLoaded && platform.registerBonusCredits > 0 && (
           <div className="flex items-center gap-2 rounded-xl border border-[#E5A918]/40 bg-[#E5A918]/10 px-3 py-2 text-xs font-medium text-foreground">
             <SparklesIcon className="size-3.5 shrink-0 text-[#7A5200] dark:text-[#E5A918]" />
             <span>新用户注册立即赠送 {platform.registerBonusCredits} 积分，立即可用！</span>

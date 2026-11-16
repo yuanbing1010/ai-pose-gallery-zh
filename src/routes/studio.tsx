@@ -83,7 +83,7 @@ import {
   fileToDataUrl,
   stitchRecipeCanvas,
 } from '@/services/aiGenerator'
-import { getEffectiveStyleCatalog } from '../../shared/studio'
+import { getEffectiveStyleCatalog, type GenerationLiveStage } from '../../shared/studio'
 import { useStudio } from '@/store/studioStore'
 import type { GenerationHistoryItem } from '@/types/gallery'
 
@@ -294,6 +294,7 @@ function StudioSplitLayout({
 function StudioPage() {
   const {
     user,
+    bootstrapLoaded,
     providersLoaded,
     platform,
     providers,
@@ -311,6 +312,8 @@ function StudioPage() {
     isGenerating,
     generationProgress,
     generationError,
+    refreshBootstrap,
+    refreshHistory,
     startGeneration,
     openAuthModal,
     openAccountModal,
@@ -401,6 +404,34 @@ function StudioPage() {
   const [stitchModalUrl, setStitchModalUrl] = useState<string | null>(null)
   const [zoomImageUrl, setZoomImageUrl] = useState<string | null>(null)
   const [isDragging, setIsDragging] = useState(false)
+  const [nowTick, setNowTick] = useState(() => Date.now())
+
+  const activeProcessingJob = history.find((item) => item.status === 'processing') ?? null
+  const showGeneratingState = isGenerating || Boolean(activeProcessingJob)
+  const effectiveProgress = generationProgress ?? activeProcessingJob?.liveProgress ?? null
+  const runningArtist = activeProcessingJob
+    ? getStudioArtist(activeProcessingJob.provider)
+    : activeArtist
+  const effectiveStartedAt =
+    effectiveProgress?.startedAt ?? activeProcessingJob?.createdAt ?? null
+  const elapsedSeconds = effectiveStartedAt
+    ? Math.max(0, Math.floor((nowTick - effectiveStartedAt) / 1000))
+    : 0
+
+  useEffect(() => {
+    void refreshBootstrap()
+    if (user && !isGenerating) {
+      void refreshHistory()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  useEffect(() => {
+    if (!showGeneratingState) return
+    setNowTick(Date.now())
+    const timer = window.setInterval(() => setNowTick(Date.now()), 1000)
+    return () => window.clearInterval(timer)
+  }, [showGeneratingState])
 
   const handleSlotUpload = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -679,7 +710,7 @@ function StudioPage() {
         </div>
 
         <div className="flex flex-wrap items-center gap-1.5">
-          {!user && platform.registerBonusCredits > 0 && (
+          {!user && bootstrapLoaded && platform.registerBonusCredits > 0 && (
             <Button
               type="button"
               variant="outline"
@@ -1512,7 +1543,7 @@ function StudioPage() {
               <div className="shrink-0 border-t border-border/75 bg-card/95 p-2">
                 <Button
                   onClick={handleGenerate}
-                  disabled={!hydrated || isGenerating || uploadingSlot !== null || (Boolean(user) && !activeProviderReady)}
+                  disabled={!hydrated || showGeneratingState || uploadingSlot !== null || (Boolean(user) && !activeProviderReady)}
                   className={cn(
                     'ks-keycap h-10 w-full rounded-xl border-0 text-sm font-extrabold tracking-tight text-white',
                     insufficientCredits
@@ -1520,10 +1551,12 @@ function StudioPage() {
                       : 'bg-[#D9381E] hover:bg-[#C23018]'
                   )}
                 >
-                  {isGenerating ? (
+                  {showGeneratingState ? (
                     <>
                       <LoaderCircleIcon className="size-4 animate-spin" />
-                      <span>{activeArtist.name}正在绘制作品…</span>
+                      <span>
+                        {runningArtist.name}正在绘制作品（{elapsedSeconds}s）…
+                      </span>
                     </>
                   ) : !user ? (
                     <>
@@ -1568,7 +1601,7 @@ function StudioPage() {
                   <span
                     className={cn(
                       'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium',
-                      isGenerating
+                      showGeneratingState
                         ? 'bg-[#E5A918]/15 text-[#7A5200] dark:text-[#E5A918]'
                         : generationError
                           ? 'bg-destructive/15 text-destructive'
@@ -1580,7 +1613,7 @@ function StudioPage() {
                     <span
                       className={cn(
                         'size-1.5 rounded-full',
-                        isGenerating
+                        showGeneratingState
                           ? 'animate-pulse bg-[#E5A918]'
                           : generationError
                             ? 'bg-destructive'
@@ -1589,8 +1622,8 @@ function StudioPage() {
                               : 'bg-muted-foreground/50'
                       )}
                     />
-                    {isGenerating
-                      ? '绘制中'
+                    {showGeneratingState
+                      ? `绘制中 · ${elapsedSeconds}s`
                       : generationError
                         ? '生成失败'
                         : previewUrl
@@ -1599,7 +1632,7 @@ function StudioPage() {
                   </span>
                 </div>
 
-                {previewUrl && !isGenerating && (
+                {previewUrl && !showGeneratingState && (
                   <div className="flex items-center gap-1.5">
                     {previewResult && (
                       <Button
@@ -1638,29 +1671,92 @@ function StudioPage() {
                 <span aria-hidden="true" className="pointer-events-none absolute bottom-2.5 left-2.5 size-3 border-b border-l border-foreground/20" />
                 <span aria-hidden="true" className="pointer-events-none absolute right-2.5 bottom-2.5 size-3 border-r border-b border-foreground/20" />
 
-                {isGenerating ? (
-                  <div className="flex flex-col items-center gap-3 text-center">
-                    <div className="flex size-12 items-center justify-center rounded-2xl border border-border bg-card text-[#E5A918] shadow-xs">
-                      <LoaderCircleIcon className="size-6 animate-spin" />
-                    </div>
-                    <div className="space-y-1">
-                      <div className="text-sm font-bold">{activeArtist.name}正在绘制角色作品…</div>
-                      {generationProgress && (
-                        <div className="w-60 max-w-full space-y-1.5 pt-1">
-                          <div className="text-xs text-foreground/80">{generationProgress.message}</div>
-                          {generationProgress.percent !== undefined && (
-                            <div className="h-1.5 overflow-hidden rounded-full border border-border bg-card">
-                              <div
-                                className="h-full bg-[#D9381E] transition-all duration-500"
-                                style={{ width: `${generationProgress.percent}%` }}
-                              />
-                            </div>
-                          )}
+                {showGeneratingState ? (
+                  (() => {
+                    const stage: GenerationLiveStage = effectiveProgress?.stage ?? 'generating'
+                    const stageOrder =
+                      stage === 'uploading' || stage === 'deducted' || stage === 'resolving_refs'
+                        ? 0
+                        : stage === 'generating' || stage === 'retrying'
+                          ? 1
+                          : 2
+                    const isOpaqueModelWait = stage === 'generating' || stage === 'retrying'
+                    // 云端图像接口通常在 15~55s 内单次返回；等待模型期间用平滑渐进与实时计时反映运行状态
+                    const smoothWaitPercent = Math.min(78, Math.round(32 + (1 - Math.exp(-elapsedSeconds / 24)) * 46))
+                    const barWidth = isOpaqueModelWait
+                      ? smoothWaitPercent
+                      : effectiveProgress?.percent ?? (stageOrder === 0 ? 18 : 88)
+                    const steps = ['1. 素材准备', '2. 模型绘制', '3. 保存成图']
+
+                    return (
+                      <div className="flex w-full max-w-xs flex-col items-center gap-3 text-center">
+                        <div className="flex size-12 items-center justify-center rounded-2xl border border-border bg-card text-[#E5A918] shadow-xs">
+                          <LoaderCircleIcon className="size-6 animate-spin" />
                         </div>
-                      )}
-                      <p className="pt-1 text-xs text-muted-foreground">云端生成中，若失败将自动全额退还积分</p>
-                    </div>
-                  </div>
+                        <div className="w-full space-y-2">
+                          <div className="text-sm font-bold text-foreground">
+                            {runningArtist.name}正在绘制作品
+                          </div>
+
+                          <div className="grid grid-cols-3 gap-1 text-[11px]">
+                            {steps.map((stepLabel, idx) => {
+                              const done = idx < stageOrder
+                              const activeStep = idx === stageOrder
+                              return (
+                                <div
+                                  key={stepLabel}
+                                  className={cn(
+                                    'rounded-md border px-1.5 py-1 font-medium transition-colors',
+                                    done
+                                      ? 'border-[#116E65]/35 bg-[#116E65]/12 text-[#116E65] dark:text-[#4FD1C5]'
+                                      : activeStep
+                                        ? 'border-[#D9381E]/45 bg-[#D9381E]/10 font-bold text-[#B82914] dark:text-[#FF7A59]'
+                                        : 'border-border/70 bg-card/60 text-muted-foreground'
+                                  )}
+                                >
+                                  {stepLabel}
+                                </div>
+                              )
+                            })}
+                          </div>
+
+                          <div className="space-y-1.5 pt-0.5">
+                            <div className="text-xs text-foreground/85">
+                              {effectiveProgress?.message || '云端正在处理请求…'}
+                            </div>
+                            <div className="relative h-2 overflow-hidden rounded-full border border-border bg-card">
+                              <div
+                                className="h-full bg-[#D9381E] transition-all duration-700"
+                                style={{ width: `${barWidth}%` }}
+                              />
+                              {isOpaqueModelWait && (
+                                <motion.div
+                                  aria-hidden="true"
+                                  animate={{ x: ['-40%', '220%'] }}
+                                  transition={{ duration: 1.4, repeat: Infinity, ease: 'linear' }}
+                                  className="absolute inset-y-0 left-0 w-1/3 bg-gradient-to-r from-transparent via-white/45 to-transparent"
+                                />
+                              )}
+                            </div>
+                            <div className="flex items-center justify-between font-mono text-[11px] text-muted-foreground">
+                              <span>
+                                {effectiveProgress?.attempt && effectiveProgress.attempt > 1
+                                  ? `第 ${effectiveProgress.attempt} 轮调度`
+                                  : isOpaqueModelWait
+                                    ? '云端生图进行中'
+                                    : '阶段推进中'}
+                              </span>
+                              <span>已用时 {elapsedSeconds}s</span>
+                            </div>
+                          </div>
+
+                          <p className="pt-0.5 text-[11px] leading-relaxed text-muted-foreground">
+                            可随时切换页面浏览图库，云端完成后将自动更新（失败全额退积分）
+                          </p>
+                        </div>
+                      </div>
+                    )
+                  })()
                 ) : generationError ? (
                   <div className="flex max-w-md flex-col items-center gap-2.5 text-center">
                     <CircleAlertIcon className="size-7 text-destructive" />

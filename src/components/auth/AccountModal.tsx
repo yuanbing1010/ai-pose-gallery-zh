@@ -163,24 +163,24 @@ export function AccountModal() {
         }
       }}
     >
-      <DialogContent className="max-h-[90dvh] w-[95vw] max-w-xl overflow-y-auto rounded-2xl p-5 sm:max-w-xl">
+      <DialogContent className="max-h-[90dvh] w-[95vw] max-w-xl overflow-y-auto rounded-2xl p-4 sm:max-w-xl sm:p-5">
         <DialogHeader className="space-y-1">
-          <div className="flex items-center justify-between gap-2 pr-6">
-            <DialogTitle className="flex items-center gap-2 text-base font-extrabold">
-              <span>{user.displayName}</span>
+          <div className="flex flex-wrap items-center justify-between gap-2 pr-8">
+            <DialogTitle className="flex min-w-0 items-center gap-2 text-base font-extrabold">
+              <span className="truncate">{user.displayName}</span>
               {user.role === 'admin' && (
-                <span className="inline-flex items-center gap-1 rounded-full bg-foreground px-2 py-0.5 font-mono text-[11px] font-semibold text-background">
+                <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-foreground px-2 py-0.5 font-mono text-[11px] font-semibold text-background">
                   <ShieldCheckIcon className="size-3" />
                   ADMIN
                 </span>
               )}
             </DialogTitle>
-            <div className="inline-flex items-center gap-1.5 rounded-full border border-[#E5A918]/40 bg-[#E5A918]/12 px-3 py-1 font-mono text-xs font-bold text-[#7A5200] dark:text-[#E5A918]">
+            <div className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-[#E5A918]/40 bg-[#E5A918]/12 px-3 py-1 font-mono text-xs font-bold text-[#7A5200] dark:text-[#E5A918]">
               <CoinsIcon className="size-3.5" />
               <span>{user.creditBalance} 积分</span>
             </div>
           </div>
-          <DialogDescription className="font-mono text-xs text-muted-foreground">
+          <DialogDescription className="truncate font-mono text-xs text-muted-foreground">
             @{user.username}
             {user.email ? ` · ${user.email}` : ''}
           </DialogDescription>
@@ -197,12 +197,12 @@ export function AccountModal() {
                 type="button"
                 onClick={() => openAccountModal(t.id)}
                 className={cn(
-                  'flex h-8 items-center justify-center gap-1 rounded-lg px-2 text-xs font-semibold transition-colors',
+                  'flex h-8 items-center justify-center gap-1 rounded-lg px-1.5 text-xs font-semibold whitespace-nowrap transition-colors sm:px-2',
                   active ? 'bg-card text-foreground shadow-xs' : 'text-muted-foreground hover:text-foreground'
                 )}
               >
-                <Icon className="size-3.5 shrink-0" />
-                <span className="truncate">{t.label}</span>
+                <Icon className="hidden size-3.5 shrink-0 sm:inline" />
+                <span>{t.label}</span>
               </button>
             )
           })}

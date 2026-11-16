@@ -9,6 +9,8 @@ import {
   resolveStyleInfo,
   type GenerationAttemptTriggerType,
   type GenerationAuditTrace,
+  type GenerationLiveStage,
+  type GenerationLiveState,
   type GenerationSnapshot,
   type ImageProviderId,
   type RecipeState,
@@ -183,6 +185,7 @@ generationRoutes.post('/', async (c) => {
     prefix: platform.defaultPromptPrefix,
     suffix: platform.defaultPromptSuffix,
     negativePrompt: platform.defaultNegativePrompt,
+    promptTemplate: platform.promptTemplate,
     sceneNote,
     stylePresets: platform.stylePresets,
     styleCategories: platform.styleCategories,
@@ -214,15 +217,25 @@ generationRoutes.post('/', async (c) => {
       ? [...extractedSources.refs, extractedSources.stitched]
       : extractedSources.refs
 
+  const createdAt = Date.now()
   const auditTrace: GenerationAuditTrace = {
     version: 1,
-    startedAt: Date.now(),
+    startedAt: createdAt,
     finishedAt: null,
     totalDurationMs: null,
     creditsCost: providerRow.credit_cost,
     creditsRefunded: 0,
     imagePassMode: platform.imagePassMode,
     sendStitchedSheet: platform.sendStitchedSheet,
+    liveState: {
+      stage: 'deducted',
+      message: `已扣除 ${providerRow.credit_cost} 积分，进入云端画室队列…`,
+      attempt: 0,
+      totalAttempts: channels.length === 1 ? 3 : channels.length,
+      startedAt: createdAt,
+      stageStartedAt: createdAt,
+      percent: 12,
+    },
     promptBreakdown: {
       prefix: platform.defaultPromptPrefix,
       suffix: platform.defaultPromptSuffix,
@@ -358,17 +371,51 @@ generationRoutes.post('/', async (c) => {
       heartbeatTimer = setInterval(() => sendComment('keepalive'), 4000)
 
       const workPromise = (async () => {
-        const startedAt = Date.now()
+        const startedAt = createdAt
         auditTrace.startedAt = startedAt
         let lastAttemptedChannel: RunnableChannel = primaryChannel
-        try {
+        const totalPlanned = channels.length === 1 ? 3 : channels.length
+
+        const publishProgress = async (
+          stage: GenerationLiveStage,
+          message: string,
+          percent: number,
+          opts?: {
+            attempt?: number
+            totalAttempts?: number
+            creditBalance?: number
+            persist?: boolean
+          }
+        ) => {
+          const nextLive: GenerationLiveState = {
+            stage,
+            message,
+            attempt: opts?.attempt ?? auditTrace.liveState?.attempt ?? 1,
+            totalAttempts: opts?.totalAttempts ?? totalPlanned,
+            startedAt,
+            stageStartedAt: Date.now(),
+            percent,
+          }
+          auditTrace.liveState = nextLive
           sendEvent('progress', {
-            stage: 'deducted',
-            message: `已核验并扣除 ${providerRow.credit_cost} 积分，正在准备参考素材…`,
-            percent: 15,
+            ...nextLive,
             jobId,
-            creditBalance: deductRes.creditBalance,
+            ...(typeof opts?.creditBalance === 'number'
+              ? { creditBalance: opts.creditBalance }
+              : {}),
           })
+          if (opts?.persist) {
+            await updateJobTrace(c.env.DB, jobId, JSON.stringify(auditTrace))
+          }
+        }
+
+        try {
+          await publishProgress(
+            'deducted',
+            `已核验并扣除 ${providerRow.credit_cost} 积分，准备开始制作…`,
+            14,
+            { attempt: 0, creditBalance: deductRes.creditBalance }
+          )
 
           // 构建执行队列：多渠道优先故障转移；单渠道允许瞬态重试最多 3 次
           const executionPlan: Array<{
@@ -399,12 +446,12 @@ generationRoutes.post('/', async (c) => {
             if (idx > 0) {
               if (Date.now() - startedAt > 140_000) break
               if (step.delayMs > 0) {
-                sendEvent('progress', {
-                  stage: 'generating',
-                  message: `灵感连接出现小波动，${(step.delayMs / 1000).toFixed(1)} 秒后自动重新绘制…`,
-                  percent: 48,
-                  jobId,
-                })
+                await publishProgress(
+                  'retrying',
+                  `请求出现瞬态波动，${(step.delayMs / 1000).toFixed(1)} 秒后开启第 ${idx + 1} 轮重试…`,
+                  Math.min(72, 42 + idx * 10),
+                  { attempt: idx + 1, persist: true }
+                )
                 await new Promise((resolve) => setTimeout(resolve, step.delayMs))
               }
             }
@@ -421,17 +468,19 @@ generationRoutes.post('/', async (c) => {
                   : `第 ${idx} 次请求出现可重试异常，等待 ${(step.delayMs / 1000).toFixed(1)}s 后进行第 ${idx + 1} 次自动重试`
 
             try {
-              sendEvent('progress', {
-                stage: 'generating',
-                message:
-                  idx === 0
-                    ? `${artist.name}正在绘制角色作品，请耐心等待…`
-                    : channels.length > 1
-                      ? `${artist.name}正在切换备用画室继续绘制…`
-                      : `${artist.name}正在进行第 ${idx + 1} 次自动重试…`,
-                percent: Math.min(82, 45 + idx * 12),
-                jobId,
-              })
+              const attemptMsg =
+                idx === 0
+                  ? `${artist.name}正在解析配方并连接云端画室…`
+                  : channels.length > 1
+                    ? `${artist.name}已切换备用通道，正在第 ${idx + 1} 轮绘制…`
+                    : `${artist.name}正在进行第 ${idx + 1} 轮重试绘制…`
+
+              await publishProgress(
+                idx === 0 ? 'resolving_refs' : 'retrying',
+                attemptMsg,
+                idx === 0 ? 24 : Math.min(72, 42 + idx * 10),
+                { attempt: idx + 1, persist: idx > 0 }
+              )
 
               output = await runServerGeneration({
                 env: c.env,
@@ -451,6 +500,25 @@ generationRoutes.post('/', async (c) => {
                   delayMs: step.delayMs,
                   onReferencesResolved: (resolvedRefs) => {
                     auditTrace.references = resolvedRefs
+                  },
+                  onStage: async (phase, phaseMsg) => {
+                    if (phase === 'resolving_refs') {
+                      await publishProgress('resolving_refs', phaseMsg, 28, { attempt: idx + 1 })
+                    } else if (phase === 'generating') {
+                      await publishProgress(
+                        idx === 0 ? 'generating' : 'retrying',
+                        idx === 0
+                          ? `${artist.name}正在云端绘制出图（模型黑盒处理中，无逐帧进度回报）…`
+                          : `${artist.name}正在第 ${idx + 1} 轮请求云端绘制…`,
+                        idx === 0 ? 45 : Math.min(74, 48 + idx * 10),
+                        { attempt: idx + 1, persist: true }
+                      )
+                    } else if (phase === 'downloading_output') {
+                      await publishProgress('downloading_output', phaseMsg, 82, {
+                        attempt: idx + 1,
+                        persist: true,
+                      })
+                    }
                   },
                   onAttempt: (attempt) => {
                     auditTrace.attempts.push(attempt)
@@ -486,12 +554,12 @@ generationRoutes.post('/', async (c) => {
           ) {
             lastAttemptedChannel = channels[0]
             const prevErrMsg = lastErr instanceof Error ? lastErr.message : '未知错误'
-            sendEvent('progress', {
-              stage: 'generating',
-              message: `${artist.name}正在尝试最终补救绘制…`,
-              percent: 84,
-              jobId,
-            })
+            await publishProgress(
+              'retrying',
+              `${artist.name}正在发起最终兜底重绘…`,
+              76,
+              { attempt: executionPlan.length + 1, persist: true }
+            )
             await new Promise((resolve) => setTimeout(resolve, 1500))
             try {
               output = await runServerGeneration({
@@ -513,6 +581,14 @@ generationRoutes.post('/', async (c) => {
                   onReferencesResolved: (resolvedRefs) => {
                     auditTrace.references = resolvedRefs
                   },
+                  onStage: async (phase, phaseMsg) => {
+                    if (phase === 'downloading_output') {
+                      await publishProgress('downloading_output', phaseMsg, 84, {
+                        attempt: executionPlan.length + 1,
+                        persist: true,
+                      })
+                    }
+                  },
                   onAttempt: (attempt) => {
                     auditTrace.attempts.push(attempt)
                   },
@@ -532,12 +608,7 @@ generationRoutes.post('/', async (c) => {
             throw new Error(combinedRaw)
           }
 
-          sendEvent('progress', {
-            stage: 'saving',
-            message: '正在保存高清成图至云端存储…',
-            percent: 90,
-            jobId,
-          })
+          await publishProgress('saving', '正在保存高清成图至云端作品集…', 92, { persist: true })
 
           const r2Key = `generations/${user.id}/${jobId}.${output.ext}`
           await c.env.BUCKET.put(r2Key, output.bytes, {
@@ -554,6 +625,7 @@ generationRoutes.post('/', async (c) => {
           auditTrace.finishedAt = finishedAt
           auditTrace.totalDurationMs = Math.max(0, finishedAt - startedAt)
           auditTrace.finalError = null
+          auditTrace.liveState = null
           auditTrace.result = {
             r2Key,
             mime: output.mime,
@@ -593,6 +665,7 @@ generationRoutes.post('/', async (c) => {
           auditTrace.totalDurationMs = Math.max(0, finishedAt - startedAt)
           auditTrace.creditsRefunded = providerRow.credit_cost
           auditTrace.finalError = rawMessage
+          auditTrace.liveState = null
           const refundRes = await refundFailedJob(c.env.DB, jobId, rawMessage, {
             traceJson: JSON.stringify(auditTrace),
             model: lastAttemptedChannel.model,
