@@ -23,14 +23,11 @@ import {
   ArrowRightIcon,
   ArrowUpRightIcon,
   CheckCircle2Icon,
-  CheckIcon,
   CircleAlertIcon,
   CoinsIcon,
-  CopyIcon,
   DicesIcon,
   DownloadIcon,
   EyeIcon,
-  FileTextIcon,
   GripVerticalIcon,
   ImagesIcon,
   ImagePlusIcon,
@@ -86,7 +83,7 @@ import {
   fileToDataUrl,
   stitchRecipeCanvas,
 } from '@/services/aiGenerator'
-import { buildRecipePrompt, getEffectiveStyleCatalog } from '../../shared/studio'
+import { getEffectiveStyleCatalog } from '../../shared/studio'
 import { useStudio } from '@/store/studioStore'
 import type { GenerationHistoryItem } from '@/types/gallery'
 
@@ -370,8 +367,6 @@ function StudioPage() {
   } | null>(null)
   const costumeViews = recipe.costume?.views?.filter((view) => view.原图 && view.缩略图) || []
 
-  const [promptModalOpen, setPromptModalOpen] = useState(false)
-  const [copiedPrompt, setCopiedPrompt] = useState(false)
   const dragDepthRef = useRef(0)
   const [hoveredRatio, setHoveredRatio] = useState<StudioAspectRatio | null>(null)
   const [styleModalOpen, setStyleModalOpen] = useState(false)
@@ -633,16 +628,6 @@ function StudioPage() {
   const activeStyleItem = styleCatalog.find((s) => s.id === activeStyleKey) ?? null
   const styleVisual = getStyleVisualMeta(activeStyleKey, activeStyleItem)
   const viewfinderStyleLabel = activeStyleItem?.label || '无预设（跟随参考图）'
-  const assembledPrompt = buildRecipePrompt(recipe, activeStyleKey, {
-    prefix: platform.defaultPromptPrefix,
-    suffix: platform.defaultPromptSuffix,
-    negativePrompt: platform.defaultNegativePrompt,
-    sceneNote,
-    stylePresets: platform.stylePresets,
-    styleCategories: platform.styleCategories,
-    styleSubcategories: platform.styleSubcategories,
-    stylePromptOverrides: platform.stylePromptOverrides,
-  })
   const succeededHistory = history.filter((h) => h.status === 'succeeded' && h.imageUrl)
   const recentHistory = succeededHistory.slice(0, 10)
   const previewArtist = previewResult ? getStudioArtist(previewResult.provider) : activeArtist
@@ -755,16 +740,6 @@ function StudioPage() {
                 <DicesIcon className="size-3.5 text-[#E5A918]" />
               </motion.span>
               <span>全随机</span>
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="h-7 rounded-full px-2.5 text-xs"
-              onClick={() => setPromptModalOpen(true)}
-            >
-              <FileTextIcon className="size-3.5" />
-              <span>提示词</span>
             </Button>
             {hasAnyRef && (
               <>
@@ -1320,7 +1295,8 @@ function StudioPage() {
                     <ArtistLogo providerId={activeArtist.id} variant="inline" />
                     <span className="shrink-0 font-semibold text-foreground">{activeArtist.name}</span>
                     <span className="text-muted-foreground/50">·</span>
-                    <span className="truncate text-muted-foreground">{activeArtist.bio}</span>
+                    <span className="shrink-0 text-muted-foreground @[540px]/controls:hidden">{activeArtist.specialty}</span>
+                    <span className="hidden truncate text-muted-foreground @[540px]/controls:inline">{activeArtist.bio}</span>
                   </motion.div>
                 </div>
 
@@ -1418,8 +1394,8 @@ function StudioPage() {
                     <AspectRatioLogo ratio={displayRatio.id} compact className="text-foreground" />
                     <span className="shrink-0 font-mono font-bold text-foreground">{displayRatio.label}</span>
                     <span className="shrink-0 font-semibold text-foreground">{displayRatio.hint}</span>
-                    <span className="text-muted-foreground/50">·</span>
-                    <span className="truncate text-muted-foreground">{displayRatio.description}</span>
+                    <span className="hidden text-muted-foreground/50 @[540px]/controls:inline">·</span>
+                    <span className="hidden truncate text-muted-foreground @[540px]/controls:inline">{displayRatio.description}</span>
                   </motion.div>
                 </div>
 
@@ -1470,7 +1446,7 @@ function StudioPage() {
                 <div className="flex flex-wrap items-center justify-between gap-1.5">
                   <span className="text-xs font-extrabold tracking-tight text-foreground sm:text-sm">画面细节</span>
                   <span className="text-xs text-muted-foreground">
-                    点选灵感标签或输入补充描述（Cmd/Ctrl+Enter 生成）
+                    点选标签或补充描述<span className="hidden sm:inline">（Cmd/Ctrl+Enter 生成）</span>
                   </span>
                 </div>
 
@@ -1823,7 +1799,7 @@ function StudioPage() {
                         {activeArtist.name} · {styleVisual.shortLabel} · {aspectRatio}
                       </div>
                       <p className="text-xs text-muted-foreground">
-                        {styleVisual.tagline || '支持从三大图库混搭，或拖拽 / 粘贴本地参考图'}
+                        {styleVisual.tagline || '从三大图库挑卡，或自传参考图后点击生成'}
                       </p>
                     </div>
 
@@ -2069,50 +2045,6 @@ function StudioPage() {
               <img src={stitchModalUrl} alt="参考拼图" className="max-h-[70dvh] w-auto rounded-lg object-contain" />
             </div>
           )}
-        </DialogContent>
-      </Dialog>
-
-      {/* 组装提示词预览弹窗 */}
-      <Dialog
-        open={promptModalOpen}
-        onOpenChange={(o) => {
-          setPromptModalOpen(o)
-          if (!o) setCopiedPrompt(false)
-        }}
-      >
-        <DialogContent className="max-h-[85dvh] w-[94vw] max-w-2xl overflow-y-auto p-5 sm:max-w-2xl">
-          <DialogHeader className="flex flex-row flex-wrap items-start justify-between gap-3 pr-8">
-            <div className="space-y-1">
-              <DialogTitle className="flex items-center gap-2 text-base font-extrabold">
-                <FileTextIcon className="size-4 text-[#D9381E]" />
-                <span>组装提示词预览</span>
-              </DialogTitle>
-              <DialogDescription className="text-xs">
-                {activeArtist.name} · {viewfinderStyleLabel} · {aspectRatio}（共 {coreCount + extraImages.length} 张参考图）
-              </DialogDescription>
-            </div>
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              onClick={async () => {
-                try {
-                  await navigator.clipboard.writeText(assembledPrompt)
-                  setCopiedPrompt(true)
-                  toast.success('已复制完整提示词')
-                } catch {
-                  toast.error('剪贴板复制失败，请手动选中复制')
-                }
-              }}
-              className="h-8 shrink-0 rounded-lg text-xs"
-            >
-              {copiedPrompt ? <CheckIcon className="size-3.5 text-emerald-600" /> : <CopyIcon className="size-3.5" />}
-              <span>{copiedPrompt ? '已复制' : '复制提示词'}</span>
-            </Button>
-          </DialogHeader>
-          <pre className="mt-2 max-h-[52dvh] overflow-y-auto rounded-xl border border-border bg-muted/60 p-3.5 font-mono text-xs leading-relaxed whitespace-pre-wrap text-foreground">
-            {assembledPrompt}
-          </pre>
         </DialogContent>
       </Dialog>
 

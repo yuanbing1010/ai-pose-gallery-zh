@@ -400,14 +400,10 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       setProviders(data.providers)
       setProvidersLoaded(true)
 
-      if (!data.platform.allowUserNsfwUnlock) {
-        setSafeMode(data.platform.defaultSafeMode)
-        try {
-          localStorage.removeItem(SAFE_MODE_KEY)
-        } catch {}
-      } else if (localStorage.getItem(SAFE_MODE_KEY) === null) {
-        setSafeMode(data.platform.defaultSafeMode)
-      }
+      setSafeMode(data.platform.defaultSafeMode)
+      try {
+        localStorage.removeItem(SAFE_MODE_KEY)
+      } catch {}
 
       const validStyleIds = new Set(getEffectiveStyleCatalog(data.platform).map((s) => s.id))
       const isValidStyle = (id: string | undefined) => id === 'none' || (Boolean(id) && validStyleIds.has(id!))

@@ -7,8 +7,6 @@ import {
   MenuIcon,
   MoonIcon,
   PersonStandingIcon,
-  ShieldAlertIcon,
-  ShieldCheckIcon,
   ShirtIcon,
   SparklesIcon,
   SunIcon,
@@ -36,9 +34,6 @@ export function ShowcaseNavbar() {
   const {
     user,
     recipe,
-    safeMode,
-    toggleSafeMode,
-    platform,
     openAuthModal,
     openAccountModal,
   } = useStudio()
@@ -47,7 +42,6 @@ export function ShowcaseNavbar() {
 
   const selectedCount = [recipe.portrait, recipe.costume, recipe.pose].filter(Boolean).length
   const isStudio = active === '/studio'
-  const showSafeToggle = platform.allowUserNsfwUnlock
   const isDark =
     theme === 'dark' ||
     (theme === 'system' && typeof window !== 'undefined' && window.matchMedia('(prefers-color-scheme: dark)').matches)
@@ -114,29 +108,6 @@ export function ShowcaseNavbar() {
                 </nav>
 
                 <div className="mt-6 space-y-2.5 border-t border-border px-2 pt-4">
-                  {showSafeToggle && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setMobileOpen(false)
-                        toggleSafeMode()
-                      }}
-                      className={`flex w-full items-center justify-between rounded-xl border px-3.5 py-2.5 text-xs font-semibold transition-colors ${
-                        safeMode
-                          ? 'border-emerald-600/30 bg-emerald-500/10 text-emerald-800 dark:text-emerald-300'
-                          : 'border-[#D9381E]/35 bg-[#D9381E]/10 text-[#B82914] dark:text-[#FF8566]'
-                      }`}
-                    >
-                      <span className="flex items-center gap-2">
-                        {safeMode ? <ShieldCheckIcon className="size-4" /> : <ShieldAlertIcon className="size-4" />}
-                        <span>{safeMode ? '安全模式 (SFW)' : '18+ 完整图库'}</span>
-                      </span>
-                      <span className="font-mono text-[11px]">
-                        {safeMode ? '点击解锁' : '点击隐藏'}
-                      </span>
-                    </button>
-                  )}
-
                   {user ? (
                     <>
                       <button
@@ -215,25 +186,8 @@ export function ShowcaseNavbar() {
           </nav>
         </div>
 
-        {/* 右侧：内容安全切换 + 日夜切换 + 用户积分/登录 + 管理员控制台 + 合成台 CTA */}
+        {/* 右侧：日夜切换 + 用户积分/登录 + 管理员控制台 + 合成台 CTA */}
         <div className="flex shrink-0 items-center gap-1 sm:gap-2">
-          {showSafeToggle && (
-            <button
-              type="button"
-              onClick={toggleSafeMode}
-              title={safeMode ? '安全模式已开启（隐藏敏感内容），点击解锁完整图库' : '当前为完整图库，点击切回安全模式'}
-              aria-label={safeMode ? '安全模式 (SFW)，点击解锁完整图库' : '18+ 完整图库，点击切回安全模式'}
-              className={`inline-flex h-8 shrink-0 items-center justify-center gap-1 rounded-full border px-2 font-mono text-[11px] font-bold whitespace-nowrap transition-colors sm:h-9 sm:px-2.5 ${
-                safeMode
-                  ? 'border-emerald-600/30 bg-emerald-500/10 text-emerald-800 hover:bg-emerald-500/15 dark:text-emerald-300'
-                  : 'border-[#D9381E]/40 bg-[#D9381E]/12 text-[#B82914] hover:bg-[#D9381E]/18 dark:text-[#FF8566]'
-              }`}
-            >
-              {safeMode ? <ShieldCheckIcon className="size-3.5 shrink-0" /> : <ShieldAlertIcon className="size-3.5 shrink-0" />}
-              <span className="hidden sm:inline">{safeMode ? 'SFW' : '18+'}</span>
-            </button>
-          )}
-
           <button
             type="button"
             aria-label={isDark ? '切换到日间画廊模式' : '切换到暗房模式'}

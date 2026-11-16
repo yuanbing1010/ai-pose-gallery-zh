@@ -17,7 +17,7 @@ export interface StyleVisualMeta {
 
 const NONE_STYLE_VISUAL_META: StyleVisualMeta = {
   shortLabel: '跟随原图',
-  tagline: '不叠加预设画风，忠实跟随参考图原本质感',
+  tagline: '',
 }
 
 export function getStyleVisualMeta(
@@ -30,7 +30,7 @@ export function getStyleVisualMeta(
 
   return {
     shortLabel: styleItem?.shortLabel?.trim() || styleItem?.label || key,
-    tagline: styleItem?.tagline?.trim() || styleItem?.prompt || '',
+    tagline: styleItem?.tagline?.trim() || '',
     preview: styleItem?.previewUrl?.trim() || undefined,
   }
 }
@@ -44,8 +44,6 @@ export interface VisualStyleItem {
   label: string
   shortLabel: string
   tagline: string
-  prompt: string
-  negativePrompt?: string
   preview?: string
 }
 
@@ -77,8 +75,6 @@ export function getVisualStylePresets(
       label: item.label,
       shortLabel: meta.shortLabel,
       tagline: meta.tagline,
-      prompt: item.prompt.trim(),
-      negativePrompt: item.negativePrompt?.trim() || undefined,
       preview: meta.preview,
     }
   })

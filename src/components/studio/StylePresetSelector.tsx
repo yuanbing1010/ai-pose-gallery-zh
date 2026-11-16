@@ -9,7 +9,6 @@ import {
 } from 'lucide-react'
 import {
   getStyleTaxonomyTree,
-  getStyleVisualMeta,
   getVisualStylePresets,
 } from '@/lib/stylePresets'
 import { cn } from '@/lib/utils'
@@ -34,11 +33,9 @@ export function StylePresetSelector({
   const effectiveKey = isNone ? 'none' : value
   const activeVisual = visualStyles.find((s) => s.key === effectiveKey) ?? null
   const resolved = resolveStyleInfo(effectiveKey, platform)
-  const noneMeta = getStyleVisualMeta('none')
 
   const previewImg = activeVisual?.preview
   const title = activeVisual?.label || NONE_STYLE_PRESET.label
-  const tagline = activeVisual?.tagline || noneMeta.tagline
   const categoryBadge =
     !isNone && resolved.categoryLabel && resolved.subcategoryLabel
       ? `${resolved.categoryLabel} · ${resolved.subcategoryLabel}`
@@ -121,7 +118,7 @@ export function StylePresetSelector({
           )}
         </div>
 
-        <div className="min-w-0 flex-1 space-y-0.5">
+        <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-1.5">
             <span
               className={cn(
@@ -137,11 +134,11 @@ export function StylePresetSelector({
               {title}
             </span>
           </div>
-          <p className="truncate text-[11px] text-muted-foreground">{tagline}</p>
         </div>
 
         <span className="inline-flex shrink-0 items-center gap-0.5 rounded-lg border border-border/80 bg-[#FAF8F4] px-2 py-1 text-[11px] font-semibold text-muted-foreground transition-colors group-hover:border-foreground/35 group-hover:text-foreground dark:bg-muted/40">
-          <span>更换画风</span>
+          <span className="sm:hidden">更换</span>
+          <span className="hidden sm:inline">更换画风</span>
           <ChevronRightIcon className="size-3.5" />
         </span>
       </button>

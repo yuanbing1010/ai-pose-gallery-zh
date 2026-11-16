@@ -99,7 +99,6 @@ export function StyleBrowserPanel({
           item.label,
           item.shortLabel,
           item.tagline,
-          item.prompt,
           item.categoryLabel,
           item.subcategoryLabel,
         ]
@@ -223,13 +222,8 @@ export function StyleBrowserPanel({
           )}
         </div>
 
-        <div className="flex min-w-0 flex-1 flex-col justify-between gap-0.5 p-2">
-          <div className="flex items-center justify-between gap-1">
-            <span className="truncate text-xs font-bold text-foreground">{item.label}</span>
-          </div>
-          <p className="line-clamp-1 text-[11px] text-muted-foreground">
-            {item.tagline || item.prompt || '点击应用此画风'}
-          </p>
+        <div className="flex min-w-0 flex-1 items-center p-2">
+          <span className="truncate text-xs font-bold text-foreground">{item.label}</span>
         </div>
       </button>
     )
@@ -246,7 +240,7 @@ export function StyleBrowserPanel({
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="搜索画风名称、分类或关键词…"
+              placeholder="搜索画风或分类…"
               aria-label="搜索画风"
               className="h-8 w-full rounded-xl border border-border/80 bg-[#FAF8F4] pr-7 pl-8 text-xs text-foreground placeholder:text-muted-foreground focus:border-foreground/40 focus:outline-none dark:bg-muted/35"
             />
