@@ -3,10 +3,18 @@ import {
   DEFAULT_PROVIDER_PARAMS,
   PROVIDER_META,
   PROVIDER_ORDER,
+  PROVIDER_SUPPORTED_RESOLUTIONS,
+  getEffectiveProfileCreditCost,
+  mergePoseSanitizeConfig,
   mergePromptTemplate,
+  normalizeProfileResolutions,
+  resolveProfileDefaultResolution,
+  validatePoseSanitizeInput,
   type AdminOverviewPayload,
   type ImageProviderId,
   type PlatformConfig,
+  type ProfileResolutionOption,
+  type StudioResolution,
 } from '../../shared/studio'
 import { encryptSecret, hashPassword, maskApiKey, detectImageFormat } from '../crypto'
 import {
@@ -23,7 +31,9 @@ import {
   mapJobRow,
   mapLedgerRow,
   mapUserRow,
+  parseProfileRow,
   reapStaleProcessingJobs,
+  resolveProfileForGeneration,
   sanitizeStyleCategoriesInput,
   sanitizeStylePresetsInput,
   sanitizeStyleSubcategoriesInput,
@@ -31,6 +41,7 @@ import {
   saveWechatOAuthConfig,
   type ChannelRow,
   type JobRow,
+  type ModelProfileRow,
   type ProviderRow,
   type SupplierRow,
   type UserRow,
@@ -105,6 +116,7 @@ adminRoutes.get('/overview', async (c) => {
     jobsStats,
     redeemStats,
     supplierStats,
+    profileStats,
     channelStats,
     assetsStats,
     platformCfg,
@@ -130,6 +142,7 @@ adminRoutes.get('/overview', async (c) => {
     ).first<{ total: number; succeeded: number | null; failed: number | null; processing: number | null }>(),
     c.env.DB.prepare(`SELECT COUNT(*) AS total FROM redeem_codes`).first<{ total: number }>(),
     c.env.DB.prepare(`SELECT COUNT(*) AS total FROM suppliers`).first<{ total: number }>(),
+    c.env.DB.prepare(`SELECT COUNT(*) AS total FROM model_profiles`).first<{ total: number }>(),
     c.env.DB.prepare(`SELECT COUNT(*) AS total FROM provider_channels`).first<{ total: number }>(),
     c.env.DB.prepare(
       `SELECT
@@ -150,6 +163,7 @@ adminRoutes.get('/overview', async (c) => {
     jobsProcessing: jobsStats?.processing ?? 0,
     redeemCodesTotal: redeemStats?.total ?? 0,
     suppliersTotal: supplierStats?.total ?? 0,
+    profilesTotal: profileStats?.total ?? 0,
     channelsTotal: channelStats?.total ?? 0,
     r2AssetsTotal: assetsStats?.total_files ?? 0,
     r2TotalBytes: assetsStats?.total_bytes ?? 0,
@@ -338,6 +352,316 @@ adminRoutes.put('/providers/:id/slot', async (c) => {
   return c.json({ slots })
 })
 
+function parseProfileInput(
+  providerId: ImageProviderId,
+  body: Record<string, unknown>,
+  fallback?: {
+    displayName: string
+    badge: string
+    tagline: string
+    enabled: boolean
+    isDefault: boolean
+    creditCost: number
+    defaultResolution: StudioResolution | null
+    resolutions: ProfileResolutionOption[]
+    sortOrder: number
+  }
+):
+  | {
+      ok: true
+      value: {
+        displayName: string
+        badge: string
+        tagline: string
+        enabled: boolean
+        isDefault: boolean
+        creditCost: number
+        defaultResolution: StudioResolution
+        resolutions: ProfileResolutionOption[]
+        sortOrder: number
+      }
+    }
+  | { ok: false; message: string } {
+  const displayName =
+    typeof body.displayName === 'string'
+      ? body.displayName.trim().slice(0, 40)
+      : fallback?.displayName || ''
+  if (!displayName) {
+    return { ok: false, message: '请填写前端展示名称' }
+  }
+
+  const badge =
+    typeof body.badge === 'string'
+      ? body.badge.trim().slice(0, 16)
+      : fallback?.badge || ''
+  const tagline =
+    typeof body.tagline === 'string'
+      ? body.tagline.trim().slice(0, 80)
+      : fallback?.tagline || ''
+  const enabled =
+    typeof body.enabled === 'boolean' ? body.enabled : (fallback?.enabled ?? true)
+  const isDefault =
+    typeof body.isDefault === 'boolean' ? body.isDefault : (fallback?.isDefault ?? false)
+
+  const sortOrder =
+    body.sortOrder !== undefined
+      ? parseIntSafe(body.sortOrder, -10_000, 10_000)
+      : (fallback?.sortOrder ?? 0)
+  if (sortOrder === null) {
+    return { ok: false, message: '排序权重需为整数' }
+  }
+
+  const rawBaseCost =
+    body.creditCost !== undefined
+      ? parseIntSafe(body.creditCost, 0, 100_000)
+      : (fallback?.creditCost ?? 10)
+  if (rawBaseCost === null) {
+    return { ok: false, message: '单次消耗积分必须为 0~100000 的整数' }
+  }
+
+  const supported = PROVIDER_SUPPORTED_RESOLUTIONS[providerId]
+  let resolutions: ProfileResolutionOption[] = []
+  let defaultResolution: StudioResolution = '2K'
+  let effectiveCreditCost = rawBaseCost
+
+  if (supported.length > 0) {
+    const rawRes =
+      body.resolutions !== undefined
+        ? body.resolutions
+        : (fallback?.resolutions ?? null)
+    if (Array.isArray(rawRes)) {
+      const enabledCount = rawRes.filter(
+        (r) => r && typeof r === 'object' && (r as { enabled?: unknown }).enabled !== false
+      ).length
+      if (enabledCount === 0) {
+        return { ok: false, message: '请至少启用 1 个输出分辨率' }
+      }
+      for (const item of rawRes) {
+        if (!item || typeof item !== 'object') continue
+        const cVal = parseIntSafe((item as { creditCost?: unknown }).creditCost ?? rawBaseCost, 0, 100_000)
+        if (cVal === null) {
+          return { ok: false, message: '各分辨率消耗积分必须为 0~100000 的整数' }
+        }
+      }
+    }
+    resolutions = normalizeProfileResolutions(providerId, rawRes, rawBaseCost)
+    defaultResolution =
+      resolveProfileDefaultResolution(
+        providerId,
+        body.defaultResolution ?? fallback?.defaultResolution ?? '2K',
+        resolutions
+      ) ?? '2K'
+    effectiveCreditCost = getEffectiveProfileCreditCost(
+      { creditCost: rawBaseCost, resolutions },
+      defaultResolution
+    )
+  }
+
+  return {
+    ok: true,
+    value: {
+      displayName,
+      badge,
+      tagline,
+      enabled,
+      isDefault,
+      creditCost: effectiveCreditCost,
+      defaultResolution,
+      resolutions,
+      sortOrder,
+    },
+  }
+}
+
+adminRoutes.post('/providers/:id/profiles', async (c) => {
+  const providerId = c.req.param('id') as ImageProviderId
+  if (!PROVIDER_ORDER.includes(providerId)) {
+    return c.json({ error: { message: '未知的画师/模型分类' } }, 400)
+  }
+
+  let body: Record<string, unknown>
+  try {
+    body = await c.req.json()
+  } catch {
+    return c.json({ error: { message: '请求体格式错误' } }, 400)
+  }
+
+  const parsed = parseProfileInput(providerId, body)
+  if (!parsed.ok) {
+    return c.json({ error: { message: parsed.message } }, 400)
+  }
+
+  const val = parsed.value
+  const now = Date.now()
+  const newId = crypto.randomUUID()
+  const existingCount = await c.env.DB.prepare(
+    `SELECT COUNT(*) AS cnt FROM model_profiles WHERE provider_id = ?`
+  )
+    .bind(providerId)
+    .first<{ cnt: number }>()
+  const shouldBeDefault = val.isDefault || (existingCount?.cnt ?? 0) === 0
+
+  const stmts: D1PreparedStatement[] = []
+  if (shouldBeDefault) {
+    stmts.push(
+      c.env.DB.prepare(`UPDATE model_profiles SET is_default = 0 WHERE provider_id = ?`).bind(
+        providerId
+      )
+    )
+  }
+  stmts.push(
+    c.env.DB.prepare(
+      `INSERT INTO model_profiles (
+        id, provider_id, display_name, badge, tagline, enabled, is_default,
+        credit_cost, default_resolution, resolutions_json, sort_order, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).bind(
+      newId,
+      providerId,
+      val.displayName,
+      val.badge,
+      val.tagline,
+      val.enabled ? 1 : 0,
+      shouldBeDefault ? 1 : 0,
+      val.creditCost,
+      val.defaultResolution,
+      JSON.stringify(val.resolutions),
+      val.sortOrder,
+      now,
+      now
+    )
+  )
+
+  await c.env.DB.batch(stmts)
+  const slots = await getAdminProviderSlots(c.env)
+  c.header('Cache-Control', 'no-store')
+  return c.json({ slots, createdProfileId: newId }, 201)
+})
+
+adminRoutes.put('/profiles/:profileId', async (c) => {
+  const profileId = c.req.param('profileId')
+  const existing = await c.env.DB.prepare(`SELECT * FROM model_profiles WHERE id = ?`)
+    .bind(profileId)
+    .first<ModelProfileRow>()
+  if (!existing) {
+    return c.json({ error: { message: '模型档位不存在' } }, 404)
+  }
+
+  let body: Record<string, unknown>
+  try {
+    body = await c.req.json()
+  } catch {
+    return c.json({ error: { message: '请求体格式错误' } }, 400)
+  }
+
+  const prevParsed = parseProfileRow(existing)
+  const parsed = parseProfileInput(existing.provider_id, body, {
+    displayName: existing.display_name,
+    badge: existing.badge,
+    tagline: existing.tagline,
+    enabled: existing.enabled === 1,
+    isDefault: existing.is_default === 1,
+    creditCost: prevParsed.effectiveCreditCost,
+    defaultResolution: prevParsed.defaultResolution,
+    resolutions: prevParsed.resolutions,
+    sortOrder: existing.sort_order,
+  })
+  if (!parsed.ok) {
+    return c.json({ error: { message: parsed.message } }, 400)
+  }
+
+  const val = parsed.value
+  const now = Date.now()
+  const stmts: D1PreparedStatement[] = []
+  if (val.isDefault) {
+    stmts.push(
+      c.env.DB.prepare(`UPDATE model_profiles SET is_default = 0 WHERE provider_id = ?`).bind(
+        existing.provider_id
+      )
+    )
+  }
+  stmts.push(
+    c.env.DB.prepare(
+      `UPDATE model_profiles
+       SET display_name = ?, badge = ?, tagline = ?, enabled = ?, is_default = ?,
+           credit_cost = ?, default_resolution = ?, resolutions_json = ?, sort_order = ?, updated_at = ?
+       WHERE id = ?`
+    ).bind(
+      val.displayName,
+      val.badge,
+      val.tagline,
+      val.enabled ? 1 : 0,
+      val.isDefault ? 1 : 0,
+      val.creditCost,
+      val.defaultResolution,
+      JSON.stringify(val.resolutions),
+      val.sortOrder,
+      now,
+      profileId
+    )
+  )
+  await c.env.DB.batch(stmts)
+
+  // 若取消了唯一的默认标识，兜底指定同画师下第一个档位为默认
+  if (!val.isDefault && existing.is_default === 1) {
+    const fallback = await c.env.DB.prepare(
+      `SELECT id FROM model_profiles WHERE provider_id = ? ORDER BY sort_order ASC, created_at ASC LIMIT 1`
+    )
+      .bind(existing.provider_id)
+      .first<{ id: string }>()
+    if (fallback) {
+      await c.env.DB.prepare(`UPDATE model_profiles SET is_default = 1 WHERE id = ?`)
+        .bind(fallback.id)
+        .run()
+    }
+  }
+
+  const slots = await getAdminProviderSlots(c.env)
+  c.header('Cache-Control', 'no-store')
+  return c.json({ slots })
+})
+
+adminRoutes.delete('/profiles/:profileId', async (c) => {
+  const profileId = c.req.param('profileId')
+  const existing = await c.env.DB.prepare(`SELECT * FROM model_profiles WHERE id = ?`)
+    .bind(profileId)
+    .first<ModelProfileRow>()
+  if (!existing) {
+    return c.json({ error: { message: '模型档位不存在' } }, 404)
+  }
+
+  const countRow = await c.env.DB.prepare(
+    `SELECT COUNT(*) AS cnt FROM model_profiles WHERE provider_id = ?`
+  )
+    .bind(existing.provider_id)
+    .first<{ cnt: number }>()
+  if ((countRow?.cnt ?? 0) <= 1) {
+    return c.json({ error: { message: '每个画师至少需要保留 1 个模型档位' } }, 409)
+  }
+
+  await c.env.DB.batch([
+    c.env.DB.prepare(`DELETE FROM provider_channels WHERE profile_id = ?`).bind(profileId),
+    c.env.DB.prepare(`DELETE FROM model_profiles WHERE id = ?`).bind(profileId),
+  ])
+
+  if (existing.is_default === 1) {
+    const nextDefault = await c.env.DB.prepare(
+      `SELECT id FROM model_profiles WHERE provider_id = ? ORDER BY sort_order ASC, created_at ASC LIMIT 1`
+    )
+      .bind(existing.provider_id)
+      .first<{ id: string }>()
+    if (nextDefault) {
+      await c.env.DB.prepare(`UPDATE model_profiles SET is_default = 1 WHERE id = ?`)
+        .bind(nextDefault.id)
+        .run()
+    }
+  }
+
+  const slots = await getAdminProviderSlots(c.env)
+  c.header('Cache-Control', 'no-store')
+  return c.json({ slots })
+})
+
 adminRoutes.post('/providers/:id/channels', async (c) => {
   const providerId = c.req.param('id') as ImageProviderId
   if (!PROVIDER_ORDER.includes(providerId)) {
@@ -349,6 +673,16 @@ adminRoutes.post('/providers/:id/channels', async (c) => {
     body = await c.req.json()
   } catch {
     return c.json({ error: { message: '请求体格式错误' } }, 400)
+  }
+
+  const requestedProfileId = typeof body.profileId === 'string' ? body.profileId.trim() : ''
+  const targetProfile = await resolveProfileForGeneration(
+    c.env.DB,
+    providerId,
+    requestedProfileId || null
+  )
+  if (!targetProfile) {
+    return c.json({ error: { message: '请选择有效的模型档位' } }, 400)
   }
 
   const supplierId = typeof body.supplierId === 'string' ? body.supplierId.trim() : ''
@@ -371,6 +705,9 @@ adminRoutes.post('/providers/:id/channels', async (c) => {
       ? body.model.trim()
       : PROVIDER_META[providerId].models[0].value
   const customModel = typeof body.customModel === 'string' ? body.customModel.trim() : ''
+  if (model === 'custom' && !customModel) {
+    return c.json({ error: { message: '选择自定义模型时请填写自定义模型 ID' } }, 400)
+  }
 
   const priority = parseIntSafe(body.priority ?? 100, -10_000, 100_000)
   if (priority === null) {
@@ -385,13 +722,14 @@ adminRoutes.post('/providers/:id/channels', async (c) => {
   const now = Date.now()
   await c.env.DB.prepare(
     `INSERT INTO provider_channels (
-      id, provider_id, supplier_id, name, enabled, model, custom_model,
+      id, provider_id, profile_id, supplier_id, name, enabled, model, custom_model,
       priority, weight, params_json, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 100, ?, ?, ?)`
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 100, ?, ?, ?)`
   )
     .bind(
       crypto.randomUUID(),
       providerId,
+      targetProfile.id,
       supplierId,
       name,
       enabled,
@@ -425,6 +763,19 @@ adminRoutes.put('/channels/:channelId', async (c) => {
     return c.json({ error: { message: '请求体格式错误' } }, 400)
   }
 
+  let nextProfileId = existing.profile_id || ''
+  if (typeof body.profileId === 'string' && body.profileId.trim()) {
+    const targetProfile = await c.env.DB.prepare(
+      `SELECT id FROM model_profiles WHERE id = ? AND provider_id = ?`
+    )
+      .bind(body.profileId.trim(), existing.provider_id)
+      .first<{ id: string }>()
+    if (!targetProfile) {
+      return c.json({ error: { message: '所选模型档位不存在或不属于当前画师' } }, 400)
+    }
+    nextProfileId = targetProfile.id
+  }
+
   const supplierId =
     typeof body.supplierId === 'string' && body.supplierId.trim()
       ? body.supplierId.trim()
@@ -445,6 +796,9 @@ adminRoutes.put('/channels/:channelId', async (c) => {
     typeof body.model === 'string' && body.model.trim() ? body.model.trim() : existing.model
   const customModel =
     typeof body.customModel === 'string' ? body.customModel.trim() : existing.custom_model
+  if (model === 'custom' && !customModel) {
+    return c.json({ error: { message: '选择自定义模型时请填写自定义模型 ID' } }, 400)
+  }
 
   const priority =
     body.priority !== undefined ? parseIntSafe(body.priority, -10_000, 100_000) : existing.priority
@@ -465,11 +819,12 @@ adminRoutes.put('/channels/:channelId', async (c) => {
 
   await c.env.DB.prepare(
     `UPDATE provider_channels
-     SET supplier_id = ?, name = ?, enabled = ?, model = ?, custom_model = ?,
+     SET profile_id = ?, supplier_id = ?, name = ?, enabled = ?, model = ?, custom_model = ?,
          priority = ?, params_json = ?, updated_at = ?
      WHERE id = ?`
   )
     .bind(
+      nextProfileId || `prof_${existing.provider_id}_default`,
       supplierId,
       name,
       enabled,
@@ -643,6 +998,12 @@ adminRoutes.put('/settings', async (c) => {
 
   const stylePromptOverrides: Record<string, string> = {}
 
+  const validatedPoseSanitize =
+    body.poseSanitize !== undefined ? validatePoseSanitizeInput(body.poseSanitize) : null
+  if (body.poseSanitize !== undefined && validatedPoseSanitize === null) {
+    return c.json({ error: { message: '敏感词屏蔽配置格式错误' } }, 400)
+  }
+
   const next: PlatformConfig = {
     registerBonusCredits: bonus,
     allowRegistration:
@@ -670,6 +1031,8 @@ adminRoutes.put('/settings', async (c) => {
       body.promptTemplate !== undefined
         ? mergePromptTemplate(body.promptTemplate)
         : current.promptTemplate ?? mergePromptTemplate(null),
+    poseSanitize:
+      validatedPoseSanitize ?? current.poseSanitize ?? mergePoseSanitizeConfig(null),
     styleCategories: nextStyleCategories,
     styleSubcategories: nextStyleSubcategories,
     stylePresets: nextStylePresets,
@@ -833,7 +1196,7 @@ adminRoutes.post('/users', async (c) => {
 
   const adminNote = typeof body.adminNote === 'string' ? body.adminNote.trim().slice(0, 120) : ''
   const displayNameRaw = typeof body.displayName === 'string' ? body.displayName.trim() : ''
-  const displayName = (displayNameRaw || adminNote || username).slice(0, 40)
+  const displayName = (displayNameRaw || username).slice(0, 40)
   const role = body.role === 'admin' ? 'admin' : 'user'
 
   const existingName = await c.env.DB.prepare(
@@ -1084,10 +1447,12 @@ adminRoutes.post('/redeem-codes', async (c) => {
     return c.json({ error: { message: '数量(1~50)、积分(>=1)、可用次数(>=1)参数无效' } }, 400)
   }
 
-  const expiresDays =
+  const hasExpiresDays =
     body.expiresDays !== undefined && body.expiresDays !== null && body.expiresDays !== ''
-      ? parseIntSafe(body.expiresDays, 1, 3650)
-      : null
+  const expiresDays = hasExpiresDays ? parseIntSafe(body.expiresDays, 1, 3650) : null
+  if (hasExpiresDays && expiresDays === null) {
+    return c.json({ error: { message: '有效天数需为 1~3650 的整数' } }, 400)
+  }
   const expiresAt = expiresDays ? Date.now() + expiresDays * 24 * 60 * 60 * 1000 : null
   const prefix = typeof body.prefix === 'string' ? body.prefix : 'POSE'
   const note = typeof body.note === 'string' ? body.note.trim().slice(0, 120) : ''
@@ -1143,9 +1508,9 @@ adminRoutes.get('/generations', async (c) => {
   if (q) {
     const pattern = `%${q}%`
     clauses.push(
-      `(LOWER(COALESCE(u.username, '')) LIKE ? OR LOWER(j.prompt) LIKE ? OR LOWER(j.model) LIKE ? OR LOWER(COALESCE(j.channel_name, '')) LIKE ? OR LOWER(COALESCE(j.supplier_name, '')) LIKE ? OR LOWER(COALESCE(j.error_message, '')) LIKE ?)`
+      `(LOWER(COALESCE(u.username, '')) LIKE ? OR LOWER(j.prompt) LIKE ? OR LOWER(j.model) LIKE ? OR LOWER(COALESCE(j.profile_name, '')) LIKE ? OR LOWER(COALESCE(j.channel_name, '')) LIKE ? OR LOWER(COALESCE(j.supplier_name, '')) LIKE ? OR LOWER(COALESCE(j.error_message, '')) LIKE ?)`
     )
-    bindings.push(pattern, pattern, pattern, pattern, pattern, pattern)
+    bindings.push(pattern, pattern, pattern, pattern, pattern, pattern, pattern)
   }
   const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''
 

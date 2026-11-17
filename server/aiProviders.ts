@@ -13,6 +13,7 @@ import {
   type ImagePassMode,
   type RecipeState,
   type StudioAspectRatio,
+  type StudioResolution,
 } from '../shared/studio'
 import { base64ToBytes, bytesToBase64, detectImageFormat } from './crypto'
 import type { RunnableChannel } from './db'
@@ -358,6 +359,16 @@ function normalizeV1Base(baseUrl: string): string {
   return stripped.endsWith('/v1') ? stripped : `${stripped}/v1`
 }
 
+function readPartInlineImageUrl(part: any): string | null {
+  if (part?.inlineData?.data) {
+    return `data:${part.inlineData.mimeType || 'image/png'};base64,${part.inlineData.data}`
+  }
+  if (part?.inline_data?.data) {
+    return `data:${part.inline_data.mime_type || 'image/png'};base64,${part.inline_data.data}`
+  }
+  return null
+}
+
 function extractUniversalImage(json: any): string | null {
   if (json?.data?.[0]?.b64_json) return `data:image/png;base64,${json.data[0].b64_json}`
   if (json?.data?.[0]?.url) return json.data[0].url
@@ -371,19 +382,40 @@ function extractUniversalImage(json: any): string | null {
     }
   }
 
+  // Gemini 思考模型会先在 thought: true 的 part 中输出中间草稿图，必须跳过并取最终非思考成图
   const parts = json?.candidates?.[0]?.content?.parts || []
+  let finalGeminiImage: string | null = null
   for (const p of parts) {
-    if (p.inlineData?.data) return `data:${p.inlineData.mimeType || 'image/png'};base64,${p.inlineData.data}`
-    if (p.inline_data?.data) return `data:${p.inline_data.mime_type || 'image/png'};base64,${p.inline_data.data}`
+    if (!p || p.thought === true) continue
+    const img = readPartInlineImageUrl(p)
+    if (img) finalGeminiImage = img
   }
+  if (finalGeminiImage) return finalGeminiImage
 
   const msg = json?.choices?.[0]?.message
-  if (Array.isArray(msg?.images) && msg.images[0]?.image_url?.url) return msg.images[0].image_url.url
-  if (Array.isArray(msg?.content)) {
-    for (const part of msg.content) {
-      if (part.type === 'image_url' && part.image_url?.url) return part.image_url.url
-      if (part.inlineData?.data) return `data:${part.inlineData.mimeType || 'image/png'};base64,${part.inlineData.data}`
+  if (Array.isArray(msg?.images)) {
+    let finalMsgImage: string | null = null
+    for (const img of msg.images) {
+      if (img && img.thought !== true && img.image_url?.url) {
+        finalMsgImage = img.image_url.url
+      }
     }
+    if (finalMsgImage) return finalMsgImage
+  }
+  if (Array.isArray(msg?.content)) {
+    let finalContentImage: string | null = null
+    for (const part of msg.content) {
+      if (!part || part.thought === true || part.type === 'thinking' || part.type === 'reasoning') {
+        continue
+      }
+      if (part.type === 'image_url' && part.image_url?.url) {
+        finalContentImage = part.image_url.url
+        continue
+      }
+      const img = readPartInlineImageUrl(part)
+      if (img) finalContentImage = img
+    }
+    if (finalContentImage) return finalContentImage
   }
 
   const text = typeof msg?.content === 'string' ? msg.content : ''
@@ -698,6 +730,7 @@ export async function runServerGeneration(params: {
   recipe: RecipeState
   userId: string
   aspectRatio: StudioAspectRatio
+  resolution?: StudioResolution | null
   imagePassMode: ImagePassMode
   requestOrigin: string
   stitchedR2Key?: string
@@ -710,6 +743,7 @@ export async function runServerGeneration(params: {
     recipe,
     userId,
     aspectRatio,
+    resolution,
     imagePassMode,
     requestOrigin,
     stitchedR2Key,
@@ -740,6 +774,13 @@ export async function runServerGeneration(params: {
   const gptCfg: GptParams = { ...DEFAULT_PROVIDER_PARAMS.gpt, ...rawParams, ...ratioPatches.gpt }
   const geminiCfg: GeminiParams = { ...DEFAULT_PROVIDER_PARAMS.gemini, ...rawParams, ...ratioPatches.gemini }
   const grokCfg: GrokParams = { ...DEFAULT_PROVIDER_PARAMS.grok, ...rawParams, ...ratioPatches.grok }
+
+  if (resolution === '1K' || resolution === '2K' || resolution === '4K') {
+    geminiCfg.imageSize = resolution
+  }
+  if (resolution === '1K' || resolution === '2K') {
+    grokCfg.resolution = resolution.toLowerCase() as '1k' | '2k'
+  }
 
   const endpointMode =
     provider === 'gpt'
@@ -772,10 +813,7 @@ export async function runServerGeneration(params: {
   const preflightStartedAt = Date.now()
   let resolvedAll: Array<{ source: ResolvedSource; ref: string; loaded?: LoadedImage }>
   try {
-    await traceContext?.onStage?.(
-      'resolving_refs',
-      `正在准备 ${allSources.length} 张参考图（${!forceBytes && canPassPublicUrls ? '外链直连' : '读取转码'}）…`
-    )
+    await traceContext?.onStage?.('resolving_refs', '正在准备参考素材…')
     resolvedAll = await Promise.all(allSources.map(resolveRefValue))
     if (traceContext?.onReferencesResolved) {
       traceContext.onReferencesResolved(
@@ -898,7 +936,7 @@ export async function runServerGeneration(params: {
     attemptState.current = attempt
 
     try {
-      await traceContext?.onStage?.('generating', '已提交云端模型，正在绘制出图…')
+      await traceContext?.onStage?.('generating', '正在绘制中…')
       const result = await fetchUpstream(
         spec.url,
         {
@@ -1171,7 +1209,7 @@ export async function runServerGeneration(params: {
         })),
         { text: prompt },
       ]
-      const supportsImageSize = /gemini-3|nano-banana/i.test(model)
+      const supportsImageSize = /gemini-3|nano-banana|banana/i.test(model) && !/^gemini-2\./i.test(model)
       const imageConfig: Record<string, string> = {
         aspectRatio: geminiCfg.aspectRatio,
       }
@@ -1352,7 +1390,10 @@ export async function runServerGeneration(params: {
       }))
     } else {
       const content = [
-        { type: 'text', text: `${grokPrompt}\n(Output aspect ratio: ${aspectRatio})` },
+        {
+          type: 'text',
+          text: `${grokPrompt}\n(Output aspect ratio: ${aspectRatio}, resolution: ${grokCfg.resolution || '2k'})`,
+        },
         ...refsLimited.map((item) => ({ type: 'image_url', image_url: { url: item.ref } })),
       ]
       const payload = {
@@ -1382,10 +1423,17 @@ export async function runServerGeneration(params: {
 
   const outputRef = extractUniversalImage(json)
   if (!outputRef) {
+    const geminiFinishReason = json?.candidates?.[0]?.finishReason
+    const geminiParts: any[] = Array.isArray(json?.candidates?.[0]?.content?.parts)
+      ? json.candidates[0].content.parts
+      : []
+    const geminiReplyText =
+      geminiParts.find((p) => !p?.thought && typeof p?.text === 'string' && p.text.trim())?.text ||
+      geminiParts.find((p) => typeof p?.text === 'string' && p.text.trim())?.text
     const fallbackText =
       json?.choices?.[0]?.message?.content ||
-      json?.candidates?.[0]?.finishReason ||
-      json?.candidates?.[0]?.content?.parts?.[0]?.text ||
+      (geminiFinishReason && geminiFinishReason !== 'STOP' ? geminiFinishReason : geminiReplyText) ||
+      geminiFinishReason ||
       JSON.stringify(json).slice(0, 260)
     const safety = isSafetyOrPolicyError(String(fallbackText))
     const msg = `接口已响应但未解析到图片输出：${fallbackText}`
@@ -1440,7 +1488,7 @@ export async function runServerGeneration(params: {
   }
 
   try {
-    await traceContext?.onStage?.('downloading_output', '云端已出图，正在回传高清原图…')
+    await traceContext?.onStage?.('downloading_output', '正在保存成图…')
     const outRes = await devProxyAwareFetch(
       outUrl.toString(),
       { method: 'GET', signal: AbortSignal.timeout(45_000) },

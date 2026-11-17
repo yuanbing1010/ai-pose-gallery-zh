@@ -8,10 +8,12 @@ import type {
   GenerationHistoryItem,
   ImageProviderId,
   PlatformConfig,
+  ProfileResolutionOption,
   PublicUser,
   RecipeState,
   RedeemCodeItem,
   StudioAspectRatio,
+  StudioResolution,
   SupplierDTO,
   UserRole,
   UserStatus,
@@ -192,7 +194,10 @@ export async function startGenerationStreamApi(
   payload: {
     idempotencyKey: string
     provider: ImageProviderId
+    modelProfileId?: string
+    resolution?: StudioResolution
     stylePreset: string
+    allowFaceStyleShift?: boolean
     aspectRatio: StudioAspectRatio
     sceneNote?: string
     recipe: RecipeState
@@ -377,9 +382,50 @@ export function updateAdminProviderSlotApi(
   })
 }
 
+export interface AdminProfilePayload {
+  displayName?: string
+  badge?: string
+  tagline?: string
+  enabled?: boolean
+  isDefault?: boolean
+  creditCost?: number
+  defaultResolution?: StudioResolution | null
+  resolutions?: ProfileResolutionOption[]
+  sortOrder?: number
+}
+
+export function createAdminProfileApi(
+  providerId: ImageProviderId,
+  payload: AdminProfilePayload
+): Promise<{ slots: AdminProviderSlotDTO[]; createdProfileId?: string }> {
+  return requestJson(`/api/admin/providers/${encodeURIComponent(providerId)}/profiles`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export function updateAdminProfileApi(
+  profileId: string,
+  payload: AdminProfilePayload
+): Promise<{ slots: AdminProviderSlotDTO[] }> {
+  return requestJson(`/api/admin/profiles/${encodeURIComponent(profileId)}`, {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  })
+}
+
+export function deleteAdminProfileApi(
+  profileId: string
+): Promise<{ slots: AdminProviderSlotDTO[] }> {
+  return requestJson(`/api/admin/profiles/${encodeURIComponent(profileId)}`, {
+    method: 'DELETE',
+  })
+}
+
 export function createAdminChannelApi(
   providerId: ImageProviderId,
   payload: {
+    profileId?: string
     supplierId: string
     name: string
     enabled: boolean
@@ -398,6 +444,7 @@ export function createAdminChannelApi(
 export function updateAdminChannelApi(
   channelId: string,
   payload: {
+    profileId?: string
     supplierId?: string
     name?: string
     enabled?: boolean

@@ -68,13 +68,39 @@ export function AdminRedeemTab({
   }, [loadData, reloadTick])
 
   const handleCreateCodes = async () => {
+    const count = Number(newCodeCount)
+    const credits = Number(newCodeCredits)
+    const maxUses = Number(newCodeMaxUses)
+    const expiresDaysRaw = newCodeDays.trim()
+    const expiresDays = expiresDaysRaw ? Number(expiresDaysRaw) : null
+
+    if (!Number.isInteger(count) || count < 1 || count > 50) {
+      toast.error('生成数量需为 1~50 的整数')
+      return
+    }
+    if (!Number.isInteger(credits) || credits < 1 || credits > 1_000_000) {
+      toast.error('面值积分需为 1~1000000 的整数')
+      return
+    }
+    if (!Number.isInteger(maxUses) || maxUses < 1 || maxUses > 100_000) {
+      toast.error('可用人数/次数需为 1~100000 的整数')
+      return
+    }
+    if (
+      expiresDays !== null &&
+      (!Number.isInteger(expiresDays) || expiresDays < 1 || expiresDays > 3650)
+    ) {
+      toast.error('有效天数需为 1~3650 的整数，留空表示永久')
+      return
+    }
+
     setCreatingCodes(true)
     try {
       const res = await createAdminRedeemCodesApi({
-        count: Number(newCodeCount) || 1,
-        credits: Number(newCodeCredits) || 50,
-        maxUses: Number(newCodeMaxUses) || 1,
-        expiresDays: newCodeDays.trim() ? Number(newCodeDays) : null,
+        count,
+        credits,
+        maxUses,
+        expiresDays,
         prefix: newCodePrefix.trim() || 'POSE',
         note: newCodeNote.trim(),
       })

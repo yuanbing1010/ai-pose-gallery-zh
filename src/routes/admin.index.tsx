@@ -14,6 +14,7 @@ import { AdminOverviewTab } from '@/components/admin/tabs/AdminOverviewTab'
 import { AdminProvidersTab } from '@/components/admin/tabs/AdminProvidersTab'
 import { AdminRedeemTab } from '@/components/admin/tabs/AdminRedeemTab'
 import { AdminSafetyTab } from '@/components/admin/tabs/AdminSafetyTab'
+import { AdminSanitizeTab } from '@/components/admin/tabs/AdminSanitizeTab'
 import { AdminSuppliersTab } from '@/components/admin/tabs/AdminSuppliersTab'
 import { AdminUsersTab } from '@/components/admin/tabs/AdminUsersTab'
 import { useStudio } from '@/store/studioStore'
@@ -150,6 +151,15 @@ function AdminHomePage() {
 
       {tab === 'safety' && (
         <AdminSafetyTab
+          reloadTick={reloadTick}
+          onLoadingChange={setLoading}
+          onConfirm={setConfirmAction}
+          onRefreshBootstrap={refreshBootstrap}
+        />
+      )}
+
+      {tab === 'sanitize' && (
+        <AdminSanitizeTab
           reloadTick={reloadTick}
           onLoadingChange={setLoading}
           onConfirm={setConfirmAction}

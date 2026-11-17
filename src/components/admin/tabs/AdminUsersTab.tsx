@@ -28,6 +28,7 @@ import {
   updateUserStatusApi,
 } from '@/lib/apiClient'
 import { toast } from '@/lib/notifications'
+import { useStudio } from '@/store/studioStore'
 import type { AdminUserItem, CreditLedgerItem, PublicUser, UserRole, UserStatus } from '@/types/gallery'
 import {
   AdminBadge,
@@ -71,6 +72,8 @@ export function AdminUsersTab({
   onConfirm,
   onRefreshBootstrap,
 }: AdminUsersTabProps) {
+  const { platform } = useStudio()
+  const defaultBonusCredits = String(platform.registerBonusCredits ?? 50)
   const [subView, setSubView] = useState<UsersSubView>('members')
   const [userQuery, setUserQuery] = useState('')
   const [appliedUserQuery, setAppliedUserQuery] = useState('')
@@ -88,7 +91,7 @@ export function AdminUsersTab({
   const [createDisplayName, setCreateDisplayName] = useState('')
   const [createEmail, setCreateEmail] = useState('')
   const [createPassword, setCreatePassword] = useState(() => generateRandomPassword(10))
-  const [createCredits, setCreateCredits] = useState('100')
+  const [createCredits, setCreateCredits] = useState(() => defaultBonusCredits)
   const [createRole, setCreateRole] = useState<UserRole>('user')
   const [showCreatePwd, setShowCreatePwd] = useState(true)
   const [creatingUser, setCreatingUser] = useState(false)
@@ -157,11 +160,11 @@ export function AdminUsersTab({
     setCreateDisplayName('')
     setCreateEmail('')
     setCreatePassword(generateRandomPassword(10))
-    setCreateCredits('100')
+    setCreateCredits(defaultBonusCredits)
     setCreateRole('user')
     setShowCreatePwd(true)
     setCreateOpen(true)
-  }, [])
+  }, [defaultBonusCredits])
 
   const handleCreateUser = async () => {
     const username = createUsername.trim()
@@ -205,18 +208,17 @@ export function AdminUsersTab({
     }
   }
 
-  const copyCredentialText = async (username: string, password: string, adminNote?: string) => {
+  const copyCredentialText = async (username: string, password: string) => {
     const origin = typeof window !== 'undefined' ? window.location.origin : ''
     const lines = [
       'CASTDECK 账号登录信息',
-      ...(adminNote ? [`成员：${adminNote}`] : []),
-      ...(origin ? [`地址：${origin}`] : []),
-      `账号：${username}`,
+      ...(origin ? [`登录地址：${origin}`] : []),
+      `用户名：${username}`,
       `密码：${password}`,
     ]
     try {
       await navigator.clipboard.writeText(lines.join('\n'))
-      toast.success('已复制登录信息，可直接粘贴发给朋友')
+      toast.success('已复制账号登录信息')
     } catch {
       toast.error('剪贴板复制失败')
     }
@@ -311,7 +313,7 @@ export function AdminUsersTab({
     <div className="space-y-6">
       <AdminPageHeader
         title={`成员账号与积分账本 (${usersTotal})`}
-        description="支持管理员直接建号分配给朋友、为账号添加仅后台可见的真实备注、重置密码、手动调积分与审查流水。"
+        description="支持管理员新建成员账号、维护仅后台可见的内部备注、重置密码、手动调积分与审查流水。"
         actions={
           <Button type="button" size="sm" className={ADMIN_BTN_CLS} onClick={openCreateDialog}>
             <UserPlusIcon className="size-3.5" />
@@ -393,7 +395,7 @@ export function AdminUsersTab({
                     <td colSpan={7} className="px-4 py-10 text-center text-xs text-zinc-500">
                       {appliedUserQuery.trim()
                         ? `未找到匹配“${appliedUserQuery.trim()}”的成员账号。`
-                        : '当前筛选下暂无成员账号，可点击右上角「新建成员账号」为朋友建号。'}
+                        : '当前筛选下暂无成员账号，可点击右上角「新建成员账号」创建账号。'}
                     </td>
                   </tr>
                 ) : (
@@ -609,7 +611,7 @@ export function AdminUsersTab({
               <div className="space-y-2 border border-emerald-600/40 bg-emerald-500/8 p-4">
                 <div className="flex items-center justify-between gap-2">
                   <span className="font-bold text-emerald-700 dark:text-emerald-400">
-                    已开通账号并赠送 {createdCredential.creditBalance} 积分
+                    已开通账号 · 初始积分 {createdCredential.creditBalance}
                   </span>
                   {createdCredential.adminNote && (
                     <AdminBadge tone="info">备注：{createdCredential.adminNote}</AdminBadge>
@@ -639,13 +641,12 @@ export function AdminUsersTab({
                   onClick={() =>
                     void copyCredentialText(
                       createdCredential.username,
-                      createdCredential.password,
-                      createdCredential.adminNote
+                      createdCredential.password
                     )
                   }
                 >
                   <CopyIcon className="size-3.5" />
-                  一键复制账号密码发给朋友
+                  复制账号登录信息
                 </Button>
                 <div className="flex items-center gap-2">
                   <Button
@@ -683,19 +684,19 @@ export function AdminUsersTab({
                   <Input
                     value={createUsername}
                     onChange={(e) => setCreateUsername(e.target.value)}
-                    placeholder="例如：zhangsan"
+                    placeholder="例如：member_01"
                     className={ADMIN_INPUT_CLS}
                   />
                 </AdminField>
 
                 <AdminField
-                  label="管理员备注（朋友姓名）"
-                  hint="仅后台可见，用于识别是谁的账号"
+                  label="管理员备注（可选）"
+                  hint="仅后台可见，用于标记成员身份或账号用途"
                 >
                   <Input
                     value={createAdminNote}
                     onChange={(e) => setCreateAdminNote(e.target.value)}
-                    placeholder="例如：大学室友-张三"
+                    placeholder="例如：姓名、团队或用途说明"
                     className={ADMIN_TEXT_INPUT_CLS}
                   />
                 </AdminField>
@@ -739,7 +740,7 @@ export function AdminUsersTab({
                   <Input
                     value={createDisplayName}
                     onChange={(e) => setCreateDisplayName(e.target.value)}
-                    placeholder="留空默认取备注名或用户名"
+                    placeholder="留空默认使用用户名"
                     className={ADMIN_TEXT_INPUT_CLS}
                   />
                 </AdminField>
@@ -839,12 +840,12 @@ export function AdminUsersTab({
             <div className="space-y-4 pt-2 text-xs">
               <AdminField
                 label="管理员内部备注"
-                hint="仅管理员可见，对方修改前端昵称不会影响此备注"
+                hint="仅管理员可见，用户修改前端昵称不会影响此备注"
               >
                 <Input
                   value={editAdminNote}
                   onChange={(e) => setEditAdminNote(e.target.value)}
-                  placeholder="例如：张三 / 美术同事"
+                  placeholder="例如：姓名、部门或用途说明"
                   className={ADMIN_TEXT_INPUT_CLS}
                 />
               </AdminField>
@@ -899,8 +900,7 @@ export function AdminUsersTab({
                       onClick={() =>
                         void copyCredentialText(
                           editTarget.username,
-                          editNewPassword,
-                          editAdminNote.trim() || editTarget.adminNote
+                          editNewPassword
                         )
                       }
                     >
@@ -1009,7 +1009,7 @@ export function AdminUsersTab({
               <Input
                 value={adjustNote}
                 onChange={(e) => setAdjustNote(e.target.value)}
-                placeholder="例如：朋友补充额度 / 活动补偿"
+                placeholder="例如：额度补充 / 活动补偿"
                 className={ADMIN_TEXT_INPUT_CLS}
               />
             </AdminField>

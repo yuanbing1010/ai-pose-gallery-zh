@@ -1,10 +1,16 @@
-import type { RecipeState } from '@/types/gallery'
+import type { PoseSanitizeConfig, RecipeState } from '@/types/gallery'
 import { poseImagePath, referenceImageUrl } from '@/lib/recipeImages'
+import {
+  sanitizeCloudTextSegment,
+  sanitizePoseTitleForCloud,
+} from '../../shared/studio'
 export {
   NONE_STYLE_PRESET,
   PROVIDER_META,
   buildRecipePrompt,
   mergeSceneNote,
+  sanitizeCloudTextSegment,
+  sanitizePoseTitleForCloud,
 } from '../../shared/studio'
 
 export function fileToDataUrl(file: File): Promise<string> {
@@ -48,35 +54,55 @@ function loadImage(src: string): Promise<HTMLImageElement> {
   })
 }
 
-export async function stitchRecipeCanvas(recipe: RecipeState): Promise<string> {
+export async function stitchRecipeCanvas(
+  recipe: RecipeState,
+  options?: { sanitizeForCloud?: boolean; poseSanitize?: Partial<PoseSanitizeConfig> | null }
+): Promise<string> {
+  const sanitizeForCloud = Boolean(options?.sanitizeForCloud)
+  const poseSanitize = options?.poseSanitize
   const list: Array<{ tag: string; sub: string; src: string }> = []
   let idx = 1
 
   if (recipe.pose) {
+    const poseName = sanitizeForCloud
+      ? sanitizePoseTitleForCloud(recipe.pose, poseSanitize) || '姿势参考'
+      : recipe.pose.姿势名称
     list.push({
       tag: `图${idx++} · 姿势`,
-      sub: `${recipe.pose.姿势名称}（${recipe.pose.角度}${recipe.pose.useDepth ? ' · 深度图' : ''}）`,
+      sub: `${poseName}（${recipe.pose.角度}${recipe.pose.useDepth ? ' · 深度图' : ''}）`,
       src: poseImagePath(recipe.pose),
     })
   }
   if (recipe.costume) {
+    const cat = sanitizeForCloud
+      ? sanitizeCloudTextSegment(recipe.costume.分类, poseSanitize)
+      : recipe.costume.分类
+    const name = sanitizeForCloud
+      ? sanitizeCloudTextSegment(recipe.costume.服装名称, poseSanitize) || '服装参考'
+      : recipe.costume.服装名称
     list.push({
       tag: `图${idx++} · 服装`,
-      sub: `${recipe.costume.分类} · ${recipe.costume.服装名称}`,
+      sub: cat ? `${cat} · ${name}` : name,
       src: recipe.costume.预览图 || recipe.costume.原图 || recipe.costume.缩略图,
     })
   }
   if (recipe.portrait) {
+    const title = sanitizeForCloud
+      ? sanitizeCloudTextSegment(recipe.portrait.标题, poseSanitize) || '人像参考'
+      : recipe.portrait.标题
     list.push({
       tag: `图${idx++} · 人像`,
-      sub: recipe.portrait.标题,
+      sub: title,
       src: recipe.portrait.原图 || recipe.portrait.缩略图,
     })
   }
   for (const extra of recipe.extraImages || []) {
+    const extraName = sanitizeForCloud
+      ? sanitizeCloudTextSegment(extra.name, poseSanitize) || '附加参考图'
+      : extra.name || '自定义参考图'
     list.push({
       tag: `图${idx++} · 附加`,
-      sub: extra.name || '自定义参考图',
+      sub: extraName,
       src: extra.url,
     })
   }

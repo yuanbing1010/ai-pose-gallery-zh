@@ -39,15 +39,18 @@ import { getStyleVisualMeta } from '@/lib/stylePresets'
 import type {
   AdminWechatConfigDTO,
   PlatformConfig,
+  PromptConstraintCondition,
+  PromptConstraintItem,
   PromptTemplateConfig,
   StyleCategoryItem,
   StylePresetItem,
   StyleSubcategoryItem,
 } from '@/types/gallery'
 import {
-  DEFAULT_PROMPT_TEMPLATE,
   NONE_STYLE_PRESET,
+  PROMPT_CONSTRAINT_CONDITION_OPTIONS,
   buildRecipePrompt,
+  createDefaultPromptTemplate,
   getEffectiveStyleCatalog,
   getEffectiveStyleCategories,
   getEffectiveStyleSubcategories,
@@ -146,7 +149,7 @@ export function AdminSafetyTab({
   // Prompt preview
   const [previewStyleKey, setPreviewStyleKey] = useState<string>('')
   const [previewScenario, setPreviewScenario] = useState<
-    'all' | 'no_portrait' | 'no_costume' | 'portrait_only'
+    'all' | 'with_extra' | 'no_portrait' | 'no_costume' | 'portrait_only' | 'pose_only'
   >('all')
 
   const loadData = useCallback(async () => {
@@ -246,6 +249,7 @@ export function AdminSafetyTab({
   const sampleRecipe = {
     portrait:
       previewScenario === 'all' ||
+      previewScenario === 'with_extra' ||
       previewScenario === 'no_costume' ||
       previewScenario === 'portrait_only'
         ? {
@@ -265,7 +269,9 @@ export function AdminSafetyTab({
           }
         : null,
     costume:
-      previewScenario === 'all' || previewScenario === 'no_portrait'
+      previewScenario === 'all' ||
+      previewScenario === 'with_extra' ||
+      previewScenario === 'no_portrait'
         ? {
             id: 'sample-c',
             分类: '日常',
@@ -280,8 +286,10 @@ export function AdminSafetyTab({
         : null,
     pose:
       previewScenario === 'all' ||
+      previewScenario === 'with_extra' ||
       previewScenario === 'no_portrait' ||
-      previewScenario === 'no_costume'
+      previewScenario === 'no_costume' ||
+      previewScenario === 'pose_only'
         ? {
             id: 'sample-pose',
             体系: '全身',
@@ -294,7 +302,10 @@ export function AdminSafetyTab({
             检索: '',
           }
         : null,
-    extraImages: [],
+    extraImages:
+      previewScenario === 'with_extra'
+        ? [{ id: 'sample-extra', name: '场景道具', url: '' }]
+        : [],
   }
 
   const samplePrompt = buildRecipePrompt(sampleRecipe, effectivePreviewStyle, {
@@ -302,6 +313,7 @@ export function AdminSafetyTab({
     suffix: platformCfg.defaultPromptSuffix,
     negativePrompt: platformCfg.defaultNegativePrompt,
     promptTemplate: platformCfg.promptTemplate,
+    poseSanitize: platformCfg.poseSanitize,
     styleCategories,
     styleSubcategories,
     stylePresets: styleCatalog,
@@ -847,7 +859,7 @@ export function AdminSafetyTab({
         <div className="space-y-6">
           <AdminPanel
             title="成员准入与全局合成策略"
-            subtitle="关闭自助注册后，前端仅显示登录入口，由管理员在「01. 成员与积分」创建账号分发给朋友。"
+            subtitle="关闭自助注册后，前端仅显示登录入口，由管理员在「01. 成员与积分」创建并分发账号。"
           >
             <div className="grid gap-4 sm:grid-cols-2">
               <AdminField label="开放访客自助注册">
@@ -983,7 +995,7 @@ export function AdminSafetyTab({
                   <span>微信开放平台（网站应用）扫码登录（可选）</span>
                 </span>
               }
-              subtitle="仅拥有已认证企业/个体户开放平台网站应用时需要配置；日常熟人站点可直接关闭，使用管理员后台建号。"
+              subtitle="仅拥有已认证企业/个体户微信开放平台网站应用时需要配置；关闭后仅保留账号密码登录与后台建号。"
               headerRight={
                 <div className="flex items-center gap-2">
                   <AdminBadge tone={wechatEnabledInput ? 'success' : 'neutral'}>
@@ -1724,7 +1736,7 @@ export function AdminSafetyTab({
                 onClick={() =>
                   setPlatformCfg({
                     ...platformCfg,
-                    promptTemplate: { ...DEFAULT_PROMPT_TEMPLATE },
+                    promptTemplate: createDefaultPromptTemplate(),
                   })
                 }
               >
@@ -1734,8 +1746,13 @@ export function AdminSafetyTab({
             }
           >
             {(() => {
-              const tpl = mergePromptTemplate(platformCfg.promptTemplate)
-              const updateTplField = (key: keyof PromptTemplateConfig, value: string) => {
+              const tpl = mergePromptTemplate(platformCfg.promptTemplate, {
+                preserveWhitespace: true,
+              })
+              const updateTplField = (
+                key: Exclude<keyof PromptTemplateConfig, 'constraints'>,
+                value: string
+              ) => {
                 setPlatformCfg({
                   ...platformCfg,
                   promptTemplate: {
@@ -1744,15 +1761,73 @@ export function AdminSafetyTab({
                   },
                 })
               }
+              const updateConstraints = (nextConstraints: PromptConstraintItem[]) => {
+                setPlatformCfg({
+                  ...platformCfg,
+                  promptTemplate: {
+                    ...tpl,
+                    constraints: nextConstraints,
+                  },
+                })
+              }
+              const addConstraint = () => {
+                updateConstraints([
+                  ...tpl.constraints,
+                  {
+                    id: `c_${crypto.randomUUID().slice(0, 8)}`,
+                    condition: 'always',
+                    text: '',
+                    enabled: true,
+                  },
+                ])
+              }
+              const updateConstraintAt = (
+                index: number,
+                patch: Partial<PromptConstraintItem>
+              ) => {
+                updateConstraints(
+                  tpl.constraints.map((item, idx) =>
+                    idx === index ? { ...item, ...patch } : item
+                  )
+                )
+              }
+              const moveConstraint = (index: number, delta: -1 | 1) => {
+                const target = index + delta
+                if (target < 0 || target >= tpl.constraints.length) return
+                const next = [...tpl.constraints]
+                ;[next[index], next[target]] = [next[target], next[index]]
+                updateConstraints(next)
+              }
+              const removeConstraint = (index: number) => {
+                updateConstraints(tpl.constraints.filter((_, idx) => idx !== index))
+              }
+
               const fields: Array<{
-                key: keyof PromptTemplateConfig
+                key: Exclude<keyof PromptTemplateConfig, 'constraints'>
                 label: string
                 rows?: number
                 hint: string
+                colSpan2?: boolean
               }> = [
-                { key: 'intro', label: '开篇总指令', rows: 2, hint: '支持 {{总数}} {{参考图序}} {{媒介}}' },
-                { key: 'poseClause', label: '• 姿势规则（传了姿势图时）', rows: 2, hint: '支持 {{姿势图}}' },
-                { key: 'costumeClause', label: '• 服装规则（传了服装图时）', rows: 2, hint: '支持 {{服装图}}' },
+                {
+                  key: 'intro',
+                  label: '开篇总指令',
+                  rows: 2,
+                  hint: '支持 {{总数}} {{参考图序}} {{媒介}}',
+                  colSpan2: true,
+                },
+                {
+                  key: 'poseClause',
+                  label: '• 姿势规则（传了姿势图时）',
+                  rows: 2,
+                  hint: '支持 {{姿势图}}（自动附带按「07. 姿势敏感词屏蔽」脱敏后的名称）',
+                },
+                {
+                  key: 'costumeClause',
+                  label: '• 服装规则（传了服装图时）',
+                  rows: 2,
+                  hint: '支持 {{服装图}}',
+                },
                 {
                   key: 'portraitFullClause',
                   label: '• 人物规则（有姿势 + 服装 + 人像时）',
@@ -1775,7 +1850,7 @@ export function AdminSafetyTab({
                   key: 'facelessClause',
                   label: '• 人物规则（无人像，有姿势 + 服装时）',
                   rows: 2,
-                  hint: '无脸素体服装展示场景',
+                  hint: '无独立人像的服装展示场景',
                 },
                 {
                   key: 'defaultPersonClause',
@@ -1783,56 +1858,156 @@ export function AdminSafetyTab({
                   rows: 2,
                   hint: '无独立人像时的兜底规则',
                 },
-                { key: 'extraClause', label: '• 补充参考规则（有额外附图时）', rows: 2, hint: '支持 {{附图列表}}' },
                 {
-                  key: 'followStyleClause',
-                  label: '• 无预设画风跟随（选择“跟随原图”时）',
+                  key: 'extraClause',
+                  label: '• 补充参考规则（有额外附图时）',
                   rows: 2,
-                  hint: '支持 {{基准风格图}}',
-                },
-                { key: 'baseConstraints', label: '• 约束 1-2（画面与肤色比例）', rows: 2, hint: '留空则省略' },
-                {
-                  key: 'posePriorityConstraint',
-                  label: '• 约束 3（姿势唯一依据 · 含其他图）',
-                  rows: 2,
-                  hint: '支持 {{姿势图}} {{非姿势图}}',
-                },
-                {
-                  key: 'poseOnlyPriorityConstraint',
-                  label: '• 约束 3（姿势唯一依据 · 仅姿势图）',
-                  rows: 2,
-                  hint: '支持 {{姿势图}}',
-                },
-                {
-                  key: 'faceVisibilityConstraint',
-                  label: '• 约束 4（五官可见防遮挡 · 有人像时）',
-                  rows: 2,
-                  hint: '防止头发/刘海糊脸',
-                },
-                {
-                  key: 'portraitBuiltinNegative',
-                  label: '默认人像防遮脸负面词（自动合并入「避免：」）',
-                  rows: 2,
-                  hint: '留空则不追加内置负面词',
+                  hint: '支持 {{附图列表}}',
                 },
               ]
 
               return (
-                <div className="grid gap-3.5 sm:grid-cols-2">
-                  {fields.map((f) => (
-                    <div key={f.key} className="space-y-1">
-                      <div className="flex items-center justify-between gap-2">
-                        <label className="text-xs font-bold">{f.label}</label>
-                        <span className="font-mono text-[10px] text-zinc-500">{f.hint}</span>
+                <div className="space-y-5">
+                  <div className="grid gap-3.5 sm:grid-cols-2">
+                    {fields.map((f) => (
+                      <div
+                        key={f.key}
+                        className={`space-y-1 ${f.colSpan2 ? 'sm:col-span-2' : ''}`}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <label className="text-xs font-bold">{f.label}</label>
+                          <span className="font-mono text-[10px] text-zinc-500">{f.hint}</span>
+                        </div>
+                        <Textarea
+                          rows={f.rows ?? 2}
+                          value={tpl[f.key]}
+                          onChange={(e) => updateTplField(f.key, e.target.value)}
+                          className="rounded-none font-mono text-xs leading-relaxed"
+                        />
                       </div>
-                      <Textarea
-                        rows={f.rows ?? 2}
-                        value={tpl[f.key]}
-                        onChange={(e) => updateTplField(f.key, e.target.value)}
-                        className="rounded-none font-mono text-xs leading-relaxed"
-                      />
+                    ))}
+                  </div>
+
+                  {/* 动态约束规则列表 */}
+                  <div className="border border-zinc-200 dark:border-zinc-800">
+                    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-200 bg-zinc-50 px-3.5 py-2.5 dark:border-zinc-800 dark:bg-zinc-900/60">
+                      <div className="space-y-0.5">
+                        <div className="text-xs font-bold">
+                          • 约束规则列表（共 {tpl.constraints.length} 条）
+                        </div>
+                        <div className="text-[11px] text-zinc-500">
+                          按顺序筛选启用且满足触发条件的约束并从 1) 起自动递增编号；支持变量：
+                          <span className="ml-1 font-mono">
+                            {'{{姿势图}} {{服装图}} {{人像图}} {{附图列表}} {{非姿势图}}'}
+                          </span>
+                        </div>
+                      </div>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className={ADMIN_BTN_SM_CLS}
+                        disabled={tpl.constraints.length >= 30}
+                        onClick={addConstraint}
+                      >
+                        <PlusIcon className="size-3" />
+                        添加约束
+                      </Button>
                     </div>
-                  ))}
+
+                    {tpl.constraints.length === 0 ? (
+                      <div className="p-6 text-center text-xs text-zinc-500">
+                        当前未配置任何约束规则，生图时将省略「• 约束：」段落；点击右上角「添加约束」可新增规则。
+                      </div>
+                    ) : (
+                      <div className="divide-y divide-zinc-200 dark:divide-zinc-800">
+                        {tpl.constraints.map((item, cIdx) => (
+                          <div key={item.id} className="space-y-2 p-3.5">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="border border-zinc-300 bg-zinc-50 px-1.5 py-0.5 font-mono text-[11px] font-bold dark:border-zinc-700 dark:bg-zinc-900">
+                                  #{cIdx + 1}
+                                </span>
+                                <Select
+                                  value={item.condition}
+                                  onValueChange={(v) =>
+                                    updateConstraintAt(cIdx, {
+                                      condition: v as PromptConstraintCondition,
+                                    })
+                                  }
+                                >
+                                  <SelectTrigger className={`w-56 ${ADMIN_SELECT_CLS}`}>
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {PROMPT_CONSTRAINT_CONDITION_OPTIONS.map((opt) => (
+                                      <SelectItem key={opt.value} value={opt.value}>
+                                        {opt.label}
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                                <label className="inline-flex items-center gap-1.5 text-[11px] text-zinc-600 dark:text-zinc-400">
+                                  <Switch
+                                    checked={item.enabled}
+                                    onCheckedChange={(v) =>
+                                      updateConstraintAt(cIdx, { enabled: v })
+                                    }
+                                  />
+                                  <span>{item.enabled ? '已启用' : '已停用'}</span>
+                                </label>
+                              </div>
+
+                              <div className="flex items-center gap-1">
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  className={`${ADMIN_BTN_SM_CLS} px-1.5`}
+                                  disabled={cIdx === 0}
+                                  title="上移"
+                                  onClick={() => moveConstraint(cIdx, -1)}
+                                >
+                                  <ArrowUpIcon className="size-3" />
+                                </Button>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  className={`${ADMIN_BTN_SM_CLS} px-1.5`}
+                                  disabled={cIdx === tpl.constraints.length - 1}
+                                  title="下移"
+                                  onClick={() => moveConstraint(cIdx, 1)}
+                                >
+                                  <ArrowDownIcon className="size-3" />
+                                </Button>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  className={`${ADMIN_BTN_SM_CLS} px-1.5 text-red-600 hover:bg-red-500/10`}
+                                  title="删除约束"
+                                  onClick={() => removeConstraint(cIdx)}
+                                >
+                                  <Trash2Icon className="size-3" />
+                                </Button>
+                              </div>
+                            </div>
+
+                            <Textarea
+                              rows={2}
+                              value={item.text}
+                              onChange={(e) =>
+                                updateConstraintAt(cIdx, { text: e.target.value })
+                              }
+                              placeholder="输入约束内容（无需手写编号，系统将自动从 1) 起递增编号）"
+                              className="rounded-none font-mono text-xs leading-relaxed"
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
               )
             })()}
@@ -1863,18 +2038,26 @@ export function AdminSafetyTab({
                   value={previewScenario}
                   onValueChange={(v) =>
                     setPreviewScenario(
-                      v as 'all' | 'no_portrait' | 'no_costume' | 'portrait_only'
+                      v as
+                        | 'all'
+                        | 'with_extra'
+                        | 'no_portrait'
+                        | 'no_costume'
+                        | 'portrait_only'
+                        | 'pose_only'
                     )
                   }
                 >
-                  <SelectTrigger className={`w-44 ${ADMIN_SELECT_CLS}`}>
+                  <SelectTrigger className={`w-52 ${ADMIN_SELECT_CLS}`}>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">场景：姿势 + 服装 + 人像</SelectItem>
+                    <SelectItem value="with_extra">场景：姿势 + 服装 + 人像 + 附图</SelectItem>
                     <SelectItem value="no_portrait">场景：姿势 + 服装（无人像）</SelectItem>
                     <SelectItem value="no_costume">场景：姿势 + 人像（无服装）</SelectItem>
                     <SelectItem value="portrait_only">场景：仅人像（单图）</SelectItem>
+                    <SelectItem value="pose_only">场景：仅姿势（单图）</SelectItem>
                   </SelectContent>
                 </Select>
                 <Select value={effectivePreviewStyle} onValueChange={setPreviewStyleKey}>

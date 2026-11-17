@@ -108,7 +108,7 @@ export function AdminOverviewTab({
             )}
             <span className="text-zinc-600 dark:text-zinc-400">
               {registrationClosed
-                ? '陌生人无法自行注册，需由管理员在「01. 成员与积分」创建账号并分配密码。'
+                ? '已关闭访客自助注册，新账号需由管理员在「01. 成员与积分」创建并分发凭证。'
                 : '访客可在前端登录弹窗自行注册新账号。'}
             </span>
           </div>
@@ -141,9 +141,11 @@ export function AdminOverviewTab({
           },
           {
             code: '03.',
-            label: '供应商 / 渠道',
-            value: overview ? `${overview.suppliersTotal} / ${overview.channelsTotal}` : '—',
-            hint: '管理画师槽位与容灾路由',
+            label: '供应商 / 档位 / 渠道',
+            value: overview
+              ? `${overview.suppliersTotal} / ${overview.profilesTotal ?? 0} / ${overview.channelsTotal}`
+              : '—',
+            hint: '管理模型档位、分辨率定价与容灾路由',
             onClick: () => onSelectTab('api'),
           },
           {
@@ -165,9 +167,9 @@ export function AdminOverviewTab({
           >
             <UserPlusIcon className="mt-0.5 size-4 shrink-0" />
             <div>
-              <div className="text-xs font-bold">给朋友开新账号</div>
+              <div className="text-xs font-bold">新建成员账号</div>
               <div className="mt-0.5 text-[11px] text-zinc-500">
-                设初始密码、备注真实姓名并直接复制凭证
+                配置初始密码、内部备注与初始积分并复制登录凭证
               </div>
             </div>
           </button>

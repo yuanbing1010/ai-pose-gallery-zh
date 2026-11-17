@@ -58,6 +58,46 @@ export function CopyActionButton({
   )
 }
 
+function extractPromptFromParams(params: unknown): string | null {
+  if (!params || typeof params !== 'object') return null
+  const rec = params as Record<string, unknown>
+  if (typeof rec.prompt === 'string' && rec.prompt.trim()) return rec.prompt
+  if (Array.isArray(rec.contents)) {
+    for (const c of rec.contents) {
+      if (c && typeof c === 'object' && Array.isArray((c as any).parts)) {
+        for (const p of (c as any).parts) {
+          if (p && typeof p === 'object' && typeof p.text === 'string' && p.text.trim()) {
+            return p.text
+          }
+        }
+      }
+    }
+  }
+  if (Array.isArray(rec.messages)) {
+    for (const m of rec.messages) {
+      if (m && typeof m === 'object' && Array.isArray((m as any).content)) {
+        for (const item of (m as any).content) {
+          if (item && typeof item === 'object' && typeof item.text === 'string' && item.text.trim()) {
+            return item.text
+          }
+        }
+      }
+    }
+  }
+  if (Array.isArray(rec.input)) {
+    for (const item of rec.input) {
+      if (item && typeof item === 'object' && Array.isArray((item as any).content)) {
+        for (const part of (item as any).content) {
+          if (part && typeof part === 'object' && typeof part.text === 'string' && part.text.trim()) {
+            return part.text
+          }
+        }
+      }
+    }
+  }
+  return null
+}
+
 export function TraceAttemptCard({
   attempt,
   defaultExpanded,
@@ -88,6 +128,7 @@ export function TraceAttemptCard({
   }
   const isSuccess = attempt.outcome === 'succeeded'
   const requestParamsText = formatJsonText(attempt.request.params)
+  const sentPromptPreview = extractPromptFromParams(attempt.request.params)
   const responseBodyText = attempt.response ? formatJsonText(attempt.response.body) : ''
 
   return (
@@ -210,9 +251,21 @@ export function TraceAttemptCard({
           </div>
         </div>
         {reqExpanded && (
-          <pre className="max-h-[420px] w-full overflow-y-auto border-t border-zinc-200 bg-zinc-50/40 p-4 font-mono text-xs leading-relaxed whitespace-pre-wrap [overflow-wrap:anywhere] text-zinc-800 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-200">
-            {requestParamsText}
-          </pre>
+          <div className="border-t border-zinc-200 dark:border-zinc-800">
+            {sentPromptPreview && (
+              <div className="border-b border-zinc-200 bg-white px-4 py-3 dark:border-zinc-800 dark:bg-zinc-950">
+                <div className="mb-1.5 text-[11px] font-bold text-zinc-500">
+                  实际发送文本提示词（保留完整换行，下方 JSON 中 \n 仅为 JSON 转义展示）
+                </div>
+                <pre className="max-h-[240px] overflow-y-auto font-mono text-xs leading-relaxed whitespace-pre-wrap [overflow-wrap:anywhere] text-zinc-900 dark:text-zinc-100">
+                  {sentPromptPreview}
+                </pre>
+              </div>
+            )}
+            <pre className="max-h-[420px] w-full overflow-y-auto bg-zinc-50/40 p-4 font-mono text-xs leading-relaxed whitespace-pre-wrap [overflow-wrap:anywhere] text-zinc-800 dark:bg-zinc-950 dark:text-zinc-200">
+              {requestParamsText}
+            </pre>
+          </div>
         )}
       </div>
 

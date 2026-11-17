@@ -36,6 +36,7 @@ import {
   DEFAULT_PLATFORM_CONFIG,
   DEFAULT_WECHAT_LOGIN_INFO,
   PROVIDER_ORDER,
+  getEffectiveProfileCreditCost,
   getEffectiveStyleCatalog,
   getStudioArtist,
 } from '../../shared/studio'
@@ -47,10 +48,12 @@ import type {
   PlatformConfig,
   PortraitItem,
   PoseItem,
+  ProviderModelPublicInfo,
   ProviderPublicInfo,
   PublicUser,
   RecipeState,
   StudioAspectRatio,
+  StudioResolution,
   WechatLoginPublicInfo,
 } from '@/types/gallery'
 
@@ -63,7 +66,10 @@ export type AccountModalTab = 'overview' | 'redeem' | 'ledger' | 'security'
 
 interface ClientPrefs {
   selectedProvider: ImageProviderId
+  selectedProfileByProvider: Partial<Record<ImageProviderId, string>>
+  selectedResolutionByProfile: Record<string, StudioResolution>
   stylePreset: string
+  allowFaceStyleShift: boolean
   aspectRatio: StudioAspectRatio
   poseFrontOnly: boolean
   sceneNote: string
@@ -71,10 +77,36 @@ interface ClientPrefs {
 
 const DEFAULT_PREFS: ClientPrefs = {
   selectedProvider: 'gpt',
+  selectedProfileByProvider: {},
+  selectedResolutionByProfile: {},
   stylePreset: 'none',
+  allowFaceStyleShift: false,
   aspectRatio: '3:4',
   poseFrontOnly: true,
   sceneNote: '',
+}
+
+function sanitizeProfileMap(raw: unknown): Partial<Record<ImageProviderId, string>> {
+  if (!raw || typeof raw !== 'object') return {}
+  const out: Partial<Record<ImageProviderId, string>> = {}
+  for (const pid of PROVIDER_ORDER) {
+    const val = (raw as Record<string, unknown>)[pid]
+    if (typeof val === 'string' && val.trim()) {
+      out[pid] = val.trim()
+    }
+  }
+  return out
+}
+
+function sanitizeResolutionMap(raw: unknown): Record<string, StudioResolution> {
+  if (!raw || typeof raw !== 'object') return {}
+  const out: Record<string, StudioResolution> = {}
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof v === 'string' && (v === '1K' || v === '2K' || v === '4K')) {
+      out[k] = v
+    }
+  }
+  return out
 }
 
 const initialPrefs = (): ClientPrefs => {
@@ -87,10 +119,16 @@ const initialPrefs = (): ClientPrefs => {
         parsed.selectedProvider && PROVIDER_ORDER.includes(parsed.selectedProvider)
           ? parsed.selectedProvider
           : DEFAULT_PREFS.selectedProvider,
+      selectedProfileByProvider: sanitizeProfileMap(parsed.selectedProfileByProvider),
+      selectedResolutionByProfile: sanitizeResolutionMap(parsed.selectedResolutionByProfile),
       stylePreset:
         typeof parsed.stylePreset === 'string' && parsed.stylePreset.trim()
           ? parsed.stylePreset
           : DEFAULT_PREFS.stylePreset,
+      allowFaceStyleShift:
+        typeof parsed.allowFaceStyleShift === 'boolean'
+          ? parsed.allowFaceStyleShift
+          : DEFAULT_PREFS.allowFaceStyleShift,
       aspectRatio:
         parsed.aspectRatio && ['3:4', '1:1', '4:3', '9:16', '16:9'].includes(parsed.aspectRatio)
           ? parsed.aspectRatio
@@ -141,7 +179,47 @@ const DEFAULT_PUBLIC_PROVIDERS: ProviderPublicInfo[] = PROVIDER_ORDER.map((id, i
   creditCost: 0,
   sortOrder: idx,
   artist: getStudioArtist(id),
+  models: [],
 }))
+
+// oxlint-disable-next-line react/only-export-components
+export function resolveActiveProviderProfile(
+  providerInfo: ProviderPublicInfo | undefined,
+  savedProfileId?: string
+): ProviderModelPublicInfo | null {
+  const models = providerInfo?.models || []
+  if (models.length === 0) return null
+  if (savedProfileId) {
+    const matched = models.find((m) => m.profileId === savedProfileId && m.enabled)
+    if (matched) return matched
+  }
+  return (
+    models.find((m) => m.isDefault && m.enabled && m.configured) ??
+    models.find((m) => m.enabled && m.configured) ??
+    models.find((m) => m.isDefault && m.enabled) ??
+    models.find((m) => m.enabled) ??
+    models[0] ??
+    null
+  )
+}
+
+// oxlint-disable-next-line react/only-export-components
+export function resolveActiveProfileResolution(
+  profile: ProviderModelPublicInfo | null | undefined,
+  savedResolution?: StudioResolution
+): StudioResolution | null {
+  if (!profile || profile.resolutions.length === 0) return null
+  if (savedResolution && profile.resolutions.some((r) => r.resolution === savedResolution)) {
+    return savedResolution
+  }
+  if (
+    profile.defaultResolution &&
+    profile.resolutions.some((r) => r.resolution === profile.defaultResolution)
+  ) {
+    return profile.defaultResolution
+  }
+  return profile.resolutions[0]?.resolution ?? null
+}
 
 type Updater<T> = T | ((prev: T) => T)
 
@@ -154,7 +232,10 @@ interface StudioZustandStore {
   wechatLogin: WechatLoginPublicInfo
   recipe: RecipeState
   selectedProvider: ImageProviderId
+  selectedProfileByProvider: Partial<Record<ImageProviderId, string>>
+  selectedResolutionByProfile: Record<string, StudioResolution>
   stylePreset: string
+  allowFaceStyleShift: boolean
   aspectRatio: StudioAspectRatio
   history: GenerationHistoryItem[]
   safeMode: boolean
@@ -163,6 +244,8 @@ interface StudioZustandStore {
   sceneNote: string
   previewUrl: string
   isGenerating: boolean
+  generatingProvider: ImageProviderId | null
+  generatingProfileId: string | null
   generationProgress: StreamGenerationProgress | null
   generationError: string
   idbHydrated: boolean
@@ -178,7 +261,12 @@ interface StudioZustandStore {
   setWechatLogin: (val: WechatLoginPublicInfo) => void
   setRecipe: (updater: Updater<RecipeState>) => void
   setSelectedProvider: (val: ImageProviderId) => void
+  setSelectedProfileForProvider: (providerId: ImageProviderId, profileId: string) => void
+  setSelectedProfileByProviderState: (val: Partial<Record<ImageProviderId, string>>) => void
+  setSelectedResolutionForProfile: (profileId: string, resolution: StudioResolution) => void
+  setSelectedResolutionByProfileState: (val: Record<string, StudioResolution>) => void
   setStylePreset: (val: string) => void
+  setAllowFaceStyleShift: (updater: Updater<boolean>) => void
   setAspectRatio: (val: StudioAspectRatio) => void
   setHistory: (updater: Updater<GenerationHistoryItem[]>) => void
   setSafeMode: (updater: Updater<boolean>) => void
@@ -187,6 +275,7 @@ interface StudioZustandStore {
   setSceneNote: (updater: Updater<string>) => void
   setPreviewUrl: (updater: Updater<string>) => void
   setIsGenerating: (val: boolean) => void
+  setGeneratingMeta: (provider: ImageProviderId | null, profileId: string | null) => void
   setGenerationProgress: (val: StreamGenerationProgress | null) => void
   setGenerationError: (val: string) => void
   setIdbHydrated: (val: boolean) => void
@@ -209,7 +298,10 @@ export const useStudioStore = create<StudioZustandStore>((set) => {
     wechatLogin: DEFAULT_WECHAT_LOGIN_INFO,
     recipe: rec,
     selectedProvider: prefs.selectedProvider,
+    selectedProfileByProvider: prefs.selectedProfileByProvider,
+    selectedResolutionByProfile: prefs.selectedResolutionByProfile,
     stylePreset: prefs.stylePreset,
+    allowFaceStyleShift: prefs.allowFaceStyleShift,
     aspectRatio: prefs.aspectRatio,
     history: [],
     safeMode: initialSafeMode(),
@@ -218,6 +310,8 @@ export const useStudioStore = create<StudioZustandStore>((set) => {
     sceneNote: prefs.sceneNote,
     previewUrl: '',
     isGenerating: false,
+    generatingProvider: null,
+    generatingProfileId: null,
     generationProgress: null,
     generationError: '',
     idbHydrated: false,
@@ -235,7 +329,24 @@ export const useStudioStore = create<StudioZustandStore>((set) => {
     setRecipe: (updater) =>
       set((s) => ({ recipe: typeof updater === 'function' ? updater(s.recipe) : updater })),
     setSelectedProvider: (selectedProvider) => set({ selectedProvider }),
+    setSelectedProfileForProvider: (providerId, profileId) =>
+      set((s) => ({
+        selectedProfileByProvider: { ...s.selectedProfileByProvider, [providerId]: profileId },
+      })),
+    setSelectedProfileByProviderState: (selectedProfileByProvider) =>
+      set({ selectedProfileByProvider }),
+    setSelectedResolutionForProfile: (profileId, resolution) =>
+      set((s) => ({
+        selectedResolutionByProfile: { ...s.selectedResolutionByProfile, [profileId]: resolution },
+      })),
+    setSelectedResolutionByProfileState: (selectedResolutionByProfile) =>
+      set({ selectedResolutionByProfile }),
     setStylePreset: (stylePreset) => set({ stylePreset }),
+    setAllowFaceStyleShift: (updater) =>
+      set((s) => ({
+        allowFaceStyleShift:
+          typeof updater === 'function' ? updater(s.allowFaceStyleShift) : updater,
+      })),
     setAspectRatio: (aspectRatio) => set({ aspectRatio }),
     setHistory: (updater) =>
       set((s) => ({ history: typeof updater === 'function' ? updater(s.history) : updater })),
@@ -250,6 +361,8 @@ export const useStudioStore = create<StudioZustandStore>((set) => {
     setPreviewUrl: (updater) =>
       set((s) => ({ previewUrl: typeof updater === 'function' ? updater(s.previewUrl) : updater })),
     setIsGenerating: (isGenerating) => set({ isGenerating }),
+    setGeneratingMeta: (generatingProvider, generatingProfileId) =>
+      set({ generatingProvider, generatingProfileId }),
     setGenerationProgress: (generationProgress) => set({ generationProgress }),
     setGenerationError: (generationError) => set({ generationError }),
     setIdbHydrated: (idbHydrated) => set({ idbHydrated }),
@@ -270,7 +383,10 @@ interface StudioContextValue {
   hydrated: boolean
   recipe: RecipeState
   selectedProvider: ImageProviderId
+  selectedProfileByProvider: Partial<Record<ImageProviderId, string>>
+  selectedResolutionByProfile: Record<string, StudioResolution>
   stylePreset: string
+  allowFaceStyleShift: boolean
   aspectRatio: StudioAspectRatio
   history: GenerationHistoryItem[]
   safeMode: boolean
@@ -279,6 +395,8 @@ interface StudioContextValue {
   sceneNote: string
   previewUrl: string
   isGenerating: boolean
+  generatingProvider: ImageProviderId | null
+  generatingProfileId: string | null
   generationProgress: StreamGenerationProgress | null
   generationError: string
   authModalOpen: boolean
@@ -302,7 +420,10 @@ interface StudioContextValue {
   unbindWechat: () => Promise<PublicUser | null>
   redeemCode: (code: string) => Promise<{ credits: number; creditBalance: number }>
   setSelectedProvider: (id: ImageProviderId) => void
+  setSelectedProfileForProvider: (providerId: ImageProviderId, profileId: string) => void
+  setSelectedResolutionForProfile: (profileId: string, resolution: StudioResolution) => void
   setStylePreset: (preset: string) => void
+  setAllowFaceStyleShift: (updater: Updater<boolean>) => void
   setAspectRatio: (ratio: StudioAspectRatio) => void
   toggleSafeMode: () => void
   requestUnlockNsfw: (onUnlocked?: () => void) => void
@@ -342,7 +463,10 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     wechatLogin,
     recipe,
     selectedProvider,
+    selectedProfileByProvider,
+    selectedResolutionByProfile,
     stylePreset,
+    allowFaceStyleShift,
     aspectRatio,
     history,
     safeMode,
@@ -351,6 +475,8 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     sceneNote,
     previewUrl,
     isGenerating,
+    generatingProvider,
+    generatingProfileId,
     generationProgress,
     generationError,
     idbHydrated,
@@ -366,7 +492,12 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     setWechatLogin,
     setRecipe,
     setSelectedProvider,
+    setSelectedProfileForProvider,
+    setSelectedProfileByProviderState,
+    setSelectedResolutionForProfile,
+    setSelectedResolutionByProfileState,
     setStylePreset,
+    setAllowFaceStyleShift,
     setAspectRatio,
     setHistory,
     setSafeMode,
@@ -375,6 +506,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     setSceneNote,
     setPreviewUrl,
     setIsGenerating,
+    setGeneratingMeta,
     setGenerationProgress,
     setGenerationError,
     setIdbHydrated,
@@ -470,6 +602,29 @@ export function StudioProvider({ children }: { children: ReactNode }) {
         }
       }
 
+      // 对每个画师已保存的模型档位与分辨率做有效性与回退校准
+      const curState = useStudioStore.getState()
+      const nextProfiles: Partial<Record<ImageProviderId, string>> = {}
+      const nextResolutions: Record<string, StudioResolution> = {}
+      for (const pInfo of data.providers) {
+        const resolvedProfile = resolveActiveProviderProfile(
+          pInfo,
+          curState.selectedProfileByProvider[pInfo.providerId]
+        )
+        if (resolvedProfile) {
+          nextProfiles[pInfo.providerId] = resolvedProfile.profileId
+          for (const modelOpt of pInfo.models) {
+            const res = resolveActiveProfileResolution(
+              modelOpt,
+              curState.selectedResolutionByProfile[modelOpt.profileId]
+            )
+            if (res) nextResolutions[modelOpt.profileId] = res
+          }
+        }
+      }
+      setSelectedProfileByProviderState(nextProfiles)
+      setSelectedResolutionByProfileState(nextResolutions)
+
       if (data.user) {
         await refreshHistory()
       } else {
@@ -488,7 +643,9 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     setProviders,
     setProvidersLoaded,
     setSafeMode,
+    setSelectedProfileByProviderState,
     setSelectedProvider,
+    setSelectedResolutionByProfileState,
     setStylePreset,
     setUser,
     setWechatLogin,
@@ -600,10 +757,28 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     try {
       localStorage.setItem(
         PREFS_KEY,
-        JSON.stringify({ selectedProvider, stylePreset, aspectRatio, poseFrontOnly, sceneNote })
+        JSON.stringify({
+          selectedProvider,
+          selectedProfileByProvider,
+          selectedResolutionByProfile,
+          stylePreset,
+          allowFaceStyleShift,
+          aspectRatio,
+          poseFrontOnly,
+          sceneNote,
+        })
       )
     } catch {}
-  }, [selectedProvider, stylePreset, aspectRatio, poseFrontOnly, sceneNote])
+  }, [
+    selectedProvider,
+    selectedProfileByProvider,
+    selectedResolutionByProfile,
+    stylePreset,
+    allowFaceStyleShift,
+    aspectRatio,
+    poseFrontOnly,
+    sceneNote,
+  ])
 
   // Only persist safeMode when the user explicitly toggles it (never overwrite platform.defaultSafeMode on mount)
 
@@ -978,12 +1153,29 @@ export function StudioProvider({ children }: { children: ReactNode }) {
 
     const providerMeta = providers.find((p) => p.providerId === selectedProvider)
     if (!providerMeta || !providerMeta.enabled || !providerMeta.configured) {
-      toast.error(`${getStudioArtist(selectedProvider).name}今日画室整备中，先试试其他画师吧`)
+      toast.error('这位AI小画家外出采风啦，请轻点另一位出马！')
       return
     }
 
-    if (user.creditBalance < providerMeta.creditCost) {
-      toast.error(`积分不足：本次需要 ${providerMeta.creditCost} 积分，当前剩余 ${user.creditBalance} 积分`)
+    const activeProfile = resolveActiveProviderProfile(
+      providerMeta,
+      selectedProfileByProvider[selectedProvider]
+    )
+    if (providerMeta.models.length > 0 && (!activeProfile || !activeProfile.enabled || !activeProfile.configured)) {
+      toast.error('这支画笔墨水耗尽啦，换支画笔或换位AI小画家试试！')
+      return
+    }
+
+    const activeResolution = resolveActiveProfileResolution(
+      activeProfile,
+      activeProfile ? selectedResolutionByProfile[activeProfile.profileId] : undefined
+    )
+    const activeCost = activeProfile
+      ? getEffectiveProfileCreditCost(activeProfile, activeResolution)
+      : providerMeta.creditCost
+
+    if (user.creditBalance < activeCost) {
+      toast.error(`积分不足：本次需要 ${activeCost} 积分，当前剩余 ${user.creditBalance} 积分`)
       openAccountModal('redeem')
       return
     }
@@ -997,13 +1189,15 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     }
 
     const clientStartedAt = Date.now()
+    let maxPercent = 5
     let activeJobId: string | null = null
     isGeneratingRef.current = true
     setIsGenerating(true)
+    setGeneratingMeta(selectedProvider, activeProfile?.profileId ?? null)
     setGenerationError('')
     setGenerationProgress({
       stage: 'uploading',
-      message: '正在上传并校验参考素材…',
+      message: '正在准备参考素材…',
       startedAt: clientStartedAt,
       stageStartedAt: clientStartedAt,
       percent: 5,
@@ -1016,7 +1210,10 @@ export function StudioProvider({ children }: { children: ReactNode }) {
 
       let stitchedR2Key: string | undefined
       if (platform.sendStitchedSheet) {
-        const stitchedDataUrl = await stitchRecipeCanvas(uploadedRecipe)
+        const stitchedDataUrl = await stitchRecipeCanvas(uploadedRecipe, {
+          sanitizeForCloud: true,
+          poseSanitize: platform.poseSanitize,
+        })
         const stitchedRes = await uploadReferenceFileApi({
           file: dataUrlToBlob(stitchedDataUrl),
           filename: 'stitched.jpg',
@@ -1038,7 +1235,10 @@ export function StudioProvider({ children }: { children: ReactNode }) {
         {
           idempotencyKey: crypto.randomUUID(),
           provider: selectedProvider,
+          modelProfileId: activeProfile?.profileId,
+          resolution: activeResolution ?? undefined,
           stylePreset,
+          allowFaceStyleShift,
           aspectRatio,
           sceneNote,
           recipe: uploadedRecipe,
@@ -1047,10 +1247,12 @@ export function StudioProvider({ children }: { children: ReactNode }) {
         {
           signal: controller.signal,
           onProgress: (p) => {
+            maxPercent = Math.max(maxPercent, typeof p.percent === 'number' ? p.percent : maxPercent)
             const normalized: StreamGenerationProgress = {
               ...p,
-              startedAt: p.startedAt ?? clientStartedAt,
+              startedAt: clientStartedAt,
               stageStartedAt: p.stageStartedAt ?? Date.now(),
+              percent: maxPercent,
             }
             setGenerationProgress(normalized)
             if (typeof normalized.creditBalance === 'number') {
@@ -1069,12 +1271,17 @@ export function StudioProvider({ children }: { children: ReactNode }) {
                 }
                 const placeholder: GenerationHistoryItem = {
                   id: normalized.jobId!,
-                  createdAt: normalized.startedAt ?? clientStartedAt,
+                  createdAt: clientStartedAt,
                   status: 'processing',
-                  creditsCost: providerMeta.creditCost,
+                  creditsCost: activeCost,
                   creditsRefunded: 0,
                   provider: selectedProvider,
-                  model: providerMeta.artist.name,
+                  profileId: activeProfile?.profileId ?? null,
+                  profileName: activeProfile?.displayName ?? null,
+                  resolution: activeResolution,
+                  model: activeProfile
+                    ? `${providerMeta.artist.name} · ${activeProfile.displayName}`
+                    : providerMeta.artist.name,
                   prompt: '',
                   aspectRatio,
                   stylePreset,
@@ -1132,6 +1339,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     } finally {
       isGeneratingRef.current = false
       setIsGenerating(false)
+      setGeneratingMeta(null, null)
       setGenerationProgress(null)
     }
   }
@@ -1148,7 +1356,10 @@ export function StudioProvider({ children }: { children: ReactNode }) {
         hydrated: idbHydrated,
         recipe,
         selectedProvider,
+        selectedProfileByProvider,
+        selectedResolutionByProfile,
         stylePreset,
+        allowFaceStyleShift,
         aspectRatio,
         history,
         safeMode,
@@ -1157,6 +1368,8 @@ export function StudioProvider({ children }: { children: ReactNode }) {
         sceneNote,
         previewUrl,
         isGenerating,
+        generatingProvider,
+        generatingProfileId,
         generationProgress,
         generationError,
         authModalOpen,
@@ -1175,7 +1388,10 @@ export function StudioProvider({ children }: { children: ReactNode }) {
         unbindWechat,
         redeemCode,
         setSelectedProvider,
+        setSelectedProfileForProvider,
+        setSelectedResolutionForProfile,
         setStylePreset,
+        setAllowFaceStyleShift,
         setAspectRatio,
         toggleSafeMode,
         requestUnlockNsfw,

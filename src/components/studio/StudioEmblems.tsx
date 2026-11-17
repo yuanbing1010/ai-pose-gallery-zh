@@ -1,3 +1,4 @@
+import { useId } from 'react'
 import type { ImageProviderId, StudioAspectRatio } from '../../../shared/studio'
 import { cn } from '@/lib/utils'
 
@@ -33,72 +34,63 @@ const ARTIST_BADGE_STYLES: Record<
 }
 
 function ArtistGlyph({ providerId, className }: { providerId: ImageProviderId; className?: string }) {
+  const gradId = useId()
+
   if (providerId === 'gemini') {
-    // 蕉糖幻想家：弯月棱镜与幻想星芒
+    // 蕉糖幻想家：纯多色渐变四角星（去太阳月亮）
     return (
       <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" className={className}>
+        <defs>
+          <linearGradient id={gradId} x1="3" y1="3" x2="21" y2="21" gradientUnits="userSpaceOnUse">
+            <stop offset="0%" stopColor="#4285F4" />
+            <stop offset="38%" stopColor="#2DD4BF" />
+            <stop offset="72%" stopColor="#F5C443" />
+            <stop offset="100%" stopColor="#FB7185" />
+          </linearGradient>
+        </defs>
         <path
-          d="M14.8 4.4A7.6 7.6 0 0 0 6.2 15.8A7.6 7.6 0 0 0 18.7 17.5A6.2 6.2 0 0 1 11.4 8.2A6.2 6.2 0 0 1 14.8 4.4Z"
-          fill="currentColor"
-          fillOpacity="0.18"
-          stroke="currentColor"
-          strokeWidth="1.7"
-          strokeLinecap="round"
-          strokeLinejoin="round"
+          d="M12 2.4C12.75 7.9 16.1 11.25 21.6 12C16.1 12.75 12.75 16.1 12 21.6C11.25 16.1 7.9 12.75 2.4 12C7.9 11.25 11.25 7.9 12 2.4Z"
+          fill={`url(#${gradId})`}
         />
-        <path
-          d="M16.3 6.2L17.2 8.7L19.7 9.6L17.2 10.5L16.3 13L15.4 10.5L12.9 9.6L15.4 8.7Z"
-          fill="currentColor"
-        />
-        <circle cx="19.2" cy="5.2" r="1.1" fill="currentColor" opacity="0.75" />
+        <circle cx="10.2" cy="11.8" r="0.85" fill="#18181B" />
+        <circle cx="13.8" cy="11.8" r="0.85" fill="#18181B" />
       </svg>
     )
   }
 
   if (providerId === 'gpt') {
-    // 白匣造物主：等轴测精密白匣与切面菱标
+    // 白匣造物主：官方风格六瓣交织立体花结（去方框）
     return (
       <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" className={className}>
-        <path
-          d="M12 3.3L19.6 7.7V16.3L12 20.7L4.4 16.3V7.7L12 3.3Z"
-          stroke="currentColor"
-          strokeWidth="1.65"
-          strokeLinejoin="round"
-        />
-        <path d="M12 3.3L19.6 7.7L12 12.1L4.4 7.7L12 3.3Z" fill="currentColor" fillOpacity="0.2" />
-        <path
-          d="M4.4 7.7L12 12.1L19.6 7.7M12 12.1V20.7"
-          stroke="currentColor"
-          strokeWidth="1.5"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-        <path d="M12 6.1L14.4 7.5L12 8.9L9.6 7.5Z" fill="currentColor" />
+        {[0, 60, 120, 180, 240, 300].map((deg) => (
+          <path
+            key={deg}
+            d="M12.2 2.4C14.7 2.4 16.7 4.4 16.7 6.9V10.6L13.5 8.75V6.9C13.5 6.18 12.92 5.6 12.2 5.6C11.48 5.6 10.9 6.18 10.9 6.9V8.7L8.2 10.25V6.9C8.2 4.4 9.7 2.4 12.2 2.4Z"
+            fill="currentColor"
+            fillOpacity="0.88"
+            stroke="var(--background, #fff)"
+            strokeWidth="0.6"
+            transform={`rotate(${deg} 12 12)`}
+          />
+        ))}
+        <circle cx="12" cy="12" r="3.4" fill="var(--background, #fff)" stroke="currentColor" strokeWidth="1.2" />
+        <circle cx="10.9" cy="12" r="0.65" fill="currentColor" />
+        <circle cx="13.1" cy="12" r="0.65" fill="currentColor" />
       </svg>
     )
   }
 
-  // 星舰造像师：星舰三角翼、轨道光环与锐利星芒
+  // 星舰造像师：黑洞日食缺口环与斜穿光束
   return (
     <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" className={className}>
-      <ellipse
-        cx="12"
-        cy="12.8"
-        rx="8.9"
-        ry="3.1"
-        transform="rotate(-26 12 12.8)"
-        stroke="currentColor"
-        strokeWidth="1.4"
-        strokeOpacity="0.58"
-      />
-      <path d="M12 3.6L6.6 18.2L12 15.1V3.6Z" fill="currentColor" fillOpacity="0.24" />
+      <circle cx="12" cy="12" r="5.2" fill="#0B0B14" stroke="currentColor" strokeWidth="1.2" />
       <path
-        d="M12 3.6L17.4 18.2L12 15.1L6.6 18.2L12 3.6Z"
+        d="M16.2 7.2A7.2 7.2 0 1 0 18.6 14.8"
         stroke="currentColor"
-        strokeWidth="1.65"
-        strokeLinejoin="round"
+        strokeWidth="2.1"
+        strokeLinecap="round"
       />
-      <path d="M18.3 4.6L18.9 6.1L20.4 6.7L18.9 7.3L18.3 8.8L17.7 7.3L16.2 6.7L17.7 6.1Z" fill="currentColor" />
+      <path d="M5.2 18.6L19.4 4.8" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" />
     </svg>
   )
 }

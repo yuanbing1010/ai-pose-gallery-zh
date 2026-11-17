@@ -199,8 +199,18 @@ export function AdminJobsTab({ reloadTick, onLoadingChange }: AdminJobsTabProps)
                       </div>
                     </td>
                     <td className="px-3.5 py-3">
-                      <div className="font-bold uppercase">
-                        {PROVIDER_META[j.provider]?.shortName || j.provider}
+                      <div className="flex items-center gap-1 font-bold uppercase">
+                        <span>{PROVIDER_META[j.provider]?.shortName || j.provider}</span>
+                        {j.profileName && (
+                          <span className="border border-zinc-300 px-1 font-sans text-[10px] font-semibold normal-case text-zinc-700 dark:border-zinc-700 dark:text-zinc-300">
+                            {j.profileName}
+                          </span>
+                        )}
+                        {j.resolution && (
+                          <span className="border border-zinc-300 px-1 text-[10px] font-semibold text-zinc-600 dark:border-zinc-700 dark:text-zinc-400">
+                            {j.resolution}
+                          </span>
+                        )}
                       </div>
                       <div
                         className="mt-0.5 max-w-[150px] truncate text-[11px] text-zinc-500"

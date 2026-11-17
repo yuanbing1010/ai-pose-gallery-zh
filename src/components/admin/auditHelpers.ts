@@ -14,6 +14,7 @@ export type AdminTab =
   | 'users'
   | 'redeem'
   | 'safety'
+  | 'sanitize'
   | 'jobs'
 
 export const ADMIN_TABS: readonly AdminTab[] = [
@@ -23,6 +24,7 @@ export const ADMIN_TABS: readonly AdminTab[] = [
   'users',
   'redeem',
   'safety',
+  'sanitize',
   'jobs',
 ]
 
@@ -63,6 +65,7 @@ export function getAdminNavItems(): AdminNavItemMeta[] {
     { id: 'api', code: '04', label: '模型渠道定价', group: 'models' },
     { id: 'jobs', code: '05', label: '生成记录审计', group: 'models' },
     { id: 'safety', code: '06', label: '准入、画风与模板', group: 'policy' },
+    { id: 'sanitize', code: '07', label: '姿势敏感词屏蔽', group: 'policy' },
   ]
 }
 

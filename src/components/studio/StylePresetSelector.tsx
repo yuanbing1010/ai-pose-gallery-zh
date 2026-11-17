@@ -1,34 +1,33 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { motion } from 'motion/react'
 import {
-  ChevronRightIcon,
   DicesIcon,
-  LayersIcon,
   RotateCcwIcon,
-  WandSparklesIcon,
+  SparklesIcon,
 } from 'lucide-react'
-import {
-  getStyleTaxonomyTree,
-  getVisualStylePresets,
-} from '@/lib/stylePresets'
+import { StyleOrbitCarousel } from '@/components/studio/Style3DShowcase'
+import { getVisualStylePresets } from '@/lib/stylePresets'
 import { cn } from '@/lib/utils'
 import { useStudio } from '@/store/studioStore'
 import { NONE_STYLE_PRESET, resolveStyleInfo } from '../../../shared/studio'
 
 export function StylePresetSelector({
   value,
+  allowFaceStyleShift,
   onChange,
+  onAllowFaceStyleShiftChange,
   onOpenBrowser,
 }: {
   value: string
+  allowFaceStyleShift: boolean
   onChange: (presetKey: string) => void
+  onAllowFaceStyleShiftChange: (val: boolean) => void
   onOpenBrowser: (initialCategoryId?: string) => void
 }) {
   const { platform } = useStudio()
   const [diceSpin, setDiceSpin] = useState(0)
 
-  const visualStyles = getVisualStylePresets(platform)
-  const taxonomy = getStyleTaxonomyTree(platform)
+  const visualStyles = useMemo(() => getVisualStylePresets(platform), [platform])
   const isNone = value === 'none' || !visualStyles.some((s) => s.key === value)
   const effectiveKey = isNone ? 'none' : value
   const activeVisual = visualStyles.find((s) => s.key === effectiveKey) ?? null
@@ -74,100 +73,54 @@ export function StylePresetSelector({
             </motion.span>
             <span>盲选</span>
           </button>
-          {!isNone && (
+        </div>
+
+        {!isNone && (
+          <div className="flex items-center gap-1.5">
             <button
               type="button"
               onClick={() => onChange('none')}
-              title="恢复为无预设（跟随参考图）"
-              className="inline-flex h-5.5 items-center gap-1 rounded-full border border-border/80 bg-[#FAF8F4] px-2 text-[11px] font-medium text-muted-foreground transition-colors hover:border-foreground/40 hover:text-foreground active:scale-95 dark:bg-muted/40"
+              title="清除已选画风，恢复无预设画风"
+              className="inline-flex h-6 items-center gap-1 rounded-full border border-border/80 bg-[#FAF8F4] px-2 text-[11px] font-medium text-muted-foreground transition-colors hover:border-foreground/40 hover:text-foreground active:scale-95 dark:bg-muted/40"
             >
               <RotateCcwIcon className="size-2.5" />
-              <span>跟随原图</span>
+              <span>清除画风</span>
             </button>
-          )}
-        </div>
 
-        <button
-          type="button"
-          onClick={() => onOpenBrowser('all')}
-          className="inline-flex h-6 items-center gap-1 rounded-full border border-border/80 bg-[#FAF8F4] px-2.5 text-[11px] font-semibold text-foreground transition-colors hover:border-foreground/45 active:scale-95 dark:bg-muted/40"
-        >
-          <LayersIcon className="size-3" />
-          <span>全部画风图鉴 ({visualStyles.length})</span>
-        </button>
-      </div>
-
-      {/* 当前已选画风主卡带：点击打开聚焦画风图鉴弹窗 */}
-      <button
-        type="button"
-        onClick={() => onOpenBrowser('all')}
-        aria-label={`当前画风：${title}，点击打开大类与小类筛选图鉴`}
-        className="ks-paper-keycap group relative flex w-full items-center gap-2.5 overflow-hidden rounded-xl border border-border/80 bg-card p-1.5 text-left transition-all hover:border-foreground/45 active:scale-[0.99]"
-      >
-        <div className="relative size-10 shrink-0 overflow-hidden rounded-lg border border-border/80 bg-muted/30">
-          {previewImg ? (
-            <img
-              src={previewImg}
-              alt={title}
-              className="h-full w-full object-cover object-top transition-transform duration-300 group-hover:scale-105"
-            />
-          ) : (
-            <div className="flex h-full w-full items-center justify-center border border-dashed border-border/70 bg-muted/20">
-              <WandSparklesIcon className="size-4 text-[#D9381E]" />
-            </div>
-          )}
-        </div>
-
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-1.5">
-            <span
+            <button
+              type="button"
+              aria-pressed={allowFaceStyleShift}
+              onClick={() => onAllowFaceStyleShiftChange(!allowFaceStyleShift)}
+              title={
+                allowFaceStyleShift
+                  ? '已开启「跟随画风」：允许人物脸部和服装为当前画风做出调整（点击恢复默认锁定）'
+                  : '默认按参考图锁定长相与服装；点击开启「跟随画风」，让脸部和服装适配所选画风'
+              }
               className={cn(
-                'inline-flex shrink-0 items-center rounded-md px-1.5 py-0.5 text-[11px] font-bold leading-none',
-                isNone
-                  ? 'bg-muted text-muted-foreground'
-                  : 'bg-[#D9381E]/10 text-[#B82914] dark:bg-[#D9381E]/20 dark:text-[#FF7A59]'
+                'inline-flex h-6 items-center gap-1 rounded-full border px-2.5 text-[11px] transition-all active:scale-95',
+                allowFaceStyleShift
+                  ? 'border-[#D9381E] bg-[#D9381E] font-bold text-white shadow-[0_0_12px_-1px_rgba(217,56,30,0.68)] ring-1 ring-[#FF7A59]/50 hover:bg-[#C23018]'
+                  : 'border-border/80 bg-[#FAF8F4] font-medium text-muted-foreground hover:border-foreground/45 hover:text-foreground dark:bg-muted/40'
               )}
             >
-              {categoryBadge}
-            </span>
-            <span className="truncate text-xs font-extrabold text-foreground sm:text-[13px]">
-              {title}
-            </span>
+              <SparklesIcon className={cn('size-3', allowFaceStyleShift ? 'text-white' : 'opacity-70')} />
+              <span>跟随画风</span>
+            </button>
           </div>
-        </div>
+        )}
+      </div>
 
-        <span className="inline-flex shrink-0 items-center gap-0.5 rounded-lg border border-border/80 bg-[#FAF8F4] px-2 py-1 text-[11px] font-semibold text-muted-foreground transition-colors group-hover:border-foreground/35 group-hover:text-foreground dark:bg-muted/40">
-          <span className="sm:hidden">更换</span>
-          <span className="hidden sm:inline">更换画风</span>
-          <ChevronRightIcon className="size-3.5" />
-        </span>
-      </button>
-
-      {/* 一级大类快捷直达栏：一点直接按该大类打开小类与画风筛选弹窗 */}
-      {taxonomy.length > 0 && (
-        <div className="no-scrollbar flex items-center gap-1.5 overflow-x-auto">
-          <span className="shrink-0 text-[11px] font-medium text-muted-foreground">按大类：</span>
-          {taxonomy.map((cat) => {
-            const belongsHere = !isNone && activeVisual?.categoryId === cat.id
-            return (
-              <button
-                key={cat.id}
-                type="button"
-                onClick={() => onOpenBrowser(cat.id)}
-                className={cn(
-                  'inline-flex h-6 shrink-0 items-center gap-1 rounded-full border px-2 text-[11px] transition-colors active:scale-95',
-                  belongsHere
-                    ? 'border-[#D9381E]/55 bg-[#D9381E]/10 font-bold text-[#B82914] dark:text-[#FF7A59]'
-                    : 'border-border/80 bg-[#FAF8F4] font-medium text-muted-foreground hover:border-foreground/40 hover:text-foreground dark:bg-muted/35'
-                )}
-              >
-                <span>{cat.label}</span>
-                <span className="font-mono text-[11px] text-muted-foreground">{cat.count}</span>
-              </button>
-            )
-          })}
-        </div>
-      )}
+      {/* 持续循环转动的 3D 透视画风卡牌轮盘 */}
+      <StyleOrbitCarousel
+        items={visualStyles}
+        value={effectiveKey}
+        activeTitle={title}
+        activeBadge={categoryBadge}
+        activePreview={previewImg}
+        isNone={isNone}
+        onSelect={onChange}
+        onOpenSphere={() => onOpenBrowser('all')}
+      />
     </div>
   )
 }

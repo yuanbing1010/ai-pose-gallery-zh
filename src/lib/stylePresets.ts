@@ -16,7 +16,7 @@ export interface StyleVisualMeta {
 }
 
 const NONE_STYLE_VISUAL_META: StyleVisualMeta = {
-  shortLabel: '跟随原图',
+  shortLabel: '无预设画风',
   tagline: '',
 }
 

@@ -357,12 +357,12 @@ export function RecipeDock() {
                     to="/costumes"
                     title={`${recipe.costume.服装名称} · 点击前往服装库更换`}
                     aria-label={`穿搭参考：${recipe.costume.服装名称}，点击前往服装库更换`}
-                    className="block h-[58px] w-[44px] overflow-hidden rounded-lg border border-[#19857B]/55 bg-white shadow-xs ring-1 ring-[#19857B]/30 transition-all hover:scale-[1.03] hover:ring-[#19857B]/75 sm:h-[92px] sm:w-[70px] sm:rounded-xl dark:bg-zinc-900"
+                    className="block h-[58px] w-[44px] overflow-hidden rounded-lg border border-[#19857B]/55 bg-card shadow-xs ring-1 ring-[#19857B]/30 transition-all hover:scale-[1.03] hover:ring-[#19857B]/75 sm:h-[92px] sm:w-[70px] sm:rounded-xl"
                   >
                     <img
                       src={referenceImageUrl(recipe.costume.缩略图)}
                       alt={recipe.costume.服装名称}
-                      className="size-full object-contain"
+                      className="size-full object-cover object-[50%_15%]"
                     />
                   </Link>
                   <button

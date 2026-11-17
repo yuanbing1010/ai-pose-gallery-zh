@@ -3,10 +3,16 @@ import {
   DEFAULT_PROVIDER_PARAMS,
   PROVIDER_META,
   PROVIDER_ORDER,
+  createDefaultPoseSanitizeConfig,
+  createDefaultPromptTemplate,
   formatUserFacingGenerationError,
+  getEffectiveProfileCreditCost,
   getStudioArtist,
+  mergePoseSanitizeConfig,
   mergePromptTemplate,
+  normalizeProfileResolutions,
   normalizeStylePresetTaxonomy,
+  resolveProfileDefaultResolution,
   type AdminProviderSlotDTO,
   type AdminUserItem,
   type AdminWechatConfigDTO,
@@ -15,12 +21,16 @@ import {
   type GenerationHistoryItem,
   type GenerationSnapshot,
   type ImageProviderId,
+  type ModelProfileDTO,
   type PlatformConfig,
+  type ProfileResolutionOption,
   type ProviderChannelDTO,
+  type ProviderModelPublicInfo,
   type ProviderPublicInfo,
   type PublicUser,
   type RedeemCodeItem,
   type StudioAspectRatio,
+  type StudioResolution,
   type StyleCategoryItem,
   type StylePresetItem,
   type StyleSubcategoryItem,
@@ -90,6 +100,9 @@ export interface JobRow {
   username?: string
   idempotency_key: string
   provider: ImageProviderId
+  profile_id?: string | null
+  profile_name?: string | null
+  resolution?: string | null
   model: string
   channel_id?: string | null
   channel_name?: string | null
@@ -125,9 +138,26 @@ export interface SupplierRow {
   channel_count?: number
 }
 
+export interface ModelProfileRow {
+  id: string
+  provider_id: ImageProviderId
+  display_name: string
+  badge: string
+  tagline: string
+  enabled: number
+  is_default: number
+  credit_cost: number
+  default_resolution: string
+  resolutions_json: string
+  sort_order: number
+  created_at: number
+  updated_at: number
+}
+
 export interface ChannelRow {
   id: string
   provider_id: ImageProviderId
+  profile_id?: string | null
   supplier_id: string
   name: string
   enabled: number
@@ -207,10 +237,21 @@ export function mapJobRow(
 ): GenerationHistoryItem {
   const isAdmin = Boolean(options.isAdmin)
   const artistName = getStudioArtist(row.provider).name
+  const profileName = row.profile_name || null
+  const resolution =
+    row.resolution === '1K' || row.resolution === '2K' || row.resolution === '4K'
+      ? (row.resolution as StudioResolution)
+      : null
+  const maskedModelLabel = profileName ? `${artistName} · ${profileName}` : artistName
   let snapshot: GenerationSnapshot | undefined
   try {
     const parsed = JSON.parse(row.snapshot_json) as GenerationSnapshot
-    snapshot = isAdmin ? parsed : { ...parsed, model: artistName }
+    snapshot = isAdmin
+      ? parsed
+      : {
+          ...parsed,
+          model: parsed.profileName ? `${artistName} · ${parsed.profileName}` : maskedModelLabel,
+        }
   } catch {
     snapshot = undefined
   }
@@ -240,7 +281,7 @@ export function mapJobRow(
       : row.status === 'processing'
         ? {
             stage: 'generating' as const,
-            message: `${artistName}正在云端绘制作品…`,
+            message: `${profileName ? `${artistName}（${profileName}）` : artistName}正在云端绘制作品…`,
             startedAt: parsedTrace?.startedAt ?? row.created_at,
           }
         : undefined
@@ -254,7 +295,10 @@ export function mapJobRow(
     creditsCost: row.credits_cost,
     creditsRefunded: row.credits_refunded,
     provider: row.provider,
-    model: isAdmin ? row.model : artistName,
+    profileId: row.profile_id ?? null,
+    profileName,
+    resolution,
+    model: isAdmin ? row.model : maskedModelLabel,
     ...(isAdmin
       ? {
           channelId: row.channel_id ?? null,
@@ -272,7 +316,7 @@ export function mapJobRow(
     errorMessage: row.error_message
       ? isAdmin
         ? row.error_message
-        : formatUserFacingGenerationError(row.error_message, row.provider)
+        : formatUserFacingGenerationError(row.error_message, row.provider, profileName)
       : row.error_message,
     ...(liveProgress ? { liveProgress } : {}),
     snapshot,
@@ -299,16 +343,46 @@ export async function resolveProviderApiKey(env: Env, row: ProviderRow): Promise
 let platformSeeded = false
 let seedingPromise: Promise<void> | null = null
 
+function getDefaultProfilePreset(providerId: ImageProviderId): {
+  displayName: string
+  badge: string
+  tagline: string
+} {
+  switch (providerId) {
+    case 'gemini':
+      return {
+        displayName: '灵绘主笔',
+        badge: '理解准',
+        tagline: '中文语义与画风迁移细腻自然',
+      }
+    case 'gpt':
+      return {
+        displayName: '精绘稳笔',
+        badge: '画得稳',
+        tagline: '人体结构与光影还原稳定，适合精细成图',
+      }
+    case 'grok':
+      return {
+        displayName: '星舰主笔',
+        badge: '张力强',
+        tagline: '画面张力与光影质感突出',
+      }
+  }
+}
+
 export async function ensurePlatformSeeded(env: Env): Promise<void> {
   if (platformSeeded) return
   if (!seedingPromise) {
     seedingPromise = (async () => {
-      const existing = await env.DB.prepare(
-        `SELECT COUNT(*) AS cnt FROM provider_configs`
-      ).first<{ cnt: number }>()
-      if ((existing?.cnt ?? 0) < PROVIDER_ORDER.length) {
-        const now = Date.now()
-        const statements: D1PreparedStatement[] = [
+      const [existingProviders, existingProfiles] = await Promise.all([
+        env.DB.prepare(`SELECT COUNT(*) AS cnt FROM provider_configs`).first<{ cnt: number }>(),
+        env.DB.prepare(`SELECT COUNT(*) AS cnt FROM model_profiles`).first<{ cnt: number }>(),
+      ])
+      const now = Date.now()
+      const statements: D1PreparedStatement[] = []
+
+      if ((existingProviders?.cnt ?? 0) < PROVIDER_ORDER.length) {
+        statements.push(
           env.DB.prepare(
             `INSERT OR IGNORE INTO system_settings (key, value_json, updated_at) VALUES ('platform_config', ?, ?)`
           ).bind(JSON.stringify(DEFAULT_PLATFORM_CONFIG), now),
@@ -328,10 +402,51 @@ export async function ensurePlatformSeeded(env: Env): Promise<void> {
               idx,
               now
             )
-          }),
-        ]
+          })
+        )
+      }
+
+      if ((existingProfiles?.cnt ?? 0) === 0) {
+        for (const id of PROVIDER_ORDER) {
+          const baseCost = DEFAULT_CREDIT_COSTS[id]
+          const resolutions = normalizeProfileResolutions(id, null, baseCost)
+          const defaultRes = resolveProfileDefaultResolution(id, '2K', resolutions) ?? '2K'
+          const preset = getDefaultProfilePreset(id)
+          statements.push(
+            env.DB.prepare(
+              `INSERT OR IGNORE INTO model_profiles (
+                id, provider_id, display_name, badge, tagline, enabled, is_default,
+                credit_cost, default_resolution, resolutions_json, sort_order, created_at, updated_at
+              ) VALUES (?, ?, ?, ?, ?, 1, 1, ?, ?, ?, 0, ?, ?)`
+            ).bind(
+              `prof_${id}_default`,
+              id,
+              preset.displayName,
+              preset.badge,
+              preset.tagline,
+              baseCost,
+              defaultRes,
+              JSON.stringify(resolutions),
+              now,
+              now
+            )
+          )
+        }
+      }
+
+      if (statements.length > 0) {
         await env.DB.batch(statements)
       }
+
+      // 兜底回填历史上无 profile_id 的渠道记录
+      await env.DB.prepare(
+        `UPDATE provider_channels
+         SET profile_id = COALESCE(
+           (SELECT id FROM model_profiles mp WHERE mp.provider_id = provider_channels.provider_id ORDER BY mp.is_default DESC, mp.sort_order ASC LIMIT 1),
+           'prof_' || provider_id || '_default'
+         )
+         WHERE profile_id IS NULL OR profile_id = ''`
+      ).run()
 
       // 可选通过环境变量自动初始化首个管理员账号
       const bootUser = (env.BOOTSTRAP_ADMIN_USERNAME || '').trim()
@@ -484,7 +599,13 @@ export async function getPlatformConfig(db: D1Database): Promise<PlatformConfig>
   const row = await db
     .prepare(`SELECT value_json FROM system_settings WHERE key = 'platform_config'`)
     .first<{ value_json: string }>()
-  if (!row) return { ...DEFAULT_PLATFORM_CONFIG }
+  if (!row) {
+    return {
+      ...DEFAULT_PLATFORM_CONFIG,
+      promptTemplate: createDefaultPromptTemplate(),
+      poseSanitize: createDefaultPoseSanitizeConfig(),
+    }
+  }
   try {
     const parsed = JSON.parse(row.value_json) as Partial<PlatformConfig>
     const stylePromptOverrides: Record<string, string> = {}
@@ -540,6 +661,7 @@ export async function getPlatformConfig(db: D1Database): Promise<PlatformConfig>
           ? parsed.defaultNegativePrompt.trim().slice(0, 1000)
           : DEFAULT_PLATFORM_CONFIG.defaultNegativePrompt,
       promptTemplate: mergePromptTemplate(parsed.promptTemplate),
+      poseSanitize: mergePoseSanitizeConfig(parsed.poseSanitize),
       styleCategories,
       styleSubcategories,
       stylePresets,
@@ -554,7 +676,11 @@ export async function getPlatformConfig(db: D1Database): Promise<PlatformConfig>
           : DEFAULT_PLATFORM_CONFIG.sendStitchedSheet,
     }
   } catch {
-    return { ...DEFAULT_PLATFORM_CONFIG }
+    return {
+      ...DEFAULT_PLATFORM_CONFIG,
+      promptTemplate: createDefaultPromptTemplate(),
+      poseSanitize: createDefaultPoseSanitizeConfig(),
+    }
   }
 }
 
@@ -614,9 +740,77 @@ function parseChannelParams(providerId: ImageProviderId, paramsJson: string) {
   return params
 }
 
+export function parseProfileRow(row: ModelProfileRow): {
+  resolutions: ProfileResolutionOption[]
+  defaultResolution: StudioResolution | null
+  effectiveCreditCost: number
+} {
+  let rawResolutions: unknown = []
+  try {
+    rawResolutions = JSON.parse(row.resolutions_json)
+  } catch {
+    rawResolutions = []
+  }
+  const resolutions = normalizeProfileResolutions(row.provider_id, rawResolutions, row.credit_cost)
+  const defaultResolution = resolveProfileDefaultResolution(
+    row.provider_id,
+    row.default_resolution,
+    resolutions
+  )
+  const effectiveCreditCost = getEffectiveProfileCreditCost(
+    { creditCost: row.credit_cost, resolutions },
+    defaultResolution
+  )
+  return { resolutions, defaultResolution, effectiveCreditCost }
+}
+
+export async function getAllModelProfiles(db: D1Database): Promise<ModelProfileRow[]> {
+  const res = await db
+    .prepare(
+      `SELECT * FROM model_profiles
+       ORDER BY is_default DESC, sort_order ASC, created_at ASC`
+    )
+    .all<ModelProfileRow>()
+  return res.results || []
+}
+
+export async function resolveProfileForGeneration(
+  db: D1Database,
+  providerId: ImageProviderId,
+  requestedProfileId?: string | null
+): Promise<ModelProfileRow | null> {
+  const cleanId = typeof requestedProfileId === 'string' ? requestedProfileId.trim() : ''
+  if (cleanId) {
+    return db
+      .prepare(`SELECT * FROM model_profiles WHERE id = ? AND provider_id = ?`)
+      .bind(cleanId, providerId)
+      .first<ModelProfileRow>()
+  }
+  const enabledDefault = await db
+    .prepare(
+      `SELECT * FROM model_profiles
+       WHERE provider_id = ? AND enabled = 1
+       ORDER BY is_default DESC, sort_order ASC, created_at ASC
+       LIMIT 1`
+    )
+    .bind(providerId)
+    .first<ModelProfileRow>()
+  if (enabledDefault) return enabledDefault
+  return db
+    .prepare(
+      `SELECT * FROM model_profiles
+       WHERE provider_id = ?
+       ORDER BY is_default DESC, sort_order ASC, created_at ASC
+       LIMIT 1`
+    )
+    .bind(providerId)
+    .first<ModelProfileRow>()
+}
+
 export async function getAdminProviderSlots(env: Env): Promise<AdminProviderSlotDTO[]> {
-  const [slotRows, channelRes] = await Promise.all([
+  const [slotRows, profileRows, channelRes] = await Promise.all([
     getAllProviderRows(env.DB),
+    getAllModelProfiles(env.DB),
     env.DB.prepare(
       `SELECT c.*,
               s.name AS supplier_name,
@@ -629,12 +823,24 @@ export async function getAdminProviderSlots(env: Env): Promise<AdminProviderSlot
     ).all<ChannelRow>(),
   ])
 
-  const channelsByProvider = new Map<ImageProviderId, ProviderChannelDTO[]>()
+  const defaultProfileByProvider = new Map<ImageProviderId, string>()
+  for (const prof of profileRows) {
+    if (!defaultProfileByProvider.has(prof.provider_id) || prof.is_default === 1) {
+      defaultProfileByProvider.set(prof.provider_id, prof.id)
+    }
+  }
+
+  const channelsByProfile = new Map<string, ProviderChannelDTO[]>()
   for (const ch of channelRes.results || []) {
-    const list = channelsByProvider.get(ch.provider_id) || []
+    const resolvedProfileId =
+      (ch.profile_id && ch.profile_id.trim()) ||
+      defaultProfileByProvider.get(ch.provider_id) ||
+      `prof_${ch.provider_id}_default`
+    const list = channelsByProfile.get(resolvedProfileId) || []
     list.push({
       id: ch.id,
       providerId: ch.provider_id,
+      profileId: resolvedProfileId,
       supplierId: ch.supplier_id,
       supplierName: ch.supplier_name || '未知供应商',
       supplierBaseUrl: ch.supplier_base_url || '',
@@ -649,17 +855,52 @@ export async function getAdminProviderSlots(env: Env): Promise<AdminProviderSlot
       createdAt: ch.created_at,
       updatedAt: ch.updated_at,
     })
-    channelsByProvider.set(ch.provider_id, list)
+    channelsByProfile.set(resolvedProfileId, list)
   }
 
-  return slotRows.map((row) => ({
-    providerId: row.provider_id,
-    enabled: row.enabled === 1,
-    creditCost: row.credit_cost,
-    sortOrder: row.sort_order,
-    updatedAt: row.updated_at,
-    channels: channelsByProvider.get(row.provider_id) || [],
-  }))
+  const profilesByProvider = new Map<ImageProviderId, ModelProfileDTO[]>()
+  for (const prof of profileRows) {
+    const parsed = parseProfileRow(prof)
+    const list = profilesByProvider.get(prof.provider_id) || []
+    list.push({
+      id: prof.id,
+      providerId: prof.provider_id,
+      displayName: prof.display_name,
+      badge: prof.badge || '',
+      tagline: prof.tagline || '',
+      enabled: prof.enabled === 1,
+      isDefault: prof.is_default === 1,
+      creditCost: parsed.effectiveCreditCost,
+      defaultResolution: parsed.defaultResolution,
+      resolutions: parsed.resolutions,
+      sortOrder: prof.sort_order,
+      createdAt: prof.created_at,
+      updatedAt: prof.updated_at,
+      channels: channelsByProfile.get(prof.id) || [],
+    })
+    profilesByProvider.set(prof.provider_id, list)
+  }
+
+  for (const [, list] of profilesByProvider) {
+    list.sort((a, b) => {
+      if (a.sortOrder !== b.sortOrder) return a.sortOrder - b.sortOrder
+      if (a.isDefault !== b.isDefault) return a.isDefault ? -1 : 1
+      return a.createdAt - b.createdAt
+    })
+  }
+
+  return slotRows.map((row) => {
+    const profiles = profilesByProvider.get(row.provider_id) || []
+    const defaultProf = profiles.find((p) => p.isDefault) ?? profiles[0]
+    return {
+      providerId: row.provider_id,
+      enabled: row.enabled === 1,
+      creditCost: defaultProf?.creditCost ?? row.credit_cost,
+      sortOrder: row.sort_order,
+      updatedAt: row.updated_at,
+      profiles,
+    }
+  })
 }
 
 function shuffleTier<T>(items: T[]): T[] {
@@ -673,26 +914,46 @@ function shuffleTier<T>(items: T[]): T[] {
 
 export async function selectOrderedRunnableChannels(
   env: Env,
-  providerId: ImageProviderId
+  providerId: ImageProviderId,
+  profileId?: string | null
 ): Promise<RunnableChannel[]> {
-  const res = await env.DB.prepare(
-    `SELECT c.*,
-            s.name AS supplier_name,
-            s.base_url AS supplier_base_url,
-            s.api_key_encrypted AS supplier_api_key_encrypted,
-            s.enabled AS supplier_enabled
-     FROM provider_channels c
-     JOIN suppliers s ON s.id = c.supplier_id
-     WHERE c.provider_id = ?
-     ORDER BY c.priority DESC, c.created_at ASC`
-  )
-    .bind(providerId)
-    .all<ChannelRow>()
+  const [res, providerChannelCount] = await Promise.all([
+    profileId
+      ? env.DB.prepare(
+          `SELECT c.*,
+                  s.name AS supplier_name,
+                  s.base_url AS supplier_base_url,
+                  s.api_key_encrypted AS supplier_api_key_encrypted,
+                  s.enabled AS supplier_enabled
+           FROM provider_channels c
+           JOIN suppliers s ON s.id = c.supplier_id
+           WHERE c.provider_id = ? AND c.profile_id = ?
+           ORDER BY c.priority DESC, c.created_at ASC`
+        )
+          .bind(providerId, profileId)
+          .all<ChannelRow>()
+      : env.DB.prepare(
+          `SELECT c.*,
+                  s.name AS supplier_name,
+                  s.base_url AS supplier_base_url,
+                  s.api_key_encrypted AS supplier_api_key_encrypted,
+                  s.enabled AS supplier_enabled
+           FROM provider_channels c
+           JOIN suppliers s ON s.id = c.supplier_id
+           WHERE c.provider_id = ?
+           ORDER BY c.priority DESC, c.created_at ASC`
+        )
+          .bind(providerId)
+          .all<ChannelRow>(),
+    env.DB.prepare(`SELECT COUNT(*) AS cnt FROM provider_channels WHERE provider_id = ?`)
+      .bind(providerId)
+      .first<{ cnt: number }>(),
+  ])
 
-  const allDbChannels = res.results || []
+  const profileChannels = res.results || []
   const runnable: RunnableChannel[] = []
 
-  for (const ch of allDbChannels) {
+  for (const ch of profileChannels) {
     if (ch.enabled !== 1 || ch.supplier_enabled !== 1) continue
     const decrypted = await decryptSecret(
       ch.supplier_api_key_encrypted || '',
@@ -718,8 +979,8 @@ export async function selectOrderedRunnableChannels(
     })
   }
 
-  // 若数据库中该模型尚未配置任何渠道，允许使用环境变量兜底
-  if (allDbChannels.length === 0) {
+  // 仅当该画师尚未在数据库中配置任何渠道时，才允许使用环境变量兜底（防止跨模型档位串流）
+  if ((providerChannelCount?.cnt ?? 0) === 0) {
     const envKey = getEnvFallbackApiKey(env, providerId)
     if (envKey) {
       const legacyRow = await env.DB.prepare(
@@ -762,33 +1023,86 @@ export async function selectOrderedRunnableChannels(
 }
 
 export async function getPublicProviders(env: Env): Promise<ProviderPublicInfo[]> {
-  const [rows, countsRes] = await Promise.all([
+  const [rows, profileRows, profileCountsRes, providerTotalsRes] = await Promise.all([
     getAllProviderRows(env.DB),
+    getAllModelProfiles(env.DB),
     env.DB.prepare(
-      `SELECT c.provider_id,
+      `SELECT c.profile_id,
               COUNT(*) AS total_channels,
               SUM(CASE WHEN c.enabled = 1 AND s.enabled = 1 AND s.api_key_encrypted != '' THEN 1 ELSE 0 END) AS ready_channels
        FROM provider_channels c
        JOIN suppliers s ON s.id = c.supplier_id
-       GROUP BY c.provider_id`
-    ).all<{ provider_id: ImageProviderId; total_channels: number; ready_channels: number | null }>(),
+       GROUP BY c.profile_id`
+    ).all<{ profile_id: string | null; total_channels: number; ready_channels: number | null }>(),
+    env.DB.prepare(
+      `SELECT provider_id, COUNT(*) AS total_channels
+       FROM provider_channels
+       GROUP BY provider_id`
+    ).all<{ provider_id: ImageProviderId; total_channels: number }>(),
   ])
 
-  const countMap = new Map<ImageProviderId, { total: number; ready: number }>()
-  for (const r of countsRes.results || []) {
-    countMap.set(r.provider_id, { total: r.total_channels || 0, ready: r.ready_channels || 0 })
+  const readyByProfile = new Map<string, number>()
+  for (const r of profileCountsRes.results || []) {
+    if (r.profile_id) {
+      readyByProfile.set(r.profile_id, r.ready_channels || 0)
+    }
+  }
+  const totalByProvider = new Map<ImageProviderId, number>()
+  for (const r of providerTotalsRes.results || []) {
+    totalByProvider.set(r.provider_id, r.total_channels || 0)
+  }
+
+  const profilesByProvider = new Map<ImageProviderId, ModelProfileRow[]>()
+  for (const prof of profileRows) {
+    const list = profilesByProvider.get(prof.provider_id) || []
+    list.push(prof)
+    profilesByProvider.set(prof.provider_id, list)
   }
 
   return rows.map((row) => {
-    const stats = countMap.get(row.provider_id) || { total: 0, ready: 0 }
-    const hasEnvFallback = stats.total === 0 && Boolean(getEnvFallbackApiKey(env, row.provider_id))
+    const totalProviderChannels = totalByProvider.get(row.provider_id) || 0
+    const hasEnvFallback = totalProviderChannels === 0 && Boolean(getEnvFallbackApiKey(env, row.provider_id))
+    const rawProfiles = [...(profilesByProvider.get(row.provider_id) || [])].sort((a, b) => {
+      if (a.sort_order !== b.sort_order) return a.sort_order - b.sort_order
+      if (a.is_default !== b.is_default) return b.is_default - a.is_default
+      return a.created_at - b.created_at
+    })
+
+    const models: ProviderModelPublicInfo[] = rawProfiles.map((prof) => {
+      const parsed = parseProfileRow(prof)
+      const readyCount = readyByProfile.get(prof.id) || 0
+      const configured = readyCount > 0 || (hasEnvFallback && prof.is_default === 1)
+      return {
+        profileId: prof.id,
+        displayName: prof.display_name,
+        badge: prof.badge || '',
+        tagline: prof.tagline || '',
+        enabled: prof.enabled === 1,
+        configured,
+        creditCost: parsed.effectiveCreditCost,
+        defaultResolution: parsed.defaultResolution,
+        resolutions: parsed.resolutions
+          .filter((r) => r.enabled)
+          .map(({ resolution, creditCost }) => ({ resolution, creditCost })),
+        isDefault: prof.is_default === 1,
+        sortOrder: prof.sort_order,
+      }
+    })
+
+    const defaultPublicModel =
+      models.find((m) => m.isDefault && m.enabled && m.configured) ??
+      models.find((m) => m.enabled && m.configured) ??
+      models.find((m) => m.isDefault) ??
+      models[0]
+
     return {
       providerId: row.provider_id,
       enabled: row.enabled === 1,
-      configured: stats.ready > 0 || hasEnvFallback,
-      creditCost: row.credit_cost,
+      configured: models.some((m) => m.enabled && m.configured) || (models.length === 0 && hasEnvFallback),
+      creditCost: defaultPublicModel?.creditCost ?? row.credit_cost,
       sortOrder: row.sort_order,
       artist: getStudioArtist(row.provider_id),
+      models,
     }
   })
 }
@@ -969,6 +1283,9 @@ export async function deductCreditsAndCreateJob(
     userId: string
     idempotencyKey: string
     provider: ImageProviderId
+    profileId?: string | null
+    profileName?: string | null
+    resolution?: StudioResolution | null
     model: string
     channelId?: string | null
     channelName?: string | null
@@ -997,22 +1314,32 @@ export async function deductCreditsAndCreateJob(
 
   const now = Date.now()
   const cost = Math.max(0, Math.floor(params.creditsCost))
+  const ledgerLabel = [
+    getStudioArtist(params.provider).name,
+    params.profileName?.trim() || null,
+    params.resolution || null,
+  ]
+    .filter(Boolean)
+    .join(' · ')
 
   const stmts: D1PreparedStatement[] = [
     db
       .prepare(
         `INSERT INTO generation_jobs (
-          id, user_id, idempotency_key, provider, model,
+          id, user_id, idempotency_key, provider, profile_id, profile_name, resolution, model,
           channel_id, channel_name, supplier_id, supplier_name,
           status, credits_cost, credits_refunded, prompt, recipe_summary, aspect_ratio, style_preset,
           snapshot_json, trace_json, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'processing', ?, 0, ?, ?, ?, ?, ?, ?, ?)`
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'processing', ?, 0, ?, ?, ?, ?, ?, ?, ?)`
       )
       .bind(
         params.jobId,
         params.userId,
         params.idempotencyKey,
         params.provider,
+        params.profileId ?? null,
+        params.profileName ?? null,
+        params.resolution ?? null,
         params.model,
         params.channelId ?? null,
         params.channelName ?? null,
@@ -1050,7 +1377,7 @@ export async function deductCreditsAndCreateJob(
         -cost,
         params.userId,
         params.jobId,
-        `生成消耗 · ${getStudioArtist(params.provider).name}`,
+        `生成消耗 · ${ledgerLabel}`,
         now
       ),
   ]
@@ -1231,7 +1558,13 @@ export async function refundFailedJob(
           job.credits_cost,
           job.user_id,
           job.id,
-          `生成失败退还 · ${getStudioArtist(job.provider).name}`,
+          `生成失败退还 · ${[
+            getStudioArtist(job.provider).name,
+            job.profile_name?.trim() || null,
+            job.resolution || null,
+          ]
+            .filter(Boolean)
+            .join(' · ')}`,
           now
         ),
       db

@@ -290,7 +290,7 @@ export function AdminSuppliersTab({
               <Input
                 value={supplierForm.name}
                 onChange={(e) => setSupplierForm((p) => ({ ...p, name: e.target.value }))}
-                placeholder="例如：我的聚合中转站 A"
+                placeholder="例如：官方直连 / 聚合中转站"
                 className={ADMIN_TEXT_INPUT_CLS}
               />
             </AdminField>

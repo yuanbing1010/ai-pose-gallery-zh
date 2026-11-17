@@ -9,6 +9,7 @@ import {
   MenuIcon,
   RefreshCwIcon,
   ServerIcon,
+  ShieldAlertIcon,
   ShieldCheckIcon,
   TicketIcon,
   UsersIcon,
@@ -27,6 +28,7 @@ const TAB_ICONS: Record<AdminTab, LucideIcon> = {
   api: CpuIcon,
   jobs: ActivityIcon,
   safety: ShieldCheckIcon,
+  sanitize: ShieldAlertIcon,
 }
 
 interface AdminShellProps {

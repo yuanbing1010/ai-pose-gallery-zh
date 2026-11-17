@@ -283,7 +283,7 @@ export function StyleWheelDeck() {
           </div>
           <div className="text-xs font-bold text-white">暂无预设画风</div>
           <p className="max-w-xs text-[11px] leading-relaxed text-zinc-400">
-            当前暂未配置画风预设，可直接前往合成台跟随参考图原本质感出图。
+            当前暂未配置画风预设，可直接前往合成台以无预设画风出图。
           </p>
         </div>
 

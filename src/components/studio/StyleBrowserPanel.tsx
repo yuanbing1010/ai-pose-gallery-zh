@@ -12,7 +12,6 @@ import {
 } from 'lucide-react'
 import {
   getStyleTaxonomyTree,
-  getStyleVisualMeta,
   getVisualStylePresets,
   type VisualStyleItem,
 } from '@/lib/stylePresets'
@@ -49,7 +48,6 @@ export function StyleBrowserPanel({
 
   const visualStyles = useMemo(() => getVisualStylePresets(platform), [platform])
   const taxonomy = useMemo(() => getStyleTaxonomyTree(platform), [platform])
-  const noneMeta = getStyleVisualMeta('none')
 
   // 若后台删除了当前筛选中的分类，自动回退到 all
   const activeCategory =
@@ -185,7 +183,7 @@ export function StyleBrowserPanel({
             : 'border-border/80 bg-[#FAF8F4] hover:border-foreground/45 hover:bg-card hover:shadow-xs dark:bg-muted/30'
         )}
       >
-        <div className="relative aspect-[4/3] w-full overflow-hidden bg-muted/40">
+        <div className="relative aspect-square w-full overflow-hidden bg-muted/40">
           {item.preview ? (
             <img
               src={item.preview}
@@ -205,7 +203,7 @@ export function StyleBrowserPanel({
             className="pointer-events-none absolute inset-x-0 top-0 h-10 bg-gradient-to-b from-black/55 to-transparent"
           />
 
-          <span className="pointer-events-none absolute top-1.5 left-1.5 max-w-[calc(100%-34px)] truncate rounded-md bg-black/70 px-1.5 py-0.5 text-[11px] font-medium text-white backdrop-blur-xs">
+          <span className="pointer-events-none absolute top-1.5 left-1.5 max-w-[calc(100%-34px)] truncate rounded-md bg-black/75 px-1.5 py-0.5 text-[11px] font-medium text-white">
             {badgeText}
           </span>
 
@@ -231,7 +229,7 @@ export function StyleBrowserPanel({
 
   return (
     <div className={cn('flex min-h-0 flex-1 flex-col', className)}>
-      {/* 顶部搜索 + 跟随原图 + 筛选内盲选 */}
+      {/* 顶部搜索 + 清除画风 + 筛选内盲选 */}
       <div className="shrink-0 space-y-2 border-b border-border/70 pb-2.5">
         <div className="flex flex-wrap items-center gap-1.5">
           <div className="relative min-w-[160px] flex-1">
@@ -269,7 +267,7 @@ export function StyleBrowserPanel({
             title={NONE_STYLE_PRESET.label}
           >
             <WandSparklesIcon className="size-3.5" />
-            <span>{noneMeta.shortLabel}</span>
+            <span>清除画风</span>
           </button>
 
           <button
@@ -453,7 +451,7 @@ export function StyleBrowserPanel({
             <div className="space-y-1">
               <div className="text-xs font-bold text-foreground">暂无预设画风</div>
               <p className="text-[11px] text-muted-foreground">
-                当前暂未配置画风预设，可点击上方「跟随原图」按参考图原本质感出图。
+                当前暂未配置画风预设，可保持无预设画风直接出图。
               </p>
             </div>
           </div>

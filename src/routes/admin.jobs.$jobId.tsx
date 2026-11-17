@@ -230,7 +230,9 @@ function AdminJobDetailPage() {
               <CopyActionButton text={job.id} label="复制编号" toastMessage="已复制任务编号" />
               <span className="text-zinc-400">·</span>
               <span>
-                {artist.name}（{providerMeta?.name || job.provider}）
+                {artist.name}（{providerMeta?.name || job.provider}
+                {job.profileName ? ` · ${job.profileName}` : ''}
+                {job.resolution ? ` · ${job.resolution}` : ''}）
               </span>
             </div>
           </div>
@@ -333,8 +335,11 @@ function AdminJobDetailPage() {
                   </div>
                 </div>
                 <div className="min-w-0 p-3.5">
-                  <div className="text-[11px] text-zinc-500">画幅比例</div>
-                  <div className="mt-1 font-mono text-xs font-bold">{job.aspectRatio}</div>
+                  <div className="text-[11px] text-zinc-500">画幅与分辨率</div>
+                  <div className="mt-1 font-mono text-xs font-bold">
+                    {job.aspectRatio}
+                    {job.resolution ? ` · ${job.resolution}` : ''}
+                  </div>
                 </div>
                 <div className="min-w-0 p-3.5">
                   <div className="text-[11px] text-zinc-500">参考图传参</div>
@@ -628,7 +633,18 @@ function AdminJobDetailPage() {
                       查看大图
                     </Button>
                     <Button size="sm" variant="outline" className="rounded-none text-xs" asChild>
-                      <a href={job.imageUrl} download={`generation-${job.id}.png`}>
+                      <a
+                        href={job.imageUrl}
+                        download={`generation-${job.id}.${
+                          trace?.result?.mime === 'image/jpeg'
+                            ? 'jpg'
+                            : trace?.result?.mime === 'image/webp'
+                              ? 'webp'
+                              : trace?.result?.mime === 'image/gif'
+                                ? 'gif'
+                                : 'png'
+                        }`}
+                      >
                         <DownloadIcon className="size-3.5" />
                         下载原图
                       </a>

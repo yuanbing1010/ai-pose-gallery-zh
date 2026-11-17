@@ -3,8 +3,8 @@ import {
   PROVIDER_ORDER,
   buildRecipePrompt,
   formatUserFacingGenerationError,
+  getEffectiveProfileCreditCost,
   getEffectiveStyleCatalog,
-  getStudioArtist,
   mergeNegativePrompts,
   resolveStyleInfo,
   type GenerationAttemptTriggerType,
@@ -15,6 +15,7 @@ import {
   type ImageProviderId,
   type RecipeState,
   type StudioAspectRatio,
+  type StudioResolution,
 } from '../../shared/studio'
 import { UpstreamError, extractRecipeSources, runServerGeneration, type ResolvedSource } from '../aiProviders'
 import {
@@ -22,8 +23,10 @@ import {
   getPlatformConfig,
   mapJobRow,
   markJobSucceeded,
+  parseProfileRow,
   reapStaleProcessingJobs,
   refundFailedJob,
+  resolveProfileForGeneration,
   selectOrderedRunnableChannels,
   updateJobTrace,
   type JobRow,
@@ -127,7 +130,7 @@ generationRoutes.post('/', async (c) => {
 
   const provider = body.provider as ImageProviderId
   if (!PROVIDER_ORDER.includes(provider)) {
-    return c.json({ error: { message: '不支持的画师' } }, 400)
+    return c.json({ error: { message: '不支持的AI小画家' } }, 400)
   }
 
   const platform = await getPlatformConfig(c.env.DB)
@@ -143,7 +146,11 @@ generationRoutes.post('/', async (c) => {
 
   const rawRatio = typeof body.aspectRatio === 'string' ? (body.aspectRatio as StudioAspectRatio) : '3:4'
   const aspectRatio: StudioAspectRatio = VALID_RATIOS.has(rawRatio) ? rawRatio : '3:4'
-  const sceneNote = typeof body.sceneNote === 'string' ? body.sceneNote.trim().slice(0, 500) : ''
+  const sceneNote =
+    typeof body.sceneNote === 'string'
+      ? body.sceneNote.replace(/\r\n?/g, '\n').trim().slice(0, 500)
+      : ''
+  const allowFaceStyleShift = body.allowFaceStyleShift === true
   const stitchedR2Key = typeof body.stitchedR2Key === 'string' ? body.stitchedR2Key.trim() : undefined
 
   const recipe = (body.recipe || {}) as RecipeState
@@ -164,7 +171,6 @@ generationRoutes.post('/', async (c) => {
     )
   }
 
-  const artist = getStudioArtist(provider)
   const providerRow = await c.env.DB.prepare(
     `SELECT * FROM provider_configs WHERE provider_id = ?`
   )
@@ -172,12 +178,58 @@ generationRoutes.post('/', async (c) => {
     .first<ProviderRow>()
 
   if (!providerRow || providerRow.enabled !== 1) {
-    return c.json({ error: { message: `${artist.name}今日暂未开棚，先试试其他画师吧` } }, 400)
+    return c.json({ error: { message: '这位AI小画家外出采风啦，请换位AI小画家出马！' } }, 400)
   }
 
-  const channels = await selectOrderedRunnableChannels(c.env, provider)
+  const requestedProfileId =
+    typeof body.modelProfileId === 'string' ? body.modelProfileId.trim() : ''
+  const profileRow = await resolveProfileForGeneration(
+    c.env.DB,
+    provider,
+    requestedProfileId || null
+  )
+  if (!profileRow) {
+    return c.json({ error: { message: 'AI小画家口袋里暂时没带画笔，请换位试试！' } }, 400)
+  }
+  if (profileRow.enabled !== 1) {
+    return c.json(
+      { error: { message: '这支画笔正在闭关磨尖中，请切换其他画笔试试！' } },
+      400
+    )
+  }
+
+  const parsedProfile = parseProfileRow(profileRow)
+  const enabledResolutions = parsedProfile.resolutions.filter((r) => r.enabled)
+  const rawResolution =
+    typeof body.resolution === 'string' ? body.resolution.trim().toUpperCase() : ''
+
+  let selectedResolution: StudioResolution | null = null
+  if (enabledResolutions.length > 0) {
+    if (rawResolution) {
+      const matched = enabledResolutions.find((r) => r.resolution === rawResolution)
+      if (!matched) {
+        return c.json(
+          { error: { message: `当前画笔暂未开启 ${rawResolution} 分辨率，请换个清晰度` } },
+          400
+        )
+      }
+      selectedResolution = matched.resolution
+    } else {
+      selectedResolution = parsedProfile.defaultResolution ?? enabledResolutions[0].resolution
+    }
+  }
+
+  const effectiveCreditCost = getEffectiveProfileCreditCost(
+    { creditCost: profileRow.credit_cost, resolutions: parsedProfile.resolutions },
+    selectedResolution
+  )
+
+  const channels = await selectOrderedRunnableChannels(c.env, provider, profileRow.id)
   if (channels.length === 0) {
-    return c.json({ error: { message: `${artist.name}正在整备画具，暂不可用` } }, 503)
+    return c.json(
+      { error: { message: 'AI小画家暂时开小差啦，换支画笔或换位AI小画家试试！' } },
+      503
+    )
   }
 
   const primaryChannel = channels[0]
@@ -186,7 +238,9 @@ generationRoutes.post('/', async (c) => {
     suffix: platform.defaultPromptSuffix,
     negativePrompt: platform.defaultNegativePrompt,
     promptTemplate: platform.promptTemplate,
+    poseSanitize: platform.poseSanitize,
     sceneNote,
+    allowFaceStyleShift,
     stylePresets: platform.stylePresets,
     styleCategories: platform.styleCategories,
     styleSubcategories: platform.styleSubcategories,
@@ -206,9 +260,13 @@ generationRoutes.post('/', async (c) => {
     recipe,
     prompt: finalPrompt,
     stylePreset,
+    allowFaceStyleShift,
     aspectRatio,
+    ...(selectedResolution ? { resolution: selectedResolution } : {}),
     sceneNote: sceneNote || undefined,
     provider,
+    profileId: profileRow.id,
+    profileName: profileRow.display_name,
     model: primaryChannel.model,
   }
 
@@ -223,13 +281,16 @@ generationRoutes.post('/', async (c) => {
     startedAt: createdAt,
     finishedAt: null,
     totalDurationMs: null,
-    creditsCost: providerRow.credit_cost,
+    creditsCost: effectiveCreditCost,
     creditsRefunded: 0,
+    profileId: profileRow.id,
+    profileName: profileRow.display_name,
+    requestedResolution: selectedResolution,
     imagePassMode: platform.imagePassMode,
     sendStitchedSheet: platform.sendStitchedSheet,
     liveState: {
       stage: 'deducted',
-      message: `已扣除 ${providerRow.credit_cost} 积分，进入云端画室队列…`,
+      message: '准备中…',
       attempt: 0,
       totalAttempts: channels.length === 1 ? 3 : channels.length,
       startedAt: createdAt,
@@ -243,6 +304,7 @@ generationRoutes.post('/', async (c) => {
       sceneNote,
       stylePreset,
       styleLabel: resolvedStyleInfo.label || stylePreset,
+      allowFaceStyleShift,
       finalPrompt,
     },
     references: initialSources.map((src, idx) => ({
@@ -273,12 +335,15 @@ generationRoutes.post('/', async (c) => {
       userId: user.id,
       idempotencyKey,
       provider,
+      profileId: profileRow.id,
+      profileName: profileRow.display_name,
+      resolution: selectedResolution,
       model: primaryChannel.model,
       channelId: primaryChannel.channelId,
       channelName: primaryChannel.channelName,
       supplierId: primaryChannel.supplierId,
       supplierName: primaryChannel.supplierName,
-      creditsCost: providerRow.credit_cost,
+      creditsCost: effectiveCreditCost,
       prompt: finalPrompt,
       recipeSummary,
       aspectRatio,
@@ -296,7 +361,7 @@ generationRoutes.post('/', async (c) => {
     return c.json(
       {
         error: {
-          message: `积分不足：本次需要 ${providerRow.credit_cost} 积分，当前剩余 ${freshUser.credit_balance} 积分`,
+          message: `积分不足：本次需要 ${effectiveCreditCost} 积分，当前剩余 ${freshUser.credit_balance} 积分`,
           code: 'INSUFFICIENT_CREDITS',
         },
       },
@@ -313,7 +378,7 @@ generationRoutes.post('/', async (c) => {
       return c.json(
         {
           error: {
-            message: formatUserFacingGenerationError(ex.error_message, ex.provider),
+            message: formatUserFacingGenerationError(ex.error_message, ex.provider, ex.profile_name),
           },
         },
         409
@@ -412,7 +477,7 @@ generationRoutes.post('/', async (c) => {
         try {
           await publishProgress(
             'deducted',
-            `已核验并扣除 ${providerRow.credit_cost} 积分，准备开始制作…`,
+            '准备中…',
             14,
             { attempt: 0, creditBalance: deductRes.creditBalance }
           )
@@ -448,7 +513,7 @@ generationRoutes.post('/', async (c) => {
               if (step.delayMs > 0) {
                 await publishProgress(
                   'retrying',
-                  `请求出现瞬态波动，${(step.delayMs / 1000).toFixed(1)} 秒后开启第 ${idx + 1} 轮重试…`,
+                  '正在绘制中…',
                   Math.min(72, 42 + idx * 10),
                   { attempt: idx + 1, persist: true }
                 )
@@ -468,12 +533,7 @@ generationRoutes.post('/', async (c) => {
                   : `第 ${idx} 次请求出现可重试异常，等待 ${(step.delayMs / 1000).toFixed(1)}s 后进行第 ${idx + 1} 次自动重试`
 
             try {
-              const attemptMsg =
-                idx === 0
-                  ? `${artist.name}正在解析配方并连接云端画室…`
-                  : channels.length > 1
-                    ? `${artist.name}已切换备用通道，正在第 ${idx + 1} 轮绘制…`
-                    : `${artist.name}正在进行第 ${idx + 1} 轮重试绘制…`
+              const attemptMsg = idx === 0 ? '正在准备参考素材…' : '正在绘制中…'
 
               await publishProgress(
                 idx === 0 ? 'resolving_refs' : 'retrying',
@@ -489,6 +549,7 @@ generationRoutes.post('/', async (c) => {
                 recipe,
                 userId: user.id,
                 aspectRatio,
+                resolution: selectedResolution,
                 imagePassMode: platform.imagePassMode,
                 requestOrigin,
                 stitchedR2Key: platform.sendStitchedSheet ? stitchedR2Key : undefined,
@@ -503,13 +564,13 @@ generationRoutes.post('/', async (c) => {
                   },
                   onStage: async (phase, phaseMsg) => {
                     if (phase === 'resolving_refs') {
-                      await publishProgress('resolving_refs', phaseMsg, 28, { attempt: idx + 1 })
+                      if (idx === 0) {
+                        await publishProgress('resolving_refs', phaseMsg, 28, { attempt: idx + 1 })
+                      }
                     } else if (phase === 'generating') {
                       await publishProgress(
                         idx === 0 ? 'generating' : 'retrying',
-                        idx === 0
-                          ? `${artist.name}正在云端绘制出图（模型黑盒处理中，无逐帧进度回报）…`
-                          : `${artist.name}正在第 ${idx + 1} 轮请求云端绘制…`,
+                        '正在绘制中…',
                         idx === 0 ? 45 : Math.min(74, 48 + idx * 10),
                         { attempt: idx + 1, persist: true }
                       )
@@ -556,7 +617,7 @@ generationRoutes.post('/', async (c) => {
             const prevErrMsg = lastErr instanceof Error ? lastErr.message : '未知错误'
             await publishProgress(
               'retrying',
-              `${artist.name}正在发起最终兜底重绘…`,
+              '正在绘制中…',
               76,
               { attempt: executionPlan.length + 1, persist: true }
             )
@@ -569,6 +630,7 @@ generationRoutes.post('/', async (c) => {
                 recipe,
                 userId: user.id,
                 aspectRatio,
+                resolution: selectedResolution,
                 imagePassMode: platform.imagePassMode,
                 requestOrigin,
                 stitchedR2Key: platform.sendStitchedSheet ? stitchedR2Key : undefined,
@@ -608,7 +670,7 @@ generationRoutes.post('/', async (c) => {
             throw new Error(combinedRaw)
           }
 
-          await publishProgress('saving', '正在保存高清成图至云端作品集…', 92, { persist: true })
+          await publishProgress('saving', '正在保存成图…', 92, { persist: true })
 
           const r2Key = `generations/${user.id}/${jobId}.${output.ext}`
           await c.env.BUCKET.put(r2Key, output.bytes, {
@@ -617,6 +679,7 @@ generationRoutes.post('/', async (c) => {
               userId: user.id,
               jobId,
               provider,
+              profileId: profileRow.id,
               channelId: winningChannel.channelId,
             },
           })
@@ -663,7 +726,7 @@ generationRoutes.post('/', async (c) => {
           const finishedAt = Date.now()
           auditTrace.finishedAt = finishedAt
           auditTrace.totalDurationMs = Math.max(0, finishedAt - startedAt)
-          auditTrace.creditsRefunded = providerRow.credit_cost
+          auditTrace.creditsRefunded = effectiveCreditCost
           auditTrace.finalError = rawMessage
           auditTrace.liveState = null
           const refundRes = await refundFailedJob(c.env.DB, jobId, rawMessage, {
@@ -675,7 +738,11 @@ generationRoutes.post('/', async (c) => {
             supplierName: lastAttemptedChannel.supplierName,
           })
           sendEvent('error', {
-            message: formatUserFacingGenerationError(rawMessage, provider),
+            message: formatUserFacingGenerationError(
+              rawMessage,
+              provider,
+              profileRow.display_name
+            ),
             refunded: refundRes.refunded,
             creditBalance: refundRes.creditBalance ?? deductRes.creditBalance,
             jobId,

@@ -18,7 +18,7 @@ import {
   useSortable,
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { motion } from 'motion/react'
+import { AnimatePresence, motion } from 'motion/react'
 import {
   ArrowRightIcon,
   ArrowUpRightIcon,
@@ -45,21 +45,33 @@ import {
   Trash2Icon,
   UploadIcon,
   UserRoundIcon,
+  Volume2Icon,
+  VolumeXIcon,
   WandSparklesIcon,
   XIcon,
   ZoomInIcon,
 } from 'lucide-react'
-import { type ChangeEvent, type DragEvent, type ReactNode, useEffect, useEffectEvent, useRef, useState } from 'react'
+import { type ChangeEvent, type DragEvent, type PointerEvent as ReactPointerEvent, type ReactNode, useEffect, useEffectEvent, useRef, useState } from 'react'
 import { toast } from '@/lib/notifications'
 import { costumesQuery, portraitsQuery, posesQuery } from '@/api/gallery'
-import { ArtistLogo, AspectRatioLogo } from '@/components/studio/StudioEmblems'
+import {
+  ArtistStageSelector,
+  GeneratingSpriteStage,
+  type AutoGrabBrushTrigger,
+  type HoveredBrushInfo,
+} from '@/components/studio/ArtistSprite3D'
+import {
+  type HomeworkThrowTask,
+  type SpriteTravelTask,
+  SpriteTravelPortal,
+} from '@/components/studio/SpriteTravelPortal'
+import { AspectRatioLogo } from '@/components/studio/StudioEmblems'
 import { StyleBrowserPanel } from '@/components/studio/StyleBrowserPanel'
 import { StylePresetSelector } from '@/components/studio/StylePresetSelector'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
@@ -73,9 +85,11 @@ import {
   STUDIO_ASPECT_RATIOS,
   type StudioAspectRatio,
 } from '@/lib/artists'
+import { getBrushPalette } from '@/lib/brushPalettes'
 import { selectCostumeView } from '@/lib/costumeSources'
 import type { RandomScope, ReferenceSlot } from '@/lib/randomRecipe'
 import { poseImagePath, poseThumbPath, referenceImageUrl, uploadedReferences } from '@/lib/recipeImages'
+import { getStudioMuted, playHomeworkThrow, playMonitorReveal, playSpriteTravel, setStudioMuted, unlockStudioAudio } from '@/lib/studioAudio'
 import { getStyleVisualMeta } from '@/lib/stylePresets'
 import { cn } from '@/lib/utils'
 import {
@@ -83,8 +97,19 @@ import {
   fileToDataUrl,
   stitchRecipeCanvas,
 } from '@/services/aiGenerator'
-import { getEffectiveStyleCatalog, type GenerationLiveStage } from '../../shared/studio'
-import { useStudio } from '@/store/studioStore'
+import {
+  NONE_STYLE_PRESET,
+  getEffectiveProfileCreditCost,
+  getEffectiveStyleCatalog,
+  STUDIO_RESOLUTION_META,
+  type GenerationLiveStage,
+  type ImageProviderId,
+} from '../../shared/studio'
+import {
+  resolveActiveProfileResolution,
+  resolveActiveProviderProfile,
+  useStudio,
+} from '@/store/studioStore'
 import type { GenerationHistoryItem } from '@/types/gallery'
 
 export const Route = createFileRoute('/studio')({
@@ -92,20 +117,108 @@ export const Route = createFileRoute('/studio')({
   component: StudioPage,
 })
 
-const SCENE_QUICK_TAGS = [
-  '全身立绘构图',
-  '七分身半身景别',
-  '低角度仰拍张力',
-  '伦勃朗戏剧光影',
-  '电影级逆光发丝',
-  '棚拍柔光箱打光',
-  '丁达尔体积光束',
-  '微风拂动发丝衣摆',
-  '精细织物纹理褶皱',
-  '浅景深虚化背景',
-  '极简纯色棚拍背景',
-  '冷暖对比氛围光',
-] as const
+function MonitorResultCard({
+  previewUrl,
+  onZoom,
+  hiddenForDelivery = false,
+  skipIntro = false,
+  onImageReady,
+}: {
+  previewUrl: string
+  onZoom: () => void
+  hiddenForDelivery?: boolean
+  skipIntro?: boolean
+  onImageReady?: () => void
+}) {
+  const frameRef = useRef<HTMLButtonElement | null>(null)
+  const imgRef = useRef<HTMLImageElement | null>(null)
+  const [hovered, setHovered] = useState(false)
+
+  useEffect(() => {
+    if (!onImageReady) return
+    const img = imgRef.current
+    if (img && img.complete && img.naturalWidth > 0) {
+      const raf = requestAnimationFrame(() => onImageReady())
+      return () => cancelAnimationFrame(raf)
+    }
+  }, [previewUrl, onImageReady])
+
+  const handlePointerMove = (e: ReactPointerEvent<HTMLButtonElement>) => {
+    const el = frameRef.current
+    if (!el) return
+    const rect = el.getBoundingClientRect()
+    if (!rect.width || !rect.height) return
+    const nx = Math.max(-1, Math.min(1, ((e.clientX - rect.left) / rect.width) * 2 - 1))
+    const ny = Math.max(-1, Math.min(1, ((e.clientY - rect.top) / rect.height) * 2 - 1))
+    el.style.setProperty('--srx', `${(-ny * 5.2).toFixed(2)}deg`)
+    el.style.setProperty('--sry', `${(nx * 6.2).toFixed(2)}deg`)
+    el.style.setProperty('--glare-x', `${((nx + 1) * 50).toFixed(1)}%`)
+    el.style.setProperty('--glare-y', `${((ny + 1) * 50).toFixed(1)}%`)
+  }
+
+  const resetTilt = () => {
+    const el = frameRef.current
+    if (!el) return
+    el.style.setProperty('--srx', '0deg')
+    el.style.setProperty('--sry', '0deg')
+  }
+
+  return (
+    <div
+      className={cn(
+        'st-sprite-perspective absolute inset-2.5 flex items-center justify-center',
+        hiddenForDelivery && 'pointer-events-none opacity-0'
+      )}
+    >
+      <motion.button
+        ref={frameRef}
+        key={previewUrl}
+        type="button"
+        aria-label="放大生成结果"
+        initial={skipIntro ? false : { opacity: 0, scale: 0.94, filter: 'blur(6px)' }}
+        animate={{ opacity: 1, scale: 1, filter: 'blur(0px)' }}
+        transition={{ duration: 0.38, ease: [0.22, 1, 0.36, 1] }}
+        onClick={onZoom}
+        onPointerEnter={(e) => {
+          setHovered(true)
+          handlePointerMove(e)
+        }}
+        onPointerMove={handlePointerMove}
+        onPointerLeave={() => {
+          setHovered(false)
+          resetTilt()
+        }}
+        data-hover={hovered ? 'true' : 'false'}
+        className="st-sprite-rig group relative flex h-full w-full cursor-zoom-in items-center justify-center overflow-hidden rounded-xl focus-visible:outline-2 focus-visible:outline-ring"
+      >
+        <img
+          ref={imgRef}
+          data-monitor-result-img
+          src={previewUrl}
+          alt="生成结果"
+          onLoad={onImageReady}
+          className="max-h-full max-w-full rounded-lg border border-border/60 object-contain shadow-md transition duration-300 group-hover:brightness-[1.03]"
+        />
+        {/* 指针动态光晕层 */}
+        <span
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-0 rounded-xl opacity-0 transition-opacity duration-300 group-hover:opacity-100"
+          style={{
+            background:
+              'radial-gradient(circle at var(--glare-x, 50%) var(--glare-y, 35%), rgba(255,255,255,0.2) 0%, transparent 55%)',
+          }}
+        />
+        {/* 首次揭晓斜向扫光 */}
+        {!hiddenForDelivery && (
+          <span
+            aria-hidden="true"
+            className="st-reveal-sheen pointer-events-none absolute inset-y-0 left-0 w-1/3 bg-gradient-to-r from-transparent via-white/35 to-transparent"
+          />
+        )}
+      </motion.button>
+    </div>
+  )
+}
 
 function SortableExtraPill({
   img,
@@ -302,14 +415,22 @@ function StudioPage() {
     recipe,
     selectedProvider,
     setSelectedProvider,
+    selectedProfileByProvider,
+    setSelectedProfileForProvider,
+    selectedResolutionByProfile,
+    setSelectedResolutionForProfile,
     stylePreset,
     setStylePreset,
+    allowFaceStyleShift,
+    setAllowFaceStyleShift,
     aspectRatio,
     setAspectRatio,
     history,
     previewUrl,
     setPreviewUrl,
     isGenerating,
+    generatingProvider,
+    generatingProfileId,
     generationProgress,
     generationError,
     refreshBootstrap,
@@ -378,6 +499,52 @@ function StudioPage() {
   const [galleryModalOpen, setGalleryModalOpen] = useState(false)
   const [allDiceSpin, setAllDiceSpin] = useState(0)
   const [slotActionSpin, setSlotActionSpin] = useState<Record<string, number>>({})
+  const [studioMuted, setStudioMutedState] = useState(() => getStudioMuted())
+  const [brushReactionTick, setBrushReactionTick] = useState(0)
+  const [isBrushFlying, setIsBrushFlying] = useState(false)
+  const [equippedBrushByProvider, setEquippedBrushByProvider] = useState<
+    Partial<Record<ImageProviderId, string>>
+  >({})
+  const [hoveredBrushInfo, setHoveredBrushInfo] = useState<HoveredBrushInfo | null>(null)
+  const [autoGrabTrigger, setAutoGrabTrigger] = useState<AutoGrabBrushTrigger | null>(null)
+  const [isAutoGrabbing, setIsAutoGrabbing] = useState(false)
+  const autoGrabSeqRef = useRef(0)
+  const autoGrabTimerRef = useRef<number | null>(null)
+  const [artistReturnTick, setArtistReturnTick] = useState(0)
+
+  useEffect(() => {
+    return () => {
+      if (autoGrabTimerRef.current) window.clearTimeout(autoGrabTimerRef.current)
+    }
+  }, [])
+  const [entranceDone, setEntranceDone] = useState(false)
+  const [spriteTravelTask, setSpriteTravelTask] = useState<SpriteTravelTask | null>(null)
+  const [homeworkThrowTask, setHomeworkThrowTask] = useState<HomeworkThrowTask | null>(null)
+  const [deliveryState, setDeliveryState] = useState<{
+    phase: 'cheering' | 'throwing'
+    imageUrl: string
+    providerId: ImageProviderId
+    brushHex: string
+    brushGlow: string
+  } | null>(null)
+  const [resultImgLoadedUrl, setResultImgLoadedUrl] = useState<string | null>(null)
+  const [skipResultIntro, setSkipResultIntro] = useState(false)
+  const travelSeqRef = useRef(0)
+  const entranceStartedRef = useRef(false)
+  const runningJobSnapshotRef = useRef<{
+    providerId: ImageProviderId
+    brushHex: string
+    brushGlow: string
+  } | null>(null)
+
+  const toggleStudioMute = () => {
+    const next = !studioMuted
+    setStudioMuted(next)
+    setStudioMutedState(next)
+    if (!next) {
+      unlockStudioAudio()
+    }
+  }
 
   const activeProviderInfo =
     providers.find((p) => p.providerId === selectedProvider) ?? {
@@ -387,10 +554,39 @@ function StudioPage() {
       creditCost: 0,
       sortOrder: 0,
       artist: getStudioArtist(selectedProvider),
+      models: [],
     }
   const activeArtist = activeProviderInfo.artist
-  const activeProviderReady = activeProviderInfo.enabled && activeProviderInfo.configured
-  const activeCost = activeProviderInfo.creditCost
+  const visibleModels = activeProviderInfo.models.filter((m) => m.enabled)
+  const activeProfile = resolveActiveProviderProfile(
+    activeProviderInfo,
+    selectedProfileByProvider[selectedProvider]
+  )
+  const activeProfileResolutions = activeProfile?.resolutions || []
+  const activeResolution = resolveActiveProfileResolution(
+    activeProfile,
+    activeProfile ? selectedResolutionByProfile[activeProfile.profileId] : undefined
+  )
+  const activeProviderReady =
+    activeProviderInfo.enabled &&
+    activeProviderInfo.configured &&
+    (activeProviderInfo.models.length === 0 ||
+      Boolean(activeProfile && activeProfile.enabled && activeProfile.configured))
+  const activeCost = activeProfile
+    ? getEffectiveProfileCreditCost(activeProfile, activeResolution)
+    : activeProviderInfo.creditCost
+  const activeBrushIndex = activeProfile
+    ? Math.max(
+        0,
+        visibleModels.findIndex((m) => m.profileId === activeProfile.profileId)
+      )
+    : 0
+  const equippedBrushRaw = equippedBrushByProvider[selectedProvider]
+  const activeEquippedBrushId =
+    equippedBrushRaw && visibleModels.some((m) => m.profileId === equippedBrushRaw)
+      ? equippedBrushRaw
+      : null
+  const activeBrushPalette = activeProfile ? getBrushPalette(activeBrushIndex) : null
   const displayRatio =
     STUDIO_ASPECT_RATIOS.find((r) => r.id === (hoveredRatio ?? aspectRatio)) ??
     STUDIO_ASPECT_RATIOS[0]
@@ -405,18 +601,49 @@ function StudioPage() {
   const [zoomImageUrl, setZoomImageUrl] = useState<string | null>(null)
   const [isDragging, setIsDragging] = useState(false)
   const [nowTick, setNowTick] = useState(() => Date.now())
+  const [progressHighWater, setProgressHighWater] = useState(0)
 
   const activeProcessingJob = history.find((item) => item.status === 'processing') ?? null
   const showGeneratingState = isGenerating || Boolean(activeProcessingJob)
   const effectiveProgress = generationProgress ?? activeProcessingJob?.liveProgress ?? null
   const runningArtist = activeProcessingJob
     ? getStudioArtist(activeProcessingJob.provider)
-    : activeArtist
+    : generatingProvider
+      ? getStudioArtist(generatingProvider)
+      : activeArtist
+  const runningProviderInfo = providers.find((p) => p.providerId === runningArtist.id)
+  const runningEnabledModels = (runningProviderInfo?.models || []).filter((m) => m.enabled)
+  const runningProfileId = activeProcessingJob?.profileId ?? generatingProfileId
+  const runningBrushIdx = runningProfileId
+    ? Math.max(
+        0,
+        runningEnabledModels.findIndex((m) => m.profileId === runningProfileId)
+      )
+    : activeBrushIndex
+  const runningBrushPalette = getBrushPalette(runningBrushIdx)
+  const runningBrushColorHex = runningBrushPalette.hex
+  const runningBrushGlowHex = runningBrushPalette.glowHex
   const effectiveStartedAt =
     effectiveProgress?.startedAt ?? activeProcessingJob?.createdAt ?? null
   const elapsedSeconds = effectiveStartedAt
     ? Math.max(0, Math.floor((nowTick - effectiveStartedAt) / 1000))
     : 0
+  const liveStage: GenerationLiveStage = effectiveProgress?.stage ?? 'generating'
+  const liveStageOrder =
+    liveStage === 'uploading' || liveStage === 'deducted' || liveStage === 'resolving_refs'
+      ? 0
+      : liveStage === 'generating' || liveStage === 'retrying'
+        ? 1
+        : 2
+  const isDrawingStage = liveStage === 'generating' || liveStage === 'retrying'
+  const smoothWaitPercent = Math.min(
+    78,
+    Math.round(32 + (1 - Math.exp(-elapsedSeconds / 24)) * 46)
+  )
+  const rawProgressPercent = isDrawingStage
+    ? Math.max(effectiveProgress?.percent ?? 32, smoothWaitPercent)
+    : effectiveProgress?.percent ?? (liveStageOrder === 0 ? 18 : 88)
+  const barWidth = showGeneratingState ? Math.max(progressHighWater, rawProgressPercent) : 0
 
   useEffect(() => {
     void refreshBootstrap()
@@ -429,9 +656,233 @@ function StudioPage() {
   useEffect(() => {
     if (!showGeneratingState) return
     setNowTick(Date.now())
-    const timer = window.setInterval(() => setNowTick(Date.now()), 1000)
+    const timer = window.setInterval(() => setNowTick(Date.now()), 500)
     return () => window.clearInterval(timer)
   }, [showGeneratingState])
+
+  useEffect(() => {
+    if (!showGeneratingState) {
+      setProgressHighWater(0)
+      return
+    }
+    setProgressHighWater((prev) => (rawProgressPercent > prev ? rawProgressPercent : prev))
+  }, [showGeneratingState, rawProgressPercent])
+
+  // 1. 开始绘画时，小精灵以各自性格动效从左栏底座移动到画图舞台中心
+  useEffect(() => {
+    if (!showGeneratingState) {
+      entranceStartedRef.current = false
+      return
+    }
+    runningJobSnapshotRef.current = {
+      providerId: runningArtist.id,
+      brushHex: runningBrushColorHex,
+      brushGlow: runningBrushGlowHex,
+    }
+    if (entranceDone || entranceStartedRef.current) return
+
+    let dispatched = false
+    const raf = requestAnimationFrame(() => {
+      if (entranceStartedRef.current) return
+      entranceStartedRef.current = true
+      dispatched = true
+
+      const reduceMotion =
+        window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
+      if (reduceMotion) {
+        setEntranceDone(true)
+        return
+      }
+
+      const fromEl = document.querySelector<HTMLElement>(
+        `[data-artist-sprite-target="${runningArtist.id}"]`
+      )
+      const toEl = document.querySelector<HTMLElement>('[data-monitor-sprite-slot]')
+      if (fromEl && toEl) {
+        const fromRect = fromEl.getBoundingClientRect()
+        const toRect = toEl.getBoundingClientRect()
+        const inView =
+          fromRect.width > 0 &&
+          toRect.width > 0 &&
+          fromRect.bottom > 0 &&
+          fromRect.top < window.innerHeight &&
+          toRect.bottom > 0 &&
+          toRect.top < window.innerHeight
+        if (inView) {
+          playSpriteTravel(runningArtist.id, 'to_canvas')
+          travelSeqRef.current += 1
+          setSpriteTravelTask({
+            id: travelSeqRef.current,
+            providerId: runningArtist.id,
+            direction: 'to_canvas',
+            brushColorHex: runningBrushColorHex,
+            brushGlowHex: runningBrushGlowHex,
+            fromRect: {
+              left: fromRect.left,
+              top: fromRect.top,
+              width: fromRect.width,
+              height: fromRect.height,
+            },
+            toRect: {
+              left: toRect.left,
+              top: toRect.top,
+              width: toRect.width,
+              height: toRect.height,
+            },
+          })
+          return
+        }
+      }
+      setEntranceDone(true)
+    })
+
+    return () => {
+      cancelAnimationFrame(raf)
+      if (!dispatched) {
+        entranceStartedRef.current = false
+      }
+    }
+  }, [
+    showGeneratingState,
+    entranceDone,
+    runningArtist.id,
+    runningBrushColorHex,
+    runningBrushGlowHex,
+  ])
+
+  const wasGeneratingRef = useRef(showGeneratingState)
+  const lastRevealedUrlRef = useRef<string | null>(previewUrl)
+
+  // 2. 绘画完成瞬间：若生成成功则进入「欢呼交作业」阶段，否则直接回位
+  useEffect(() => {
+    const was = wasGeneratingRef.current
+    wasGeneratingRef.current = showGeneratingState
+
+    if (was && !showGeneratingState) {
+      const snap = runningJobSnapshotRef.current
+      const shouldDeliver =
+        !generationError &&
+        Boolean(previewUrl) &&
+        previewUrl !== lastRevealedUrlRef.current &&
+        Boolean(snap)
+
+      if (previewUrl) {
+        lastRevealedUrlRef.current = previewUrl
+      }
+
+      const raf = requestAnimationFrame(() => {
+        setEntranceDone(false)
+        setSpriteTravelTask((prev) => (prev?.direction === 'to_canvas' ? null : prev))
+        const reduceMotion =
+          window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
+
+        if (shouldDeliver && previewUrl && snap && !reduceMotion) {
+          setSkipResultIntro(false)
+          setDeliveryState({
+            phase: 'cheering',
+            imageUrl: previewUrl,
+            providerId: snap.providerId,
+            brushHex: snap.brushHex,
+            brushGlow: snap.brushGlow,
+          })
+        } else if (shouldDeliver) {
+          playMonitorReveal()
+        }
+      })
+      return () => cancelAnimationFrame(raf)
+    }
+
+    if (!showGeneratingState && previewUrl) {
+      lastRevealedUrlRef.current = previewUrl
+    }
+  }, [showGeneratingState, previewUrl, generationError])
+
+  // 3. 欢呼雀跃后把画纸甩向屏幕（从桌面小纸丝滑变大为最终成图尺寸），同时画师回到左栏原位
+  useEffect(() => {
+    if (deliveryState?.phase !== 'cheering') return
+
+    const launchThrow = () => {
+      const paperEl = document.querySelector<HTMLElement>('[data-monitor-paper-slot]')
+      const resultImgEl = document.querySelector<HTMLElement>('[data-monitor-result-img]')
+      const spriteSlotEl = document.querySelector<HTMLElement>('[data-monitor-sprite-slot]')
+      const homeEl = document.querySelector<HTMLElement>(
+        `[data-artist-sprite-target="${deliveryState.providerId}"]`
+      )
+
+      if (paperEl && resultImgEl) {
+        const paperRect = paperEl.getBoundingClientRect()
+        const targetRect = resultImgEl.getBoundingClientRect()
+        if (paperRect.width > 0 && targetRect.width > 20 && targetRect.height > 20) {
+          playHomeworkThrow()
+          setSkipResultIntro(true)
+          setDeliveryState((prev) => (prev ? { ...prev, phase: 'throwing' } : null))
+          travelSeqRef.current += 1
+          setHomeworkThrowTask({
+            id: travelSeqRef.current,
+            imageUrl: deliveryState.imageUrl,
+            fromRect: {
+              left: paperRect.left,
+              top: paperRect.top,
+              width: paperRect.width,
+              height: paperRect.height,
+            },
+            toRect: {
+              left: targetRect.left,
+              top: targetRect.top,
+              width: targetRect.width,
+              height: targetRect.height,
+            },
+          })
+
+          if (spriteSlotEl && homeEl) {
+            const sFrom = spriteSlotEl.getBoundingClientRect()
+            const sTo = homeEl.getBoundingClientRect()
+            if (sFrom.width > 0 && sTo.width > 0) {
+              playSpriteTravel(deliveryState.providerId, 'to_home')
+              travelSeqRef.current += 1
+              setSpriteTravelTask({
+                id: travelSeqRef.current,
+                providerId: deliveryState.providerId,
+                direction: 'to_home',
+                brushColorHex: deliveryState.brushHex,
+                brushGlowHex: deliveryState.brushGlow,
+                fromRect: {
+                  left: sFrom.left,
+                  top: sFrom.top,
+                  width: sFrom.width,
+                  height: sFrom.height,
+                },
+                toRect: {
+                  left: sTo.left,
+                  top: sTo.top,
+                  width: sTo.width,
+                  height: sTo.height,
+                },
+              })
+            }
+          }
+          return
+        }
+      }
+
+      setDeliveryState(null)
+      playMonitorReveal()
+    }
+
+    const imgReady = resultImgLoadedUrl === deliveryState.imageUrl
+    const timer = window.setTimeout(launchThrow, imgReady ? 780 : 1300)
+    return () => window.clearTimeout(timer)
+  }, [deliveryState, resultImgLoadedUrl])
+
+  const isEnteringMonitor = showGeneratingState && !entranceDone
+  const showDeliveryScene = Boolean(deliveryState)
+  const awayProviderId: ImageProviderId | null = showGeneratingState
+    ? runningArtist.id
+    : deliveryState
+      ? deliveryState.providerId
+      : spriteTravelTask?.direction === 'to_home'
+        ? spriteTravelTask.providerId
+        : null
 
   const handleSlotUpload = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -629,17 +1080,39 @@ function StudioPage() {
     if (snap.stylePreset && (snap.stylePreset === 'none' || validStyleIds.has(snap.stylePreset))) {
       setStylePreset(snap.stylePreset)
     }
+    setAllowFaceStyleShift(Boolean(snap.allowFaceStyleShift))
     if (snap.aspectRatio) {
       setAspectRatio(snap.aspectRatio)
     }
     if (snap.sceneNote) {
       setSceneNote(snap.sceneNote)
     }
+    if (snap.provider) {
+      const targetProv = providers.find((p) => p.providerId === snap.provider)
+      if (targetProv && targetProv.enabled) {
+        setSelectedProvider(snap.provider)
+        if (snap.profileId) {
+          const targetProf = targetProv.models.find(
+            (m) => m.profileId === snap.profileId && m.enabled
+          )
+          if (targetProf) {
+            setSelectedProfileForProvider(snap.provider, targetProf.profileId)
+            if (
+              snap.resolution &&
+              targetProf.resolutions.some((r) => r.resolution === snap.resolution)
+            ) {
+              setSelectedResolutionForProfile(targetProf.profileId, snap.resolution)
+            }
+          }
+        }
+      }
+    }
     setGalleryModalOpen(false)
     toast.success('已套用该作品的角色配方')
   }
 
   const handleGenerate = () => {
+    if (isAutoGrabbing) return
     if (!user) {
       openAuthModal('login')
       return
@@ -647,6 +1120,32 @@ function StudioPage() {
     if (user.creditBalance < activeCost) {
       toast.error(`积分不足（需要 ${activeCost} 积分，当前 ${user.creditBalance} 积分）`)
       openAccountModal('redeem')
+      return
+    }
+    if (!activeEquippedBrushId && activeProfile) {
+      const targetProfile = activeProfile
+      setHoveredBrushInfo(null)
+      setSelectedProfileForProvider(selectedProvider, targetProfile.profileId)
+      setEquippedBrushByProvider((prev) => ({
+        ...prev,
+        [selectedProvider]: targetProfile.profileId,
+      }))
+      setAutoGrabTrigger({
+        providerId: selectedProvider,
+        profileId: targetProfile.profileId,
+        seq: ++autoGrabSeqRef.current,
+      })
+      setIsAutoGrabbing(true)
+      const prefersReduced =
+        typeof window !== 'undefined' &&
+        window.matchMedia('(prefers-reduced-motion: reduce)').matches
+      const grabDelayMs = prefersReduced ? 150 : 480
+      if (autoGrabTimerRef.current) window.clearTimeout(autoGrabTimerRef.current)
+      autoGrabTimerRef.current = window.setTimeout(() => {
+        autoGrabTimerRef.current = null
+        setIsAutoGrabbing(false)
+        void startGeneration(sceneNote)
+      }, grabDelayMs)
       return
     }
     void startGeneration(sceneNote)
@@ -658,10 +1157,9 @@ function StudioPage() {
   const activeStyleKey = isKnownStyle(stylePreset) ? stylePreset : 'none'
   const activeStyleItem = styleCatalog.find((s) => s.id === activeStyleKey) ?? null
   const styleVisual = getStyleVisualMeta(activeStyleKey, activeStyleItem)
-  const viewfinderStyleLabel = activeStyleItem?.label || '无预设（跟随参考图）'
+  const viewfinderStyleLabel = activeStyleItem?.label || NONE_STYLE_PRESET.label
   const succeededHistory = history.filter((h) => h.status === 'succeeded' && h.imageUrl)
   const recentHistory = succeededHistory.slice(0, 10)
-  const previewArtist = previewResult ? getStudioArtist(previewResult.provider) : activeArtist
 
   const openStylePicker = (categoryId = 'all') => {
     setStyleModalInitialCat(categoryId)
@@ -669,23 +1167,11 @@ function StudioPage() {
     setStyleModalOpen(true)
   }
 
-  const toggleSceneQuickTag = (tag: string) => {
-    setSceneNote((prev) => {
-      const tokens = prev
-        .split(/[，,、]+/)
-        .map((s) => s.trim())
-        .filter(Boolean)
-      const exists = tokens.includes(tag)
-      const next = exists ? tokens.filter((t) => t !== tag) : [...tokens, tag]
-      return next.join('，')
-    })
-  }
-
   const insufficientCredits = Boolean(user && activeProviderReady && user.creditBalance < activeCost)
 
   return (
     <div
-      className="flex flex-col gap-2 md:min-h-0 md:flex-1"
+      className="flex flex-col gap-1.5 md:min-h-0 md:flex-1"
       onDragEnter={(e) => {
         e.preventDefault()
         dragDepthRef.current += 1
@@ -705,7 +1191,8 @@ function StudioPage() {
         <div className="flex min-w-0 items-baseline gap-2.5">
           <h1 className="truncate text-lg font-extrabold tracking-tight sm:text-xl">角色合成工作台</h1>
           <span className="hidden truncate font-mono text-xs text-muted-foreground lg:inline">
-            {coreCount}/3 参考图 · {activeArtist.name} · {styleVisual.shortLabel} · {aspectRatio}
+            {coreCount}/3 参考图 · {styleVisual.shortLabel} · {aspectRatio}
+            {activeResolution ? ` · ${activeResolution}` : ''}
           </span>
         </div>
 
@@ -735,6 +1222,17 @@ function StudioPage() {
               <span>云端作品集 ({history.length})</span>
             </Button>
           )}
+
+          <button
+            type="button"
+            aria-label={studioMuted ? '开启工作台交互音效' : '静音工作台交互音效'}
+            aria-pressed={studioMuted}
+            title={studioMuted ? '开启工作台交互音效' : '静音工作台交互音效'}
+            onClick={toggleStudioMute}
+            className="flex size-7 items-center justify-center rounded-full border border-border/80 bg-card text-foreground transition-colors hover:border-foreground/40 active:scale-95"
+          >
+            {studioMuted ? <VolumeXIcon className="size-3.5 text-muted-foreground" /> : <Volume2Icon className="size-3.5" />}
+          </button>
         </div>
       </header>
 
@@ -748,9 +1246,6 @@ function StudioPage() {
             <h2 className="text-xs font-extrabold tracking-tight sm:text-sm">角色配方</h2>
             <span className="rounded-md bg-muted px-1.5 py-0.5 font-mono text-xs font-semibold text-muted-foreground">
               {coreCount}/3
-            </span>
-            <span className="hidden text-xs text-muted-foreground sm:inline">
-              点图片查看大图，空位跳转图库挑图，支持拖拽或 Ctrl+V / ⌘V 粘贴附图
             </span>
           </div>
 
@@ -902,7 +1397,7 @@ function StudioPage() {
                   to="/poses"
                   className="line-clamp-2 text-xs leading-snug text-muted-foreground hover:text-foreground hover:underline"
                 >
-                  尚未指定，点左侧前往图库挑图，或直接随机 / 上传
+                  未选择
                 </Link>
               )}
 
@@ -1005,12 +1500,12 @@ function StudioPage() {
                       const item = recipe.costume
                       if (item) setZoomImageUrl(referenceImageUrl(item.预览图 || item.原图 || item.缩略图))
                     }}
-                    className="group/img relative block h-[104px] w-[78px] cursor-zoom-in overflow-hidden rounded-xl border border-border/80 bg-white @[300px]/slot:h-28 @[300px]/slot:w-[84px] dark:bg-zinc-900"
+                    className="group/img relative block h-[104px] w-[78px] cursor-zoom-in overflow-hidden rounded-xl border border-border/80 bg-muted/30 @[300px]/slot:h-28 @[300px]/slot:w-[84px]"
                   >
                     <img
                       src={referenceImageUrl(recipe.costume.缩略图)}
                       alt={recipe.costume.服装名称}
-                      className="h-full w-full object-contain p-1 transition-transform duration-300 group-hover/img:scale-105"
+                      className="h-full w-full object-cover object-[50%_15%] transition-transform duration-300 group-hover/img:scale-105"
                     />
                     <span className="pointer-events-none absolute right-1.5 bottom-1.5 flex size-5 items-center justify-center rounded-full bg-black/55 text-white opacity-0 transition-opacity group-hover/img:opacity-100">
                       <ZoomInIcon className="size-3" />
@@ -1071,7 +1566,7 @@ function StudioPage() {
                   to="/costumes"
                   className="line-clamp-2 text-xs leading-snug text-muted-foreground hover:text-foreground hover:underline"
                 >
-                  尚未指定，点左侧前往图库挑图，或直接随机 / 上传
+                  未选择
                 </Link>
               )}
 
@@ -1200,7 +1695,7 @@ function StudioPage() {
                   to="/portraits"
                   className="line-clamp-2 text-xs leading-snug text-muted-foreground hover:text-foreground hover:underline"
                 >
-                  尚未指定，点左侧前往图库挑图，或直接随机 / 上传
+                  未选择
                 </Link>
               )}
             </div>
@@ -1261,13 +1756,8 @@ function StudioPage() {
           ) : (
             <div className="flex min-w-0 items-center gap-1.5 truncate text-xs">
               <ImagePlusIcon className="size-3.5 shrink-0" />
-              <span className="truncate sm:hidden">
-                {isDragging ? '松开添加到附加参考图' : '附加参考图 · 点击上传或粘贴'}
-              </span>
-              <span className="hidden truncate sm:inline">
-                {isDragging
-                  ? '松开添加到附加参考图'
-                  : '附加参考图（道具 / 背景 / 风格参考）：点击上传、拖拽图片或 Ctrl+V / ⌘V 粘贴'}
+              <span className="truncate">
+                {isDragging ? '松开添加参考图' : '附加参考图'}
               </span>
             </div>
           )}
@@ -1311,173 +1801,225 @@ function StudioPage() {
               data-impeccable-ignore="nested-cards"
               className="ks-elevation @container/controls flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-border bg-card"
             >
-              <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto px-2.5 py-2">
-              {/* 选择画师 */}
+              <div className="min-h-0 flex-1 space-y-2 overflow-x-hidden overflow-y-auto px-2.5 py-1.5">
+              {/* 选择 AI小画家 与实体画笔 */}
               <div className="space-y-1">
-                <div className="flex flex-wrap items-center justify-between gap-1.5">
-                  <span className="text-xs font-extrabold tracking-tight text-foreground sm:text-sm">选择画师</span>
-                  <motion.div
-                    key={activeArtist.id}
-                    initial={{ opacity: 0, y: 2 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ duration: 0.14 }}
-                    className="flex min-w-0 max-w-full items-center gap-1.5 rounded-full border border-border/80 bg-[#FAF8F4] px-2.5 py-0.5 text-xs dark:bg-muted/50"
-                  >
-                    <ArtistLogo providerId={activeArtist.id} variant="inline" />
-                    <span className="shrink-0 font-semibold text-foreground">{activeArtist.name}</span>
-                    <span className="text-muted-foreground/50">·</span>
-                    <span className="shrink-0 text-muted-foreground @[540px]/controls:hidden">{activeArtist.specialty}</span>
-                    <span className="hidden truncate text-muted-foreground @[540px]/controls:inline">{activeArtist.bio}</span>
-                  </motion.div>
+                <div className="flex min-h-[20px] items-center justify-between gap-2">
+                  <span className="shrink-0 text-xs font-extrabold tracking-tight text-foreground sm:text-sm">
+                    AI小画家
+                  </span>
+                  <AnimatePresence mode="wait">
+                    {hoveredBrushInfo && (
+                      <motion.span
+                        key={hoveredBrushInfo.profile.profileId}
+                        data-hovered-brush-badge="true"
+                        initial={{ opacity: 0, x: 6, scale: 0.94 }}
+                        animate={{ opacity: 1, x: 0, scale: 1 }}
+                        exit={{ opacity: 0, x: 4, scale: 0.96 }}
+                        transition={{ duration: 0.14, ease: [0.22, 1, 0.36, 1] }}
+                        className="inline-flex h-5 max-w-[240px] shrink-0 items-center gap-1.5 truncate rounded-full border border-border/80 bg-muted/70 px-2 text-[11px] font-semibold leading-none text-foreground shadow-xs"
+                      >
+                        <span
+                          aria-hidden="true"
+                          className="size-2 shrink-0 rounded-full"
+                          style={{
+                            backgroundColor: hoveredBrushInfo.colorHex,
+                            boxShadow: `0 0 6px ${hoveredBrushInfo.glowHex}`,
+                          }}
+                        />
+                        <span className="truncate">{hoveredBrushInfo.profile.displayName}</span>
+                      </motion.span>
+                    )}
+                  </AnimatePresence>
                 </div>
 
-                <div role="radiogroup" aria-label="选择画师" className="grid grid-cols-1 gap-1.5 @[490px]/controls:grid-cols-3">
-                  {STUDIO_ARTISTS.map((artist) => {
-                    const pInfo = providers.find((p) => p.providerId === artist.id)
-                    const enabled = pInfo ? pInfo.enabled : true
-                    const configured = pInfo ? pInfo.configured : false
-                    const cost = pInfo ? pInfo.creditCost : 0
-                    const available = enabled && configured
-                    const selected = selectedProvider === artist.id
-                    return (
-                      <button
-                        key={artist.id}
-                        type="button"
-                        role="radio"
-                        aria-checked={selected}
-                        aria-label={
-                          providersLoaded
-                            ? `${artist.name}（消耗 ${cost} 积分）：${artist.bio}`
-                            : `${artist.name}：${artist.bio}`
-                        }
-                        onClick={() => {
-                          if (!enabled) {
-                            toast.info(`${artist.name}今日暂未开棚，先试试其他画师吧`)
-                            return
-                          }
-                          setSelectedProvider(artist.id)
-                        }}
-                        className={cn(
-                          'relative flex min-w-0 items-center gap-1.5 overflow-hidden rounded-xl border px-2 py-1.5 text-left transition-colors active:scale-[0.98]',
-                          !enabled && 'opacity-45',
-                          selected
-                            ? 'border-foreground text-background shadow-xs'
-                            : 'border-border/80 bg-[#FAF8F4] text-foreground hover:border-foreground/40 dark:bg-muted/35'
-                        )}
-                      >
-                        {selected && (
-                          <motion.span
-                            layoutId="studio-artist-pill"
-                            transition={{ type: 'spring', stiffness: 460, damping: 34 }}
-                            className="absolute inset-0 bg-foreground"
-                          />
-                        )}
-                        <div className="relative z-10 flex w-full min-w-0 items-center justify-between gap-1.5">
-                          <div className="flex min-w-0 items-center gap-1.5">
-                            <ArtistLogo providerId={artist.id} selected={selected} />
-                            <span className="truncate text-xs font-bold leading-tight">{artist.name}</span>
-                          </div>
-                          <span
-                            className={cn(
-                              'shrink-0 rounded-md px-1.5 py-0.5 font-mono text-[11px] font-semibold leading-none',
-                              selected
-                                ? 'bg-background/20 text-background'
-                                : available
-                                  ? 'bg-[#E5A918]/15 text-[#7A5200] dark:text-[#E5A918]'
-                                  : 'bg-muted text-muted-foreground'
-                            )}
-                          >
-                            {!providersLoaded
-                              ? '加载中'
-                              : !enabled
-                                ? '暂休'
-                                : !configured
-                                  ? '整备中'
-                                  : `${cost} 积分`}
-                          </span>
-                        </div>
-                      </button>
-                    )
-                  })}
-                </div>
+                <ArtistStageSelector
+                  artists={STUDIO_ARTISTS}
+                  providers={providers}
+                  providersLoaded={providersLoaded}
+                  selectedProvider={selectedProvider}
+                  equippedBrushId={activeEquippedBrushId}
+                  hasActiveBrush={Boolean(activeEquippedBrushId && activeBrushPalette)}
+                  hideHeldBrush={isBrushFlying}
+                  activeBrushColorHex={activeBrushPalette?.hex}
+                  activeBrushGlowHex={activeBrushPalette?.glowHex}
+                  brushReactionTick={brushReactionTick + artistReturnTick}
+                  generatingProviderId={showGeneratingState ? runningArtist.id : null}
+                  awayProviderId={awayProviderId}
+                  autoGrabTrigger={autoGrabTrigger}
+                  onSelectProvider={(providerId) => {
+                    if (isAutoGrabbing) return
+                    setIsBrushFlying(false)
+                    setHoveredBrushInfo(null)
+                    setEquippedBrushByProvider({})
+                    setSelectedProvider(providerId)
+                  }}
+                  onSelectProfile={(providerId, profileId) => {
+                    if (isAutoGrabbing) return
+                    setHoveredBrushInfo(null)
+                    setSelectedProfileForProvider(providerId, profileId)
+                    setEquippedBrushByProvider((prev) => ({
+                      ...prev,
+                      [providerId]: profileId,
+                    }))
+                  }}
+                  onHoverBrushChange={setHoveredBrushInfo}
+                  onBrushFlightStart={() => setIsBrushFlying(true)}
+                  onBrushFlightLand={() => {
+                    setIsBrushFlying(false)
+                    setBrushReactionTick((n) => n + 1)
+                  }}
+                />
               </div>
 
               {/* 2. 成图画风 */}
-              <div className="border-t border-border/70 pt-1.5">
+              <div className="border-t border-border/70 pt-0.5">
                 <StylePresetSelector
                   value={stylePreset}
+                  allowFaceStyleShift={allowFaceStyleShift}
                   onChange={setStylePreset}
+                  onAllowFaceStyleShiftChange={setAllowFaceStyleShift}
                   onOpenBrowser={openStylePicker}
                 />
               </div>
 
-              {/* 画幅比例（独立步骤 + 右上角实时说明） */}
-              <div className="space-y-1 border-t border-border/70 pt-1.5">
-                <div className="flex flex-wrap items-center justify-between gap-1.5">
-                  <span className="text-xs font-extrabold tracking-tight text-foreground sm:text-sm">画幅比例</span>
-                  <motion.div
-                    key={displayRatio.id}
-                    initial={{ opacity: 0, y: 2 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ duration: 0.14 }}
-                    className="flex min-w-0 max-w-full items-center gap-1.5 rounded-full border border-border/80 bg-[#FAF8F4] px-2.5 py-0.5 text-xs dark:bg-muted/50"
+              {/* 画幅比例 + 分辨率（当画笔支持分辨率时与画幅并排排版，彻底释放左侧纵向空间） */}
+              <div
+                className={cn(
+                  'grid grid-cols-1 gap-2 border-t border-border/70 pt-0.5',
+                  activeProfile &&
+                    activeProfileResolutions.length >= 2 &&
+                    '@[430px]/controls:grid-cols-[minmax(0,1fr)_auto]'
+                )}
+              >
+                <div className="min-w-0 space-y-1">
+                  <div className="flex flex-wrap items-center justify-between gap-1.5">
+                    <span className="text-xs font-extrabold tracking-tight text-foreground sm:text-sm">画幅比例</span>
+                    <motion.div
+                      key={displayRatio.id}
+                      initial={{ opacity: 0, y: 2 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ duration: 0.14 }}
+                      className="flex min-w-0 max-w-full items-center gap-1 rounded-full border border-border/80 bg-[#FAF8F4] px-2 py-0.5 text-[11px] dark:bg-muted/50"
+                    >
+                      <AspectRatioLogo ratio={displayRatio.id} compact className="text-foreground" />
+                      <span className="shrink-0 font-mono font-bold text-foreground">{displayRatio.label}</span>
+                      <span className="shrink-0 font-semibold text-foreground">{displayRatio.hint}</span>
+                    </motion.div>
+                  </div>
+
+                  <div
+                    role="group"
+                    aria-label="选择成图画幅比例"
+                    onMouseLeave={() => setHoveredRatio(null)}
+                    className="grid grid-cols-5 gap-1 rounded-xl border border-border/80 bg-[#FAF8F4] p-0.5 dark:bg-muted/35"
                   >
-                    <AspectRatioLogo ratio={displayRatio.id} compact className="text-foreground" />
-                    <span className="shrink-0 font-mono font-bold text-foreground">{displayRatio.label}</span>
-                    <span className="shrink-0 font-semibold text-foreground">{displayRatio.hint}</span>
-                    <span className="hidden text-muted-foreground/50 @[540px]/controls:inline">·</span>
-                    <span className="hidden truncate text-muted-foreground @[540px]/controls:inline">{displayRatio.description}</span>
-                  </motion.div>
+                    {STUDIO_ASPECT_RATIOS.map((opt) => {
+                      const selected = aspectRatio === opt.id
+                      return (
+                        <button
+                          key={opt.id}
+                          type="button"
+                          aria-pressed={selected}
+                          aria-label={`${opt.label} ${opt.hint}`}
+                          onClick={() => setAspectRatio(opt.id)}
+                          onMouseEnter={() => setHoveredRatio(opt.id)}
+                          onFocus={() => setHoveredRatio(opt.id)}
+                          onBlur={() => setHoveredRatio(null)}
+                          className={cn(
+                            'relative flex h-7 min-w-0 items-center justify-center gap-1 rounded-lg px-1 transition-colors',
+                            selected ? 'text-background' : 'text-muted-foreground hover:text-foreground'
+                          )}
+                        >
+                          {selected && (
+                            <motion.span
+                              layoutId="studio-ratio-pill"
+                              transition={{ type: 'spring', stiffness: 460, damping: 34 }}
+                              className="absolute inset-0 rounded-lg bg-foreground shadow-2xs"
+                            />
+                          )}
+                          <AspectRatioLogo
+                            ratio={opt.id}
+                            selected={selected}
+                            className="relative z-10 size-3.5 shrink-0"
+                          />
+                          <span className="relative z-10 font-mono text-[11px] font-bold leading-none">{opt.label}</span>
+                        </button>
+                      )
+                    })}
+                  </div>
                 </div>
 
-                <div
-                  role="group"
-                  aria-label="选择成图画幅比例"
-                  onMouseLeave={() => setHoveredRatio(null)}
-                  className="grid grid-cols-5 gap-1 rounded-xl border border-border/80 bg-[#FAF8F4] p-1 dark:bg-muted/35"
-                >
-                  {STUDIO_ASPECT_RATIOS.map((opt) => {
-                    const selected = aspectRatio === opt.id
-                    return (
-                      <button
-                        key={opt.id}
-                        type="button"
-                        aria-pressed={selected}
-                        aria-label={`${opt.label} ${opt.hint}`}
-                        onClick={() => setAspectRatio(opt.id)}
-                        onMouseEnter={() => setHoveredRatio(opt.id)}
-                        onFocus={() => setHoveredRatio(opt.id)}
-                        onBlur={() => setHoveredRatio(null)}
-                        className={cn(
-                          'relative flex min-h-[36px] flex-col items-center justify-center gap-0.5 rounded-lg px-1.5 py-0.5 transition-colors',
-                          selected ? 'text-background' : 'text-muted-foreground hover:text-foreground'
-                        )}
-                      >
-                        {selected && (
-                          <motion.span
-                            layoutId="studio-ratio-pill"
-                            transition={{ type: 'spring', stiffness: 460, damping: 34 }}
-                            className="absolute inset-0 rounded-lg bg-foreground shadow-2xs"
-                          />
-                        )}
-                        <AspectRatioLogo
-                          ratio={opt.id}
-                          selected={selected}
-                          className="relative z-10 size-4.5 sm:size-5"
-                        />
-                        <span className="relative z-10 font-mono text-xs font-bold leading-none">{opt.label}</span>
-                      </button>
-                    )
-                  })}
-                </div>
+                {/* 分辨率（当当前画笔支持 2 个及以上分辨率时并排展示） */}
+                {activeProfile && activeProfileResolutions.length >= 2 && (
+                  <div className="shrink-0 space-y-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-extrabold tracking-tight text-foreground sm:text-sm">
+                        分辨率
+                      </span>
+                    </div>
+
+                    <div
+                      role="radiogroup"
+                      aria-label="选择分辨率"
+                      className={cn(
+                        'grid gap-1 rounded-xl border border-border/80 bg-[#FAF8F4] p-0.5 dark:bg-muted/35',
+                        activeProfileResolutions.length === 2 ? 'grid-cols-2' : 'grid-cols-3'
+                      )}
+                    >
+                      {activeProfileResolutions.map((resOpt) => {
+                        const selected = activeResolution === resOpt.resolution
+                        const resMeta = STUDIO_RESOLUTION_META[resOpt.resolution]
+                        return (
+                          <button
+                            key={resOpt.resolution}
+                            type="button"
+                            role="radio"
+                            aria-checked={selected}
+                            aria-label={`${resOpt.resolution} ${resMeta.hint}`}
+                            onClick={() =>
+                              setSelectedResolutionForProfile(
+                                activeProfile.profileId,
+                                resOpt.resolution
+                              )
+                            }
+                            className={cn(
+                              'relative flex h-7 min-w-0 items-center justify-center gap-1 rounded-lg px-2 transition-colors',
+                              selected ? 'text-background' : 'text-muted-foreground hover:text-foreground'
+                            )}
+                          >
+                            {selected && (
+                              <motion.span
+                                layoutId="studio-resolution-pill"
+                                transition={{ type: 'spring', stiffness: 460, damping: 34 }}
+                                className="absolute inset-0 rounded-lg bg-foreground shadow-2xs"
+                              />
+                            )}
+                            <span className="relative z-10 font-mono text-xs font-bold leading-none">
+                              {resOpt.resolution}
+                            </span>
+                            <span
+                              className={cn(
+                                'relative z-10 shrink-0 whitespace-nowrap text-[10px] font-medium leading-none',
+                                selected ? 'text-background/80' : 'text-muted-foreground'
+                              )}
+                            >
+                              {resMeta.hint}
+                            </span>
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )}
               </div>
 
-              {/* 画面细节（独立步骤 + 单行横滑灵感条） */}
-              <div className="space-y-1 border-t border-border/70 pt-1.5">
+              {/* 画面细节 */}
+              <div className="space-y-1 border-t border-border/70 pt-0.5">
                 <div className="flex flex-wrap items-center justify-between gap-1.5">
                   <span className="text-xs font-extrabold tracking-tight text-foreground sm:text-sm">画面细节</span>
-                  <span className="text-xs text-muted-foreground">
-                    点选标签或补充描述<span className="hidden sm:inline">（Cmd/Ctrl+Enter 生成）</span>
+                  <span className="hidden text-xs text-muted-foreground @[440px]/controls:inline">
+                    Cmd/Ctrl+Enter 生成
                   </span>
                 </div>
 
@@ -1500,7 +2042,7 @@ function StudioPage() {
                       }
                     }}
                     placeholder="补充服装材质、灯光氛围、镜头景别或背景环境（可选）…"
-                    className="h-7.5 rounded-xl bg-[#FAF8F4] pr-7 text-xs dark:bg-muted/30"
+                    className="h-7 rounded-xl bg-[#FAF8F4] pr-7 text-xs dark:bg-muted/30"
                   />
                   {sceneNote && (
                     <button
@@ -1513,50 +2055,29 @@ function StudioPage() {
                     </button>
                   )}
                 </div>
-
-                <div className="no-scrollbar flex items-center gap-1 overflow-x-auto">
-                  {SCENE_QUICK_TAGS.map((tag) => {
-                    const active = sceneNote
-                      .split(/[，,、]+/)
-                      .map((s) => s.trim())
-                      .includes(tag)
-                    return (
-                      <button
-                        key={tag}
-                        type="button"
-                        onClick={() => toggleSceneQuickTag(tag)}
-                        className={cn(
-                          'shrink-0 whitespace-nowrap rounded-full border px-2 py-0.5 text-[11px] leading-tight font-medium transition-colors active:scale-95',
-                          active
-                            ? 'border-foreground bg-foreground text-background'
-                            : 'border-border/80 bg-[#FAF8F4] text-muted-foreground hover:border-foreground/40 hover:text-foreground dark:bg-muted/35'
-                        )}
-                      >
-                        +{tag}
-                      </button>
-                    )
-                  })}
-                </div>
               </div>
               </div>
 
-              <div className="shrink-0 border-t border-border/75 bg-card/95 p-2">
+              <div className="shrink-0 border-t border-border/75 bg-card/95 p-1.5">
                 <Button
                   onClick={handleGenerate}
-                  disabled={!hydrated || showGeneratingState || uploadingSlot !== null || (Boolean(user) && !activeProviderReady)}
+                  disabled={!hydrated || showGeneratingState || isAutoGrabbing || uploadingSlot !== null || (Boolean(user) && !activeProviderReady)}
                   className={cn(
-                    'ks-keycap h-10 w-full rounded-xl border-0 text-sm font-extrabold tracking-tight text-white',
+                    'ks-keycap h-9.5 w-full rounded-xl border-0 text-sm font-extrabold tracking-tight text-white',
                     insufficientCredits
                       ? 'bg-[#B88300] hover:bg-[#9A6B00]'
                       : 'bg-[#D9381E] hover:bg-[#C23018]'
                   )}
                 >
-                  {showGeneratingState ? (
+                  {isAutoGrabbing ? (
                     <>
                       <LoaderCircleIcon className="size-4 animate-spin" />
-                      <span>
-                        {runningArtist.name}正在绘制作品（{elapsedSeconds}s）…
-                      </span>
+                      <span>小画家正在拿笔…</span>
+                    </>
+                  ) : showGeneratingState ? (
+                    <>
+                      <LoaderCircleIcon className="size-4 animate-spin" />
+                      <span>AI小画家正在创作中…</span>
                     </>
                   ) : !user ? (
                     <>
@@ -1570,7 +2091,9 @@ function StudioPage() {
                   ) : !activeProviderReady ? (
                     <>
                       <CircleAlertIcon className="size-4" />
-                      <span>{activeArtist.name}画室整备中，先试试其他画师吧</span>
+                      <span>
+                        这位AI小画家暂休中，换支画笔或点另一位试试！
+                      </span>
                     </>
                   ) : insufficientCredits ? (
                     <>
@@ -1623,11 +2146,11 @@ function StudioPage() {
                       )}
                     />
                     {showGeneratingState
-                      ? `绘制中 · ${elapsedSeconds}s`
+                      ? '进行中'
                       : generationError
                         ? '生成失败'
                         : previewUrl
-                          ? `${previewArtist.name} · 成图`
+                          ? `${previewResult?.resolution ? `${previewResult.resolution} · ` : ''}已成图`
                           : '待命'}
                   </span>
                 </div>
@@ -1671,96 +2194,68 @@ function StudioPage() {
                 <span aria-hidden="true" className="pointer-events-none absolute bottom-2.5 left-2.5 size-3 border-b border-l border-foreground/20" />
                 <span aria-hidden="true" className="pointer-events-none absolute right-2.5 bottom-2.5 size-3 border-r border-b border-foreground/20" />
 
-                {showGeneratingState ? (
-                  (() => {
-                    const stage: GenerationLiveStage = effectiveProgress?.stage ?? 'generating'
-                    const stageOrder =
-                      stage === 'uploading' || stage === 'deducted' || stage === 'resolving_refs'
-                        ? 0
-                        : stage === 'generating' || stage === 'retrying'
-                          ? 1
-                          : 2
-                    const isOpaqueModelWait = stage === 'generating' || stage === 'retrying'
-                    // 云端图像接口通常在 15~55s 内单次返回；等待模型期间用平滑渐进与实时计时反映运行状态
-                    const smoothWaitPercent = Math.min(78, Math.round(32 + (1 - Math.exp(-elapsedSeconds / 24)) * 46))
-                    const barWidth = isOpaqueModelWait
-                      ? smoothWaitPercent
-                      : effectiveProgress?.percent ?? (stageOrder === 0 ? 18 : 88)
-                    const steps = ['1. 素材准备', '2. 模型绘制', '3. 保存成图']
-
-                    return (
-                      <div className="flex w-full max-w-xs flex-col items-center gap-3 text-center">
-                        <div className="flex size-12 items-center justify-center rounded-2xl border border-border bg-card text-[#E5A918] shadow-xs">
-                          <LoaderCircleIcon className="size-6 animate-spin" />
+                {(showGeneratingState || showDeliveryScene) && (
+                  <div className="relative z-10 flex w-full max-w-xs flex-col items-center gap-3 text-center">
+                    <GeneratingSpriteStage
+                      providerId={deliveryState ? deliveryState.providerId : runningArtist.id}
+                      brushColorHex={deliveryState ? deliveryState.brushHex : runningBrushColorHex}
+                      brushGlowHex={deliveryState ? deliveryState.brushGlow : runningBrushGlowHex}
+                      stagePhase={
+                        deliveryState?.phase === 'cheering'
+                          ? 'cheering'
+                          : deliveryState?.phase === 'throwing'
+                            ? 'returning'
+                            : isEnteringMonitor
+                              ? 'entering'
+                              : 'working'
+                      }
+                      previewImageUrl={deliveryState?.imageUrl}
+                    />
+                    {showGeneratingState ? (
+                      <div className="w-full space-y-2.5">
+                        <div className="text-sm font-bold text-foreground">
+                          AI小画家正在绘图中
                         </div>
-                        <div className="w-full space-y-2">
-                          <div className="text-sm font-bold text-foreground">
-                            {runningArtist.name}正在绘制作品
-                          </div>
 
-                          <div className="grid grid-cols-3 gap-1 text-[11px]">
-                            {steps.map((stepLabel, idx) => {
-                              const done = idx < stageOrder
-                              const activeStep = idx === stageOrder
-                              return (
-                                <div
-                                  key={stepLabel}
-                                  className={cn(
-                                    'rounded-md border px-1.5 py-1 font-medium transition-colors',
-                                    done
-                                      ? 'border-[#116E65]/35 bg-[#116E65]/12 text-[#116E65] dark:text-[#4FD1C5]'
-                                      : activeStep
-                                        ? 'border-[#D9381E]/45 bg-[#D9381E]/10 font-bold text-[#B82914] dark:text-[#FF7A59]'
-                                        : 'border-border/70 bg-card/60 text-muted-foreground'
-                                  )}
-                                >
-                                  {stepLabel}
-                                </div>
-                              )
-                            })}
-                          </div>
-
-                          <div className="space-y-1.5 pt-0.5">
-                            <div className="text-xs text-foreground/85">
-                              {effectiveProgress?.message || '云端正在处理请求…'}
-                            </div>
-                            <div className="relative h-2 overflow-hidden rounded-full border border-border bg-card">
-                              <div
-                                className="h-full bg-[#D9381E] transition-all duration-700"
-                                style={{ width: `${barWidth}%` }}
+                        <div className="space-y-1.5">
+                          <div className="relative h-2 overflow-hidden rounded-full border border-border bg-card">
+                            <div
+                              className="h-full bg-[#D9381E] transition-all duration-700"
+                              style={{ width: `${barWidth}%` }}
+                            />
+                            {isDrawingStage && (
+                              <motion.div
+                                aria-hidden="true"
+                                animate={{ x: ['-40%', '220%'] }}
+                                transition={{ duration: 1.4, repeat: Infinity, ease: 'linear' }}
+                                className="absolute inset-y-0 left-0 w-1/3 bg-gradient-to-r from-transparent via-white/45 to-transparent"
                               />
-                              {isOpaqueModelWait && (
-                                <motion.div
-                                  aria-hidden="true"
-                                  animate={{ x: ['-40%', '220%'] }}
-                                  transition={{ duration: 1.4, repeat: Infinity, ease: 'linear' }}
-                                  className="absolute inset-y-0 left-0 w-1/3 bg-gradient-to-r from-transparent via-white/45 to-transparent"
-                                />
-                              )}
-                            </div>
-                            <div className="flex items-center justify-between font-mono text-[11px] text-muted-foreground">
-                              <span>
-                                {effectiveProgress?.attempt && effectiveProgress.attempt > 1
-                                  ? `第 ${effectiveProgress.attempt} 轮调度`
-                                  : isOpaqueModelWait
-                                    ? '云端生图进行中'
-                                    : '阶段推进中'}
-                              </span>
-                              <span>已用时 {elapsedSeconds}s</span>
-                            </div>
+                            )}
                           </div>
-
-                          <p className="pt-0.5 text-[11px] leading-relaxed text-muted-foreground">
-                            可随时切换页面浏览图库，云端完成后将自动更新（失败全额退积分）
-                          </p>
+                          <div className="flex items-center justify-between font-mono text-[11px] text-muted-foreground">
+                            <span>
+                              {liveStageOrder === 0
+                                ? '准备素材中…'
+                                : liveStageOrder === 1
+                                  ? '绘制中…'
+                                  : '保存成图中…'}
+                            </span>
+                            <span>{elapsedSeconds}s</span>
+                          </div>
                         </div>
                       </div>
-                    )
-                  })()
-                ) : generationError ? (
+                    ) : (
+                      <div className="text-xs font-bold text-muted-foreground">
+                        画好啦 · 作品飞向画框中…
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {!showGeneratingState && generationError ? (
                   <div className="flex max-w-md flex-col items-center gap-2.5 text-center">
                     <CircleAlertIcon className="size-7 text-destructive" />
-                    <div className="text-sm font-bold text-destructive">草稿未能顺利显影（已自动退还积分）</div>
+                    <div className="text-sm font-bold text-destructive">生成失败（已自动退还积分）</div>
                     <p className="text-xs leading-relaxed text-muted-foreground">
                       {generationError}
                     </p>
@@ -1785,26 +2280,15 @@ function StudioPage() {
                       )}
                     </div>
                   </div>
-                ) : previewUrl ? (
-                  <div className="absolute inset-2.5 flex items-center justify-center">
-                    <motion.button
-                      key={previewUrl}
-                      type="button"
-                      aria-label="放大生成结果"
-                      initial={{ opacity: 0, scale: 0.97, filter: 'blur(6px)' }}
-                      animate={{ opacity: 1, scale: 1, filter: 'blur(0px)' }}
-                      transition={{ duration: 0.34, ease: [0.22, 1, 0.36, 1] }}
-                      onClick={() => setZoomImageUrl(previewUrl)}
-                      className="group relative flex h-full w-full cursor-zoom-in items-center justify-center focus-visible:outline-2 focus-visible:outline-ring"
-                    >
-                      <img
-                        src={previewUrl}
-                        alt="生成结果"
-                        className="max-h-full max-w-full rounded-lg border border-border/60 object-contain shadow-sm transition group-hover:opacity-95"
-                      />
-                    </motion.button>
-                  </div>
-                ) : (
+                ) : !showGeneratingState && previewUrl ? (
+                  <MonitorResultCard
+                    previewUrl={previewUrl}
+                    hiddenForDelivery={showDeliveryScene}
+                    skipIntro={skipResultIntro}
+                    onImageReady={() => setResultImgLoadedUrl(previewUrl)}
+                    onZoom={() => setZoomImageUrl(previewUrl)}
+                  />
+                ) : !showGeneratingState ? (
                   <div className="relative flex w-full max-w-md flex-col items-center gap-3.5 text-center sm:gap-4">
                     <div
                       aria-hidden="true"
@@ -1841,11 +2325,14 @@ function StudioPage() {
                           },
                         ].map((slot, i) => {
                           const Icon = slot.icon
+                          const tiltClass = i === 0 ? '-rotate-[5.5deg]' : i === 2 ? 'rotate-[5.5deg]' : 'rotate-0'
                           return (
                             <div
                               key={slot.key}
-                              style={{ transform: `rotate(${(i - 1) * 5.5}deg)` }}
-                              className="flex h-[76px] w-[56px] shrink-0 items-center justify-center overflow-hidden rounded-xl border border-border bg-card shadow-sm transition-transform sm:h-28 sm:w-[84px]"
+                              className={cn(
+                                'relative flex h-[76px] w-[56px] shrink-0 items-center justify-center overflow-hidden rounded-xl border border-border bg-card shadow-sm transition-all duration-200 hover:z-10 hover:-translate-y-2 hover:scale-105 hover:rotate-0 hover:shadow-md sm:h-28 sm:w-[84px]',
+                                tiltClass
+                              )}
                             >
                               {slot.src ? (
                                 <img
@@ -1867,7 +2354,7 @@ function StudioPage() {
                         type="button"
                         onClick={() => openStylePicker('all')}
                         aria-label={`更换画风（当前：${viewfinderStyleLabel}）`}
-                        className="group relative flex size-22 shrink-0 cursor-pointer flex-col items-center justify-center overflow-hidden rounded-2xl border-2 border-[#D9381E]/85 bg-card shadow-md transition-transform hover:scale-[1.03] focus-visible:outline-2 focus-visible:outline-ring sm:size-32"
+                        className="group relative flex size-24 shrink-0 cursor-pointer flex-col items-center justify-center overflow-hidden rounded-2xl border-2 border-[#D9381E]/85 bg-card shadow-md transition-transform hover:scale-[1.03] focus-visible:outline-2 focus-visible:outline-ring sm:size-36"
                       >
                         {styleVisual.preview ? (
                           <>
@@ -1884,7 +2371,6 @@ function StudioPage() {
                           <div className="flex h-full w-full flex-col items-center justify-center gap-1.5 border border-dashed border-border/80 bg-muted/20 p-2 text-center">
                             <WandSparklesIcon className="size-5 text-[#D9381E] sm:size-6" />
                             <span className="text-[11px] font-bold text-foreground sm:text-xs">{styleVisual.shortLabel}</span>
-                            <span className="text-[11px] text-muted-foreground sm:text-xs">按原图直出</span>
                           </div>
                         )}
                       </button>
@@ -1892,11 +2378,12 @@ function StudioPage() {
 
                     <div className="relative space-y-1">
                       <div className="text-sm font-bold text-foreground">
-                        {activeArtist.name} · {styleVisual.shortLabel} · {aspectRatio}
+                        {styleVisual.shortLabel} · {aspectRatio}
+                        {activeResolution ? ` · ${activeResolution}` : ''}
                       </div>
-                      <p className="text-xs text-muted-foreground">
-                        {styleVisual.tagline || '从三大图库挑卡，或自传参考图后点击生成'}
-                      </p>
+                      {styleVisual.tagline && (
+                        <p className="text-xs text-muted-foreground">{styleVisual.tagline}</p>
+                      )}
                     </div>
 
                     <div className="relative flex flex-wrap items-center justify-center gap-1.5 text-xs">
@@ -1927,7 +2414,7 @@ function StudioPage() {
                       ))}
                     </div>
                   </div>
-                )}
+                ) : null}
               </div>
 
               {/* 底部胶片底片条 */}
@@ -1941,7 +2428,12 @@ function StudioPage() {
                           key={h.id}
                           type="button"
                           aria-label={`切换到成图：${h.recipeSummary}`}
-                          onClick={() => setPreviewUrl(h.imageUrl)}
+                          onClick={() => {
+                            setDeliveryState(null)
+                            setHomeworkThrowTask(null)
+                            setSkipResultIntro(false)
+                            setPreviewUrl(h.imageUrl)
+                          }}
                           className={cn(
                             'relative h-12 w-10 shrink-0 overflow-hidden rounded-lg border transition-all',
                             active
@@ -1982,7 +2474,6 @@ function StudioPage() {
           ) : (
             <div className="mt-2 grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
               {history.map((h) => {
-                const histArtist = getStudioArtist(h.provider)
                 return (
                   <div
                     key={h.id}
@@ -2005,20 +2496,21 @@ function StudioPage() {
                             className="h-full w-full object-cover transition group-hover:scale-105"
                           />
                           <span className="absolute bottom-1.5 left-1.5 max-w-[calc(100%-12px)] truncate rounded-full bg-black/75 px-2 py-0.5 font-mono text-xs text-white">
-                            {histArtist.name} · {h.creditsCost} 积分
+                            {h.resolution ? `${h.resolution} · ` : ''}
+                            {h.creditsCost} 积分
                           </span>
                         </button>
                       ) : h.status === 'processing' ? (
                         <div className="flex h-full flex-col items-center justify-center gap-2 p-3 text-center text-xs text-muted-foreground">
                           <LoaderCircleIcon className="size-6 animate-spin text-[#E5A918]" />
-                          <span>{histArtist.name}正在绘制中…</span>
+                          <span>AI小画家正在绘制中…</span>
                         </div>
                       ) : (
                         <div className="flex h-full flex-col items-center justify-center gap-1.5 p-3 text-center">
                           <CircleAlertIcon className="size-5 text-destructive" />
-                          <span className="text-xs font-semibold text-destructive">草稿未能显影</span>
+                          <span className="text-xs font-semibold text-destructive">生成失败</span>
                           <span className="line-clamp-3 text-[11px] leading-relaxed text-muted-foreground">
-                            {h.errorMessage || `${histArtist.name}刚打了会儿盹，再试一次吧~`}
+                            {h.errorMessage || '生成未成功，请重试'}
                           </span>
                           {h.creditsRefunded > 0 && (
                             <span className="rounded-full bg-[#116E65]/15 px-2 py-0.5 text-[11px] font-semibold text-[#116E65] dark:text-[#4FD1C5]">
@@ -2150,11 +2642,8 @@ function StudioPage() {
           <DialogHeader className="shrink-0">
             <DialogTitle className="flex items-center gap-2 text-base font-extrabold">
               <LayersIcon className="size-4 text-[#D9381E]" />
-              <span>画风图鉴 · 按大类 / 小类筛选</span>
+              <span>画风图鉴</span>
             </DialogTitle>
-            <DialogDescription className="text-xs">
-              先按大类与小类缩小范围，再点选画风卡片；选中后自动返回工作台。
-            </DialogDescription>
           </DialogHeader>
           <StyleBrowserPanel
             key={`${styleModalSeed}-${styleModalInitialCat}`}
@@ -2162,11 +2651,32 @@ function StudioPage() {
             value={stylePreset}
             onChange={setStylePreset}
             onSelectComplete={() => setStyleModalOpen(false)}
-            gridColsClassName="grid-cols-2 sm:grid-cols-3 md:grid-cols-4"
+            gridColsClassName="grid-cols-2 sm:grid-cols-3"
             className="min-h-0 flex-1"
           />
         </DialogContent>
       </Dialog>
+
+      <SpriteTravelPortal
+        spriteTask={spriteTravelTask}
+        homeworkTask={homeworkThrowTask}
+        onSpriteArrive={(taskId) => {
+          setSpriteTravelTask((prev) => {
+            if (!prev || prev.id !== taskId) return prev
+            if (prev.direction === 'to_canvas') {
+              setEntranceDone(true)
+            } else {
+              setArtistReturnTick((n) => n + 1)
+            }
+            return null
+          })
+        }}
+        onHomeworkLand={(taskId) => {
+          setHomeworkThrowTask((prev) => (prev && prev.id === taskId ? null : prev))
+          setDeliveryState(null)
+          playMonitorReveal()
+        }}
+      />
     </div>
   )
 }

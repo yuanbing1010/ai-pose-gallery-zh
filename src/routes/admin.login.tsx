@@ -278,7 +278,7 @@ function AdminLoginPage() {
       {/* 底部状态栏 */}
       <footer className="flex h-10 items-center justify-between border-t border-zinc-200 px-6 text-[11px] text-zinc-500 dark:border-zinc-800">
         <span>系统状态：在线</span>
-        <span>CASTDECK 管理后台 · 2026</span>
+        <span>CASTDECK 管理后台</span>
       </footer>
     </div>
   )
