@@ -1,4 +1,4 @@
-﻿import { useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
 import {
@@ -356,6 +356,25 @@ function AdminJobDetailPage() {
                   <div className="mt-1 truncate text-xs font-bold" title={styleLabel}>
                     {styleLabel}
                   </div>
+                  {(trace?.promptBreakdown?.allowFaceStyleShift ||
+                    job.snapshot?.allowFaceStyleShift ||
+                    trace?.promptBreakdown?.allowPoseStyleShift ||
+                    job.snapshot?.allowPoseStyleShift) && (
+                    <div className="mt-1 flex flex-wrap gap-1">
+                      {(trace?.promptBreakdown?.allowFaceStyleShift ??
+                        job.snapshot?.allowFaceStyleShift) && (
+                        <span className="border border-zinc-300 bg-zinc-50 px-1.5 py-0.5 font-mono text-xs text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300">
+                          跟随画风
+                        </span>
+                      )}
+                      {(trace?.promptBreakdown?.allowPoseStyleShift ??
+                        job.snapshot?.allowPoseStyleShift) && (
+                        <span className="border border-sky-600/40 bg-sky-500/10 px-1.5 py-0.5 font-mono text-xs text-sky-800 dark:border-sky-500/40 dark:text-sky-300">
+                          姿势适配
+                        </span>
+                      )}
+                    </div>
+                  )}
                 </div>
                 <div className="min-w-0 p-3.5">
                   <div className="text-xs text-zinc-500">画幅与分辨率</div>

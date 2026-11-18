@@ -2,6 +2,7 @@ import { memo, useMemo, useState } from 'react'
 import { motion } from 'motion/react'
 import {
   DicesIcon,
+  FocusIcon,
   LayersIcon,
   RotateCcwIcon,
   SparklesIcon,
@@ -15,14 +16,18 @@ import { NONE_STYLE_PRESET, resolveStyleInfo } from '../../../shared/studio'
 export const StylePresetSelector = memo(function StylePresetSelector({
   value,
   allowFaceStyleShift,
+  allowPoseStyleShift,
   onChange,
   onAllowFaceStyleShiftChange,
+  onAllowPoseStyleShiftChange,
   onOpenBrowser,
 }: {
   value: string
   allowFaceStyleShift: boolean
+  allowPoseStyleShift: boolean
   onChange: (presetKey: string) => void
   onAllowFaceStyleShiftChange: (val: boolean) => void
+  onAllowPoseStyleShiftChange: (val: boolean) => void
   onOpenBrowser: (initialCategoryId?: string) => void
 }) {
   const { platform } = useStudio()
@@ -63,7 +68,7 @@ export const StylePresetSelector = memo(function StylePresetSelector({
 
   return (
     <div className="space-y-1">
-      <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 @[480px]/controls:flex-nowrap">
+      <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 @[640px]/controls:flex-nowrap">
         <div className="flex shrink-0 flex-wrap items-center gap-1.5">
           <span className="text-xs font-extrabold tracking-tight text-foreground sm:text-sm">
             成图画风
@@ -117,6 +122,26 @@ export const StylePresetSelector = memo(function StylePresetSelector({
               >
                 <SparklesIcon className={cn('size-3', allowFaceStyleShift ? 'text-white' : 'opacity-70')} />
                 <span>跟随画风</span>
+              </button>
+
+              <button
+                type="button"
+                aria-pressed={allowPoseStyleShift}
+                onClick={() => onAllowPoseStyleShiftChange(!allowPoseStyleShift)}
+                title={
+                  allowPoseStyleShift
+                    ? '已开启「姿势适配」：保留核心姿势动态，允许为配合当前画风的机位视角、景别或持机等互动动作自然微调姿势（点击恢复严格锁姿势）'
+                    : '默认严格锁定姿势图动作与机位；点击开启「姿势适配」，允许动作与机位配合自拍/监控等画风自然微调'
+                }
+                className={cn(
+                  'inline-flex h-6 items-center gap-1 rounded-full border px-2.5 text-xs transition-all active:scale-95',
+                  allowPoseStyleShift
+                    ? 'border-[#19857B] bg-[#19857B] font-bold text-white shadow-xs hover:bg-[#146E66]'
+                    : 'border-border/80 bg-[#FAF8F4] font-medium text-muted-foreground hover:border-foreground/45 hover:text-foreground dark:bg-muted/40'
+                )}
+              >
+                <FocusIcon className={cn('size-3', allowPoseStyleShift ? 'text-white' : 'opacity-70')} />
+                <span>姿势适配</span>
               </button>
 
               <button

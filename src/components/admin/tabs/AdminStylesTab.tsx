@@ -29,6 +29,7 @@ import { getStyleVisualMeta } from '@/lib/stylePresets'
 import type {
   PlatformConfig,
   StyleCategoryItem,
+  StylePoseMode,
   StylePresetItem,
   StyleSubcategoryItem,
 } from '@/types/gallery'
@@ -62,6 +63,7 @@ interface StyleFormState {
   label: string
   shortLabel: string
   tagline: string
+  poseMode: StylePoseMode
   prompt: string
   negativePrompt: string
   previewUrl: string
@@ -493,6 +495,7 @@ export function AdminStylesTab({
       label: '',
       shortLabel: '',
       tagline: '',
+      poseMode: 'strict',
       prompt: '',
       negativePrompt: '',
       previewUrl: '',
@@ -510,6 +513,7 @@ export function AdminStylesTab({
       label: item.label,
       shortLabel: item.shortLabel || '',
       tagline: item.tagline || '',
+      poseMode: item.poseMode === 'adaptive' ? 'adaptive' : 'strict',
       prompt: item.prompt,
       negativePrompt: item.negativePrompt || '',
       previewUrl: item.previewUrl || '',
@@ -563,6 +567,7 @@ export function AdminStylesTab({
       label,
       ...(styleForm.shortLabel.trim() ? { shortLabel: styleForm.shortLabel.trim() } : {}),
       ...(styleForm.tagline.trim() ? { tagline: styleForm.tagline.trim() } : {}),
+      ...(styleForm.poseMode === 'adaptive' ? { poseMode: 'adaptive' as const } : {}),
       prompt: styleForm.prompt.trim(),
       ...(styleForm.negativePrompt.trim()
         ? { negativePrompt: styleForm.negativePrompt.trim() }
@@ -1007,6 +1012,14 @@ export function AdminStylesTab({
                         <AdminBadge tone="neutral">
                           {catLabel} / {subLabel}
                         </AdminBadge>
+                        {item.poseMode === 'adaptive' && (
+                          <AdminBadge
+                            tone="info"
+                            title="选中该画风时将自动开启「姿势适配」，允许微调局部动作与镜头机位"
+                          >
+                            姿势适配
+                          </AdminBadge>
+                        )}
                         {item.shortLabel && item.shortLabel !== item.label && (
                           <AdminBadge tone="neutral">短标：{item.shortLabel}</AdminBadge>
                         )}
@@ -1197,6 +1210,34 @@ export function AdminStylesTab({
                     placeholder="例如：高对比霓虹光影 · 未来都市质感"
                     className={ADMIN_TEXT_INPUT_CLS}
                   />
+                </AdminField>
+
+                <AdminField
+                  label="姿势与机位策略"
+                  hint="自拍、对镜自拍、第一人称POV、监控摄像头等建议设为「姿势适配」，选定后将自动放宽手部持机与机位限制。"
+                  className="sm:col-span-2"
+                >
+                  <Select
+                    value={styleForm.poseMode}
+                    onValueChange={(v) =>
+                      setStyleForm({
+                        ...styleForm,
+                        poseMode: v === 'adaptive' ? 'adaptive' : 'strict',
+                      })
+                    }
+                  >
+                    <SelectTrigger className={`w-full ${ADMIN_SELECT_CLS}`}>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="strict">
+                        严格锁定（默认）— 动作、头部朝向与镜头景别严格以姿势图为准
+                      </SelectItem>
+                      <SelectItem value="adaptive">
+                        姿势适配（推荐用于自拍/POV/监控）— 保留核心动态，允许为配合机位与手持动作微调
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
                 </AdminField>
               </div>
 

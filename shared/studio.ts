@@ -474,6 +474,8 @@ export interface StyleSubcategoryItem {
   label: string
 }
 
+export type StylePoseMode = 'strict' | 'adaptive'
+
 export interface StylePresetItem {
   id: string
   categoryId: string
@@ -481,9 +483,14 @@ export interface StylePresetItem {
   label: string
   shortLabel?: string
   tagline?: string
+  poseMode?: StylePoseMode
   prompt: string
   negativePrompt?: string
   previewUrl?: string
+}
+
+export function isAdaptivePoseStyle(style?: Pick<StylePresetItem, 'poseMode'> | null): boolean {
+  return style?.poseMode === 'adaptive'
 }
 
 export interface StyleTaxonomyRef {
@@ -536,6 +543,7 @@ export function normalizeStylePresetTaxonomy(
     label: item.label,
     ...(item.shortLabel ? { shortLabel: item.shortLabel } : {}),
     ...(item.tagline ? { tagline: item.tagline } : {}),
+    ...(item.poseMode === 'adaptive' ? { poseMode: 'adaptive' as const } : {}),
     prompt: item.prompt,
     ...(item.negativePrompt ? { negativePrompt: item.negativePrompt } : {}),
     ...(item.previewUrl ? { previewUrl: item.previewUrl } : {}),
@@ -563,6 +571,7 @@ export function resolveStyleInfo(
   label: string
   shortLabel?: string
   tagline?: string
+  poseMode?: StylePoseMode
   prompt: string
   negativePrompt?: string
   previewUrl?: string
@@ -647,8 +656,14 @@ function joinChineseClauses(parts: string[], conj = '或'): string {
 export type PromptConstraintCondition =
   | 'always'
   | 'has_pose'
+  | 'has_pose_strict'
+  | 'has_pose_adaptive'
   | 'has_pose_and_others'
+  | 'has_pose_and_others_strict'
+  | 'has_pose_and_others_adaptive'
   | 'pose_only'
+  | 'pose_only_strict'
+  | 'pose_only_adaptive'
   | 'has_portrait'
   | 'no_portrait'
   | 'has_costume'
@@ -667,8 +682,14 @@ export const PROMPT_CONSTRAINT_CONDITION_OPTIONS: Array<{
 }> = [
   { value: 'always', label: '始终生效（全部场景）' },
   { value: 'has_pose_and_others', label: '有姿势图且含其他参考图时' },
+  { value: 'has_pose_and_others_strict', label: '有姿势图且含其他参考图（严格锁姿势）' },
+  { value: 'has_pose_and_others_adaptive', label: '有姿势图且含其他参考图（姿势适配画风）' },
   { value: 'pose_only', label: '仅传姿势图（无其他参考图）时' },
+  { value: 'pose_only_strict', label: '仅传姿势图（严格锁姿势）' },
+  { value: 'pose_only_adaptive', label: '仅传姿势图（姿势适配画风）' },
   { value: 'has_pose', label: '有姿势图时' },
+  { value: 'has_pose_strict', label: '有姿势图时（严格锁姿势）' },
+  { value: 'has_pose_adaptive', label: '有姿势图时（姿势适配画风）' },
   { value: 'has_portrait', label: '有人像图时' },
   { value: 'no_portrait', label: '无人像图时' },
   { value: 'has_costume', label: '有服装图时' },
@@ -700,20 +721,38 @@ export const DEFAULT_PROMPT_CONSTRAINTS: PromptConstraintItem[] = [
   },
   {
     id: 'c_subject_count_pose',
-    condition: 'has_pose',
+    condition: 'has_pose_strict',
     text: '画面中的人物数量与景别构图严格以{{姿势图}}为准（单人姿势图仅生成一位主体人物，除非额外要求另有说明），严禁擅自新增多余人物或分身。',
     enabled: true,
   },
   {
+    id: 'c_subject_count_pose_adaptive',
+    condition: 'has_pose_adaptive',
+    text: '画面中的人物数量严格以{{姿势图}}为准（单人姿势图仅生成一位主体人物，除非额外要求另有说明），严禁擅自新增多余人物或分身；景别构图与镜头机位优先配合当前画风自然呈现。',
+    enabled: true,
+  },
+  {
     id: 'c_pose_priority_others',
-    condition: 'has_pose_and_others',
+    condition: 'has_pose_and_others_strict',
     text: '人物的脸部倾斜角度、身体动作和姿势严格以{{姿势图}}为唯一事实依据（仅借鉴结构与朝向，不保留其无五官白模质感），忽略{{非姿势图}}中的原有动作与站位。',
     enabled: true,
   },
   {
+    id: 'c_pose_priority_others_adaptive',
+    condition: 'has_pose_and_others_adaptive',
+    text: '以{{姿势图}}中的主体姿势与朝向为结构基础（不保留其无五官白模质感），忽略{{非姿势图}}中的原有动作与站位；允许为满足当前画风所需的拍摄视角与手持/交互动作（如举手机自拍、俯拍监控等）自然调整局部手臂动作与镜头角度。',
+    enabled: true,
+  },
+  {
     id: 'c_pose_priority_only',
-    condition: 'pose_only',
+    condition: 'pose_only_strict',
     text: '人物的脸部倾斜角度、身体动作和姿势严格以{{姿势图}}为唯一事实依据。',
+    enabled: true,
+  },
+  {
+    id: 'c_pose_priority_only_adaptive',
+    condition: 'pose_only_adaptive',
+    text: '以{{姿势图}}中的主体姿势与朝向为基础参考，允许为满足当前画风所需的拍摄视角、景别构图与手持/交互动作（如举手机自拍、俯拍监控等）自然调整局部手臂动作与镜头角度。',
     enabled: true,
   },
 ]
@@ -721,6 +760,7 @@ export const DEFAULT_PROMPT_CONSTRAINTS: PromptConstraintItem[] = [
 export interface PromptTemplateConfig {
   intro: string
   poseClause: string
+  adaptivePoseClause: string
   costumeClause: string
   portraitFullClause: string
   portraitWithPoseOnlyClause: string
@@ -733,7 +773,9 @@ export interface PromptTemplateConfig {
   adaptivePortraitWithPoseOnlyClause: string
   adaptivePortraitOnlyClause: string
   adaptivePortraitWithOwnOutfitOnlyClause: string
+  adaptiveNoPoseRecompositionClause: string
   adaptiveStyleSuffix: string
+  adaptivePoseStyleSuffix: string
   constraints: PromptConstraintItem[]
 }
 
@@ -742,6 +784,8 @@ export const DEFAULT_PROMPT_TEMPLATE: PromptTemplateConfig = {
     '请根据提供的 {{总数}} 张参考图（{{参考图序}}），生成单幅连续场景的人物{{媒介}}（整张图仅为一个完整画面，不要拆分成多格或左右对比图）：',
   poseClause:
     '让人物严格按照{{姿势图}}中人体模型的脸部倾斜角度、身体动作、头部朝向与镜头角度摆姿势。',
+  adaptivePoseClause:
+    '以{{姿势图}}中人体模型的主体站/坐姿、躯干朝向与核心肢体动态为基准参考，但允许根据当前画风所需的拍摄视角、镜头角度、景别构图与交互需求（如手持手机自拍、对镜举机、高角度监控等）自然调整局部手臂动作、头部朝向与镜头机位。',
   costumeClause:
     '让人物穿上{{服装图}}中展示的整套服装和配饰，每件单品的颜色、款式、面料与配饰都以{{服装图}}为准。',
   portraitFullClause:
@@ -763,8 +807,12 @@ export const DEFAULT_PROMPT_TEMPLATE: PromptTemplateConfig = {
     '可参考{{人像图}}的发型、发色与整体人物神韵，人物的面部特征、脸型、五官、神态与肤色等均可为契合风格适当调整。',
   adaptivePortraitWithOwnOutfitOnlyClause:
     '可参考{{人像图}}的发型、发色、神韵与大致穿搭印象，人物的面部特征与服饰配饰细节均可为契合风格适当调整。',
+  adaptiveNoPoseRecompositionClause:
+    '不沿用{{人像图}}原本的拍摄机位、景别与固定姿势，请根据当前画风所需的镜头视角与交互需求自然重新构图并调整动作。',
   adaptiveStyleSuffix:
     '尽量让人物的脸部和服装为当前风格做出调整，以完全适配整体风格。',
+  adaptivePoseStyleSuffix:
+    '为充分呈现当前拍摄/画面风格，请优先保证该风格特有的镜头机位、景别透视与人物自然交互动作（如手持手机或对镜举机）。',
   constraints: DEFAULT_PROMPT_CONSTRAINTS.map((c) => ({ ...c })),
 }
 
@@ -888,6 +936,7 @@ export function mergePromptTemplate(
   return {
     intro: pickString('intro'),
     poseClause: pickString('poseClause'),
+    adaptivePoseClause: pickString('adaptivePoseClause'),
     costumeClause: pickString('costumeClause'),
     portraitFullClause: pickString('portraitFullClause'),
     portraitWithPoseOnlyClause: pickString('portraitWithPoseOnlyClause'),
@@ -900,7 +949,9 @@ export function mergePromptTemplate(
     adaptivePortraitWithPoseOnlyClause: pickString('adaptivePortraitWithPoseOnlyClause'),
     adaptivePortraitOnlyClause: pickString('adaptivePortraitOnlyClause'),
     adaptivePortraitWithOwnOutfitOnlyClause: pickString('adaptivePortraitWithOwnOutfitOnlyClause'),
+    adaptiveNoPoseRecompositionClause: pickString('adaptiveNoPoseRecompositionClause'),
     adaptiveStyleSuffix: pickString('adaptiveStyleSuffix'),
+    adaptivePoseStyleSuffix: pickString('adaptivePoseStyleSuffix'),
     constraints,
   }
 }
@@ -913,6 +964,7 @@ function matchesConstraintCondition(
     hasPortrait: boolean
     hasExtra: boolean
     hasOthersWithPose: boolean
+    adaptivePose: boolean
   }
 ): boolean {
   switch (condition) {
@@ -920,10 +972,22 @@ function matchesConstraintCondition(
       return true
     case 'has_pose':
       return ctx.hasPose
+    case 'has_pose_strict':
+      return ctx.hasPose && !ctx.adaptivePose
+    case 'has_pose_adaptive':
+      return ctx.hasPose && ctx.adaptivePose
     case 'has_pose_and_others':
       return ctx.hasPose && ctx.hasOthersWithPose
+    case 'has_pose_and_others_strict':
+      return ctx.hasPose && ctx.hasOthersWithPose && !ctx.adaptivePose
+    case 'has_pose_and_others_adaptive':
+      return ctx.hasPose && ctx.hasOthersWithPose && ctx.adaptivePose
     case 'pose_only':
       return ctx.hasPose && !ctx.hasOthersWithPose
+    case 'pose_only_strict':
+      return ctx.hasPose && !ctx.hasOthersWithPose && !ctx.adaptivePose
+    case 'pose_only_adaptive':
+      return ctx.hasPose && !ctx.hasOthersWithPose && ctx.adaptivePose
     case 'has_portrait':
       return ctx.hasPortrait
     case 'no_portrait':
@@ -1561,6 +1625,7 @@ export function buildRecipePrompt(
     stylePrompt?: string
     styleNegativePrompt?: string
     allowFaceStyleShift?: boolean
+    allowPoseStyleShift?: boolean
     promptTemplate?: Partial<PromptTemplateConfig> | null
     poseSanitize?: Partial<PoseSanitizeConfig> | null
     stylePresets?: StylePresetItem[]
@@ -1620,9 +1685,11 @@ export function buildRecipePrompt(
     ? ''
     : (promptOverrides?.stylePrompt || resolvedStyle.prompt).replace(/\r\n?/g, '\n').trim()
   const applyFaceStyleShift = Boolean(promptOverrides?.allowFaceStyleShift && effectiveStylePrompt)
+  const applyPoseStyleShift = Boolean(promptOverrides?.allowPoseStyleShift && effectiveStylePrompt)
 
   if (poseIdx !== null) {
-    const poseLine = renderPromptVars(tpl.poseClause.replace(/\r\n?/g, '\n'), {
+    const poseTpl = applyPoseStyleShift ? tpl.adaptivePoseClause : tpl.poseClause
+    const poseLine = renderPromptVars(poseTpl.replace(/\r\n?/g, '\n'), {
       姿势图: poseClauseTag,
     })
     if (poseLine) bullets.push(`• 姿势：${poseLine}`)
@@ -1650,11 +1717,21 @@ export function buildRecipePrompt(
         : poseIdx !== null
           ? tpl.portraitWithPoseOnlyClause
           : tpl.portraitOnlyClause
-    const personLine = renderPromptVars(personTemplate.replace(/\r\n?/g, '\n'), {
+    const personBaseLine = renderPromptVars(personTemplate.replace(/\r\n?/g, '\n'), {
       人像图: portraitTagOrEmpty,
       姿势图: poseTagOrEmpty,
     })
-    if (personLine) bullets.push(`• 人物：${personLine}`)
+    const noPoseRecompLine =
+      poseIdx === null && applyPoseStyleShift
+        ? renderPromptVars(tpl.adaptiveNoPoseRecompositionClause.replace(/\r\n?/g, '\n'), {
+            人像图: portraitTagOrEmpty,
+          })
+        : ''
+    const personParts = [
+      personBaseLine ? ensureSentenceEnd(personBaseLine) : '',
+      noPoseRecompLine ? ensureSentenceEnd(noPoseRecompLine) : '',
+    ].filter(Boolean)
+    if (personParts.length > 0) bullets.push(`• 人物：${personParts.join('')}`)
   } else {
     const personLine = renderPromptVars(
       (faceless ? tpl.facelessClause : tpl.defaultPersonClause).replace(/\r\n?/g, '\n'),
@@ -1671,13 +1748,16 @@ export function buildRecipePrompt(
   }
 
   if (effectiveStylePrompt) {
-    const baseStyleText = ensureSentenceEnd(effectiveStylePrompt)
+    const styleParts = [ensureSentenceEnd(effectiveStylePrompt)]
     const adaptiveSuffix = tpl.adaptiveStyleSuffix.replace(/\r\n?/g, '\n').trim()
-    const styleLine =
-      applyFaceStyleShift && adaptiveSuffix
-        ? `${baseStyleText}${ensureSentenceEnd(adaptiveSuffix)}`
-        : baseStyleText
-    bullets.push(`• 风格：${styleLine}`)
+    if (applyFaceStyleShift && adaptiveSuffix) {
+      styleParts.push(ensureSentenceEnd(adaptiveSuffix))
+    }
+    const adaptivePoseSuffix = tpl.adaptivePoseStyleSuffix.replace(/\r\n?/g, '\n').trim()
+    if (applyPoseStyleShift && adaptivePoseSuffix) {
+      styleParts.push(ensureSentenceEnd(adaptivePoseSuffix))
+    }
+    bullets.push(`• 风格：${styleParts.join('')}`)
   }
 
   const rawSceneNote = (promptOverrides?.sceneNote || '').replace(/\r\n?/g, '\n').trim()
@@ -1694,6 +1774,7 @@ export function buildRecipePrompt(
     hasPortrait: portraitIdx !== null,
     hasExtra: extraRefs.length > 0,
     hasOthersWithPose: nonPoseTags.length > 0,
+    adaptivePose: applyPoseStyleShift,
   }
   const constraintVars = {
     姿势图: poseTagOrEmpty,
@@ -2010,22 +2091,25 @@ export const DEFAULT_PLATFORM_CONFIG: PlatformConfig = {
       categoryId: 'photography',
       subcategoryId: 'photo_phone',
       label: '自拍',
+      poseMode: 'adaptive',
       prompt:
-        '真实手机前置摄像头自拍风格，近距离手持自拍视角，自然随意的生活化姿态与表情，轻微广角透视，真实细腻的皮肤纹理与自然瑕疵，手机计算摄影特有的清晰度与HDR效果，自然环境光，未经刻意修饰的色彩，原汁原味的日常手机自拍质感。',
+        '真实手机前置摄像头自拍风格，近距离手持自拍视角，单手自然举起持握手机或伸向镜头进行自拍（可自然调整手臂动作以配合自拍机位），自然随意的生活化姿态与表情，轻微广角透视，真实细腻的皮肤纹理与自然瑕疵，手机计算摄影特有的清晰度与HDR效果，自然环境光，未经刻意修饰的色彩，原汁原味的日常手机自拍质感。',
     },
     {
       id: 'photo_mirror_selfie',
       categoryId: 'photography',
       subcategoryId: 'photo_phone',
       label: '对镜自拍',
+      poseMode: 'adaptive',
       prompt:
-        '真实手机原相机镜面自拍风格，通过镜子反射拍摄人物，手机自然出现在镜面画面中，真实还原人物与镜面空间关系，自然随意的生活化姿态，真实细腻的皮肤与环境细节，手机计算摄影的清晰度与HDR效果，自然室内光线，未经刻意修饰的日常手机摄影质感。',
+        '真实手机原相机镜面自拍风格，通过镜子反射拍摄人物，人物单手或双手自然举起手机对准镜面（可自然调整持机手臂动作，手机自然出现在镜面画面中），真实还原人物与镜面空间关系，自然随意的生活化姿态，真实细腻的皮肤与环境细节，手机计算摄影的清晰度与HDR效果，自然室内光线，未经刻意修饰的日常手机摄影质感。',
     },
     {
       id: 'photo_pov',
       categoryId: 'photography',
       subcategoryId: 'photo_phone',
       label: '第一人称POV',
+      poseMode: 'adaptive',
       prompt:
         '真实手机第一人称POV拍摄风格，以拍摄者的主观视角呈现人物，镜头模拟拍摄者本人视线高度与观察距离，人物仿佛正在与镜头前的拍摄者互动，自然的眼神交流与生活化动作，真实环境光，细腻自然的皮肤纹理，轻微广角透视，手机原相机的真实成像与HDR质感。',
     },
@@ -2034,6 +2118,7 @@ export const DEFAULT_PLATFORM_CONFIG: PlatformConfig = {
       categoryId: 'photography',
       subcategoryId: 'photo_phone',
       label: '第三人称抓拍',
+      poseMode: 'adaptive',
       prompt:
         '真实手机第三人称随手抓拍风格，以旁观者视角拍摄人物，人物自然处于生活环境中，不刻意摆拍，不要求直视镜头，捕捉真实随意的动作与瞬间表情，非专业摄影构图，真实细腻的皮肤纹理与自然瑕疵，手机计算摄影特有的清晰度与HDR效果，自然环境光，轻微广角透视，未经刻意修饰的日常手机摄影质感。',
     },
@@ -2074,6 +2159,7 @@ export const DEFAULT_PLATFORM_CONFIG: PlatformConfig = {
       categoryId: 'photography',
       subcategoryId: 'photo_pro',
       label: '监控摄像头',
+      poseMode: 'adaptive',
       prompt:
         '真实监控摄像头录像画面风格，固定机位的高位俯拍或广角监控视角，明显的桶形畸变与空间透视，低分辨率数字成像，有限的动态范围，轻微数字噪点与视频压缩痕迹，偏冷或偏灰的监控色彩，较深的景深与大范围环境记录，缺乏专业摄影布光的真实监控影像质感。',
     },
@@ -2280,6 +2366,7 @@ export interface GenerationSnapshot {
   prompt: string
   stylePreset: string
   allowFaceStyleShift?: boolean
+  allowPoseStyleShift?: boolean
   aspectRatio: StudioAspectRatio
   resolution?: StudioResolution
   sceneNote?: string
@@ -2387,6 +2474,7 @@ export interface GenerationAuditTrace {
     stylePreset: string
     styleLabel: string
     allowFaceStyleShift?: boolean
+    allowPoseStyleShift?: boolean
     finalPrompt: string
   }
   references: GenerationTraceReference[]

@@ -5,6 +5,7 @@ import {
   getEffectiveStyleSubcategories,
   type PlatformConfig,
   type StyleCategoryItem,
+  type StylePoseMode,
   type StylePresetItem,
   type StyleSubcategoryItem,
 } from '../../shared/studio'
@@ -44,6 +45,7 @@ export interface VisualStyleItem {
   label: string
   shortLabel: string
   tagline: string
+  poseMode: StylePoseMode
   preview?: string
 }
 
@@ -75,6 +77,7 @@ export function getVisualStylePresets(
       label: item.label,
       shortLabel: meta.shortLabel,
       tagline: meta.tagline,
+      poseMode: item.poseMode === 'adaptive' ? 'adaptive' : 'strict',
       preview: meta.preview,
     }
   })

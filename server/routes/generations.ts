@@ -151,6 +151,7 @@ generationRoutes.post('/', async (c) => {
       ? body.sceneNote.replace(/\r\n?/g, '\n').trim().slice(0, 500)
       : ''
   const allowFaceStyleShift = body.allowFaceStyleShift === true
+  const allowPoseStyleShift = body.allowPoseStyleShift === true
   const stitchedR2Key = typeof body.stitchedR2Key === 'string' ? body.stitchedR2Key.trim() : undefined
 
   const recipe = (body.recipe || {}) as RecipeState
@@ -241,6 +242,7 @@ generationRoutes.post('/', async (c) => {
     poseSanitize: platform.poseSanitize,
     sceneNote,
     allowFaceStyleShift,
+    allowPoseStyleShift,
     stylePresets: platform.stylePresets,
     styleCategories: platform.styleCategories,
     styleSubcategories: platform.styleSubcategories,
@@ -260,6 +262,7 @@ generationRoutes.post('/', async (c) => {
     prompt: finalPrompt,
     stylePreset,
     allowFaceStyleShift,
+    allowPoseStyleShift,
     aspectRatio,
     ...(selectedResolution ? { resolution: selectedResolution } : {}),
     sceneNote: sceneNote || undefined,
@@ -304,6 +307,7 @@ generationRoutes.post('/', async (c) => {
       stylePreset,
       styleLabel: resolvedStyleInfo.label || stylePreset,
       allowFaceStyleShift,
+      allowPoseStyleShift,
       finalPrompt,
     },
     references: initialSources.map((src, idx) => ({

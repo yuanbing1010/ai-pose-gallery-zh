@@ -584,6 +584,7 @@ export function sanitizeStylePresetsInput(
       label,
       ...(shortLabel ? { shortLabel } : {}),
       ...(tagline ? { tagline } : {}),
+      ...(rec.poseMode === 'adaptive' ? { poseMode: 'adaptive' as const } : {}),
       prompt,
       ...(negativePrompt ? { negativePrompt } : {}),
       ...(previewUrl ? { previewUrl } : {}),

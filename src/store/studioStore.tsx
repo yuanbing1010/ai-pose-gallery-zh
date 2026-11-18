@@ -58,6 +58,7 @@ interface ClientPrefs {
   selectedResolutionByProfile: Record<string, StudioResolution>
   stylePreset: string
   allowFaceStyleShift: boolean
+  allowPoseStyleShift: boolean
   aspectRatio: StudioAspectRatio
   poseFrontOnly: boolean
   sceneNote: string
@@ -69,6 +70,7 @@ const DEFAULT_PREFS: ClientPrefs = {
   selectedResolutionByProfile: {},
   stylePreset: 'none',
   allowFaceStyleShift: false,
+  allowPoseStyleShift: false,
   aspectRatio: '3:4',
   poseFrontOnly: true,
   sceneNote: '',
@@ -117,6 +119,10 @@ const initialPrefs = (): ClientPrefs => {
         typeof parsed.allowFaceStyleShift === 'boolean'
           ? parsed.allowFaceStyleShift
           : DEFAULT_PREFS.allowFaceStyleShift,
+      allowPoseStyleShift:
+        typeof parsed.allowPoseStyleShift === 'boolean'
+          ? parsed.allowPoseStyleShift
+          : DEFAULT_PREFS.allowPoseStyleShift,
       aspectRatio:
         parsed.aspectRatio && ['3:4', '1:1', '4:3', '9:16', '16:9'].includes(parsed.aspectRatio)
           ? parsed.aspectRatio
@@ -215,6 +221,7 @@ interface StudioZustandStore {
   selectedResolutionByProfile: Record<string, StudioResolution>
   stylePreset: string
   allowFaceStyleShift: boolean
+  allowPoseStyleShift: boolean
   aspectRatio: StudioAspectRatio
   history: GenerationHistoryItem[]
   poseDepthMode: boolean
@@ -245,6 +252,7 @@ interface StudioZustandStore {
   setSelectedResolutionByProfileState: (val: Record<string, StudioResolution>) => void
   setStylePreset: (val: string) => void
   setAllowFaceStyleShift: (updater: Updater<boolean>) => void
+  setAllowPoseStyleShift: (updater: Updater<boolean>) => void
   setAspectRatio: (val: StudioAspectRatio) => void
   setHistory: (updater: Updater<GenerationHistoryItem[]>) => void
   setPoseDepthModeState: (updater: Updater<boolean>) => void
@@ -279,6 +287,7 @@ export const useStudioStore = create<StudioZustandStore>((set) => {
     selectedResolutionByProfile: prefs.selectedResolutionByProfile,
     stylePreset: prefs.stylePreset,
     allowFaceStyleShift: prefs.allowFaceStyleShift,
+    allowPoseStyleShift: prefs.allowPoseStyleShift,
     aspectRatio: prefs.aspectRatio,
     history: [],
     poseDepthMode: Boolean(rec.pose?.useDepth),
@@ -317,11 +326,27 @@ export const useStudioStore = create<StudioZustandStore>((set) => {
       })),
     setSelectedResolutionByProfileState: (selectedResolutionByProfile) =>
       set({ selectedResolutionByProfile }),
-    setStylePreset: (stylePreset) => set({ stylePreset }),
+    setStylePreset: (stylePreset) =>
+      set((s) => {
+        if (s.stylePreset === stylePreset) return { stylePreset }
+        const matched =
+          stylePreset === 'none'
+            ? null
+            : getEffectiveStyleCatalog(s.platform).find((item) => item.id === stylePreset) ?? null
+        return {
+          stylePreset,
+          allowPoseStyleShift: matched?.poseMode === 'adaptive',
+        }
+      }),
     setAllowFaceStyleShift: (updater) =>
       set((s) => ({
         allowFaceStyleShift:
           typeof updater === 'function' ? updater(s.allowFaceStyleShift) : updater,
+      })),
+    setAllowPoseStyleShift: (updater) =>
+      set((s) => ({
+        allowPoseStyleShift:
+          typeof updater === 'function' ? updater(s.allowPoseStyleShift) : updater,
       })),
     setAspectRatio: (aspectRatio) => set({ aspectRatio }),
     setHistory: (updater) =>
@@ -361,6 +386,7 @@ interface StudioContextValue {
   selectedResolutionByProfile: Record<string, StudioResolution>
   stylePreset: string
   allowFaceStyleShift: boolean
+  allowPoseStyleShift: boolean
   aspectRatio: StudioAspectRatio
   history: GenerationHistoryItem[]
   poseDepthMode: boolean
@@ -397,6 +423,7 @@ interface StudioContextValue {
   setSelectedResolutionForProfile: (profileId: string, resolution: StudioResolution) => void
   setStylePreset: (preset: string) => void
   setAllowFaceStyleShift: (updater: Updater<boolean>) => void
+  setAllowPoseStyleShift: (updater: Updater<boolean>) => void
   setAspectRatio: (ratio: StudioAspectRatio) => void
   setPoseDepthMode: (val: boolean) => void
   setPoseFrontOnly: (val: boolean) => void
@@ -439,6 +466,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     selectedResolutionByProfile,
     stylePreset,
     allowFaceStyleShift,
+    allowPoseStyleShift,
     aspectRatio,
     history,
     poseDepthMode,
@@ -469,6 +497,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     setSelectedResolutionByProfileState,
     setStylePreset,
     setAllowFaceStyleShift,
+    setAllowPoseStyleShift,
     setAspectRatio,
     setHistory,
     setPoseDepthModeState,
@@ -724,6 +753,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
           selectedResolutionByProfile,
           stylePreset,
           allowFaceStyleShift,
+          allowPoseStyleShift,
           aspectRatio,
           poseFrontOnly,
           sceneNote,
@@ -736,6 +766,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     selectedResolutionByProfile,
     stylePreset,
     allowFaceStyleShift,
+    allowPoseStyleShift,
     aspectRatio,
     poseFrontOnly,
     sceneNote,
@@ -1152,6 +1183,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
           resolution: activeResolution ?? undefined,
           stylePreset,
           allowFaceStyleShift,
+          allowPoseStyleShift,
           aspectRatio,
           sceneNote,
           recipe: uploadedRecipe,
@@ -1273,6 +1305,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
         selectedResolutionByProfile,
         stylePreset,
         allowFaceStyleShift,
+        allowPoseStyleShift,
         aspectRatio,
         history,
         poseDepthMode,
@@ -1304,6 +1337,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
         setSelectedResolutionForProfile,
         setStylePreset,
         setAllowFaceStyleShift,
+        setAllowPoseStyleShift,
         setAspectRatio,
         setPoseDepthMode,
         setPoseFrontOnly,

@@ -66,6 +66,7 @@ export function AdminPromptsTab({
 
   const [previewStyleKey, setPreviewStyleKey] = useState<string>('')
   const [previewAllowFaceStyleShift, setPreviewAllowFaceStyleShift] = useState(false)
+  const [previewAllowPoseStyleShift, setPreviewAllowPoseStyleShift] = useState(false)
   const [previewScenario, setPreviewScenario] = useState<
     'all' | 'with_extra' | 'no_portrait' | 'no_costume' | 'portrait_only' | 'pose_only'
   >('all')
@@ -190,6 +191,7 @@ export function AdminPromptsTab({
     promptTemplate: platformCfg.promptTemplate,
     poseSanitize: platformCfg.poseSanitize,
     allowFaceStyleShift: previewAllowFaceStyleShift,
+    allowPoseStyleShift: previewAllowPoseStyleShift,
     styleCategories,
     styleSubcategories,
     stylePresets: styleCatalog,
@@ -374,7 +376,37 @@ export function AdminPromptsTab({
       key: 'adaptiveStyleSuffix',
       label: '• 画风跨次元渲染附加指令',
       rows: 2,
-      hint: '开启跨画风面部自适应且存在画风时追加于「• 风格：」段尾',
+      hint: '开启「跟随画风」且存在画风时追加于「• 风格：」段尾',
+    },
+  ]
+
+  const adaptivePoseFields: Array<{
+    key: PromptTemplateStringKey
+    label: string
+    rows?: number
+    hint: string
+    colSpan2?: boolean
+  }> = [
+    {
+      key: 'adaptivePoseClause',
+      label: '• 姿势适配规则（传了姿势图且开启姿势适配时）',
+      rows: 3,
+      hint: '替代默认「• 姿势：」；支持 {{姿势图}}',
+      colSpan2: true,
+    },
+    {
+      key: 'adaptiveNoPoseRecompositionClause',
+      label: '• 人物构图释放规则（未传姿势图、有人像且开启姿势适配时）',
+      rows: 2,
+      hint: '追加于常规/自适应「• 人物：」段尾，释放人像原图构图；支持 {{人像图}}',
+      colSpan2: true,
+    },
+    {
+      key: 'adaptivePoseStyleSuffix',
+      label: '• 画风姿势与机位优先附加指令',
+      rows: 2,
+      hint: '开启「姿势适配」且存在画风时追加于「• 风格：」段尾',
+      colSpan2: true,
     },
   ]
 
@@ -488,6 +520,34 @@ export function AdminPromptsTab({
             </div>
             <div className="grid gap-3.5 sm:grid-cols-2">
               {adaptiveFields.map((f) => (
+                <div
+                  key={f.key}
+                  className={`space-y-1 ${f.colSpan2 ? 'sm:col-span-2' : ''}`}
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <label className="text-xs font-bold">{f.label}</label>
+                    <span className="font-mono text-xs text-zinc-500">{f.hint}</span>
+                  </div>
+                  <Textarea
+                    rows={f.rows ?? 2}
+                    value={tpl[f.key]}
+                    onChange={(e) => updateTplField(f.key, e.target.value)}
+                    className="rounded-none font-mono text-xs leading-relaxed"
+                  />
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="space-y-3 border border-zinc-200 p-4 dark:border-zinc-800">
+            <div>
+              <div className="text-xs font-bold">姿势与机位随画风适配规则（当开启「姿势适配」时生效）</div>
+              <p className="mt-0.5 text-xs text-zinc-500">
+                选中自拍、对镜自拍、第一人称POV、监控摄像头等强机位/手持互动画风（或用户在工作台手动开启「姿势适配」）时，以下条款将自动接管姿势与构图规则。
+              </p>
+            </div>
+            <div className="grid gap-3.5 sm:grid-cols-2">
+              {adaptivePoseFields.map((f) => (
                 <div
                   key={f.key}
                   className={`space-y-1 ${f.colSpan2 ? 'sm:col-span-2' : ''}`}
@@ -661,7 +721,14 @@ export function AdminPromptsTab({
                 checked={previewAllowFaceStyleShift}
                 onCheckedChange={setPreviewAllowFaceStyleShift}
               />
-              <span>跨画风面部自适应</span>
+              <span>跟随画风</span>
+            </label>
+            <label className="inline-flex h-8 items-center gap-2 border border-zinc-200 px-2.5 text-xs dark:border-zinc-800">
+              <Switch
+                checked={previewAllowPoseStyleShift}
+                onCheckedChange={setPreviewAllowPoseStyleShift}
+              />
+              <span>姿势适配</span>
             </label>
             <Select
               value={previewScenario}
@@ -689,7 +756,14 @@ export function AdminPromptsTab({
                 <SelectItem value="pose_only">场景：仅姿势（单图）</SelectItem>
               </SelectContent>
             </Select>
-            <Select value={effectivePreviewStyle} onValueChange={setPreviewStyleKey}>
+            <Select
+              value={effectivePreviewStyle}
+              onValueChange={(nextKey) => {
+                setPreviewStyleKey(nextKey)
+                const matched = styleCatalog.find((s) => s.id === nextKey)
+                setPreviewAllowPoseStyleShift(matched?.poseMode === 'adaptive')
+              }}
+            >
               <SelectTrigger className={`w-56 ${ADMIN_SELECT_CLS}`}>
                 <SelectValue />
               </SelectTrigger>

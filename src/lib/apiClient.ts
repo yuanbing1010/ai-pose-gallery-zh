@@ -201,6 +201,7 @@ export async function startGenerationStreamApi(
     resolution?: StudioResolution
     stylePreset: string
     allowFaceStyleShift?: boolean
+    allowPoseStyleShift?: boolean
     aspectRatio: StudioAspectRatio
     sceneNote?: string
     recipe: RecipeState

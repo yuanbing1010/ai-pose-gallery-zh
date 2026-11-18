@@ -423,6 +423,8 @@ function StudioPage() {
     setStylePreset,
     allowFaceStyleShift,
     setAllowFaceStyleShift,
+    allowPoseStyleShift,
+    setAllowPoseStyleShift,
     aspectRatio,
     setAspectRatio,
     history,
@@ -1082,6 +1084,7 @@ function StudioPage() {
       setStylePreset(snap.stylePreset)
     }
     setAllowFaceStyleShift(Boolean(snap.allowFaceStyleShift))
+    setAllowPoseStyleShift(Boolean(snap.allowPoseStyleShift))
     if (snap.aspectRatio) {
       setAspectRatio(snap.aspectRatio)
     }
@@ -1930,8 +1933,10 @@ function StudioPage() {
                 <StylePresetSelector
                   value={stylePreset}
                   allowFaceStyleShift={allowFaceStyleShift}
+                  allowPoseStyleShift={allowPoseStyleShift}
                   onChange={setStylePreset}
                   onAllowFaceStyleShiftChange={setAllowFaceStyleShift}
+                  onAllowPoseStyleShiftChange={setAllowPoseStyleShift}
                   onOpenBrowser={openStylePicker}
                 />
               </div>

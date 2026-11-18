@@ -52,6 +52,7 @@ export type {
   StudioArtistPersona,
   StudioResolution,
   StyleCategoryItem,
+  StylePoseMode,
   StylePresetItem,
   StyleSubcategoryItem,
   SupplierChannelRef,
