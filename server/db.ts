@@ -34,6 +34,7 @@ import {
   type StyleCategoryItem,
   type StylePresetItem,
   type StyleSubcategoryItem,
+  type SupplierChannelRef,
   type SupplierDTO,
   type UserRole,
   type UserStatus,
@@ -52,6 +53,7 @@ import type { Env } from './types'
 import { validateExternalImageUrl } from './validation'
 
 export const SESSION_COOKIE_NAME = 'pose_atlas_sid'
+export const ADMIN_SESSION_COOKIE_NAME = 'pose_atlas_admin_sid'
 export const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000
 
 const DEFAULT_CREDIT_COSTS: Record<ImageProviderId, number> = {
@@ -608,7 +610,6 @@ export async function getPlatformConfig(db: D1Database): Promise<PlatformConfig>
   }
   try {
     const parsed = JSON.parse(row.value_json) as Partial<PlatformConfig>
-    const stylePromptOverrides: Record<string, string> = {}
     const sanitizedCategories = sanitizeStyleCategoriesInput(parsed.styleCategories)
     const styleCategories = sanitizedCategories ?? []
     const validCatIds = new Set(styleCategories.map((c) => c.id))
@@ -639,14 +640,6 @@ export async function getPlatformConfig(db: D1Database): Promise<PlatformConfig>
         typeof parsed.allowRegistration === 'boolean'
           ? parsed.allowRegistration
           : DEFAULT_PLATFORM_CONFIG.allowRegistration,
-      defaultSafeMode:
-        typeof parsed.defaultSafeMode === 'boolean'
-          ? parsed.defaultSafeMode
-          : DEFAULT_PLATFORM_CONFIG.defaultSafeMode,
-      allowUserNsfwUnlock:
-        typeof parsed.allowUserNsfwUnlock === 'boolean'
-          ? parsed.allowUserNsfwUnlock
-          : DEFAULT_PLATFORM_CONFIG.allowUserNsfwUnlock,
       defaultStylePreset: style,
       defaultPromptPrefix:
         typeof parsed.defaultPromptPrefix === 'string'
@@ -665,7 +658,6 @@ export async function getPlatformConfig(db: D1Database): Promise<PlatformConfig>
       styleCategories,
       styleSubcategories,
       stylePresets,
-      stylePromptOverrides,
       imagePassMode:
         parsed.imagePassMode === 'base64' || parsed.imagePassMode === 'url'
           ? parsed.imagePassMode
@@ -709,13 +701,53 @@ export async function getAllProviderRows(db: D1Database): Promise<ProviderRow[]>
 }
 
 export async function getSuppliers(env: Env): Promise<SupplierDTO[]> {
-  const res = await env.DB.prepare(
-    `SELECT s.*, COUNT(c.id) AS channel_count
-     FROM suppliers s
-     LEFT JOIN provider_channels c ON c.supplier_id = s.id
-     GROUP BY s.id
-     ORDER BY s.created_at DESC`
-  ).all<SupplierRow>()
+  const [res, chRes] = await Promise.all([
+    env.DB.prepare(
+      `SELECT s.*, COUNT(c.id) AS channel_count
+       FROM suppliers s
+       LEFT JOIN provider_channels c ON c.supplier_id = s.id
+       GROUP BY s.id
+       ORDER BY s.created_at DESC`
+    ).all<SupplierRow>(),
+    env.DB.prepare(
+      `SELECT c.id AS channel_id,
+              c.supplier_id,
+              c.name AS channel_name,
+              c.provider_id,
+              COALESCE(c.profile_id, '') AS profile_id,
+              COALESCE(mp.display_name, '默认画笔') AS profile_name,
+              c.enabled,
+              CASE WHEN c.model = 'custom' AND c.custom_model != '' THEN c.custom_model ELSE c.model END AS effective_model
+       FROM provider_channels c
+       LEFT JOIN model_profiles mp ON mp.id = c.profile_id
+       ORDER BY c.provider_id ASC, c.priority DESC, c.created_at ASC`
+    ).all<{
+      channel_id: string
+      supplier_id: string
+      channel_name: string
+      provider_id: ImageProviderId
+      profile_id: string
+      profile_name: string
+      enabled: number
+      effective_model: string
+    }>(),
+  ])
+
+  const channelsBySupplier = new Map<string, SupplierChannelRef[]>()
+  for (const ch of chRes.results || []) {
+    const list = channelsBySupplier.get(ch.supplier_id) || []
+    list.push({
+      channelId: ch.channel_id,
+      channelName: ch.channel_name,
+      providerId: ch.provider_id,
+      profileId: ch.profile_id || `prof_${ch.provider_id}_default`,
+      profileName: ch.profile_name,
+      enabled: ch.enabled === 1,
+      model: ch.effective_model,
+    })
+    channelsBySupplier.set(ch.supplier_id, list)
+  }
+
   return (res.results || []).map((row) => ({
     id: row.id,
     name: row.name,
@@ -725,6 +757,7 @@ export async function getSuppliers(env: Env): Promise<SupplierDTO[]> {
     enabled: row.enabled === 1,
     note: row.note || '',
     channelCount: row.channel_count || 0,
+    channels: channelsBySupplier.get(row.id) || [],
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }))
@@ -892,12 +925,16 @@ export async function getAdminProviderSlots(env: Env): Promise<AdminProviderSlot
   return slotRows.map((row) => {
     const profiles = profilesByProvider.get(row.provider_id) || []
     const defaultProf = profiles.find((p) => p.isDefault) ?? profiles[0]
+    const totalChannels = profiles.reduce((sum, p) => sum + p.channels.length, 0)
+    const hasEnvKey = Boolean(getEnvFallbackApiKey(env, row.provider_id))
     return {
       providerId: row.provider_id,
       enabled: row.enabled === 1,
       creditCost: defaultProf?.creditCost ?? row.credit_cost,
       sortOrder: row.sort_order,
       updatedAt: row.updated_at,
+      hasEnvKey,
+      usesEnvFallback: totalChannels === 0 && hasEnvKey,
       profiles,
     }
   })
@@ -1622,18 +1659,31 @@ export async function refundFailedJob(
 
 export async function reapStaleProcessingJobs(db: D1Database, userId?: string): Promise<void> {
   const cutoff = Date.now() - 4 * 60 * 1000
-  const query = userId
-    ? db
-        .prepare(`SELECT id FROM generation_jobs WHERE user_id = ? AND status = 'processing' AND created_at < ? LIMIT 20`)
-        .bind(userId, cutoff)
-    : db
-        .prepare(`SELECT id FROM generation_jobs WHERE status = 'processing' AND created_at < ? LIMIT 20`)
-        .bind(cutoff)
+  for (let round = 0; round < 5; round++) {
+    const query = userId
+      ? db
+          .prepare(`SELECT id FROM generation_jobs WHERE user_id = ? AND status = 'processing' AND created_at < ? LIMIT 100`)
+          .bind(userId, cutoff)
+      : db
+          .prepare(`SELECT id FROM generation_jobs WHERE status = 'processing' AND created_at < ? LIMIT 100`)
+          .bind(cutoff)
 
-  const stale = await query.all<{ id: string }>()
-  for (const row of stale.results || []) {
-    await refundFailedJob(db, row.id, '生成任务超时未返回结果，系统已自动退还积分')
+    const stale = await query.all<{ id: string }>()
+    const rows = stale.results || []
+    if (rows.length === 0) break
+    for (const row of rows) {
+      await refundFailedJob(db, row.id, '生成任务超时未返回结果，系统已自动退还积分')
+    }
+    if (rows.length < 100) break
   }
+}
+
+export async function cleanupExpiredSessionsAndOauth(db: D1Database): Promise<void> {
+  const now = Date.now()
+  await db.batch([
+    db.prepare(`DELETE FROM sessions WHERE expires_at <= ?`).bind(now),
+    db.prepare(`DELETE FROM oauth_states WHERE expires_at <= ?`).bind(now),
+  ])
 }
 
 export async function claimRedeemCode(

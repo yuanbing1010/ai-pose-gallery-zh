@@ -97,8 +97,8 @@ export function GalleryHoloCard({
                 className={cn(
                   'w-full rounded-full py-1.5 text-xs font-semibold transition-colors',
                   picked
-                    ? 'bg-[#19857B] text-white'
-                    : 'bg-primary text-primary-foreground hover:opacity-90'
+                    ? 'bg-primary text-primary-foreground ring-1 ring-primary'
+                    : 'bg-primary/90 text-primary-foreground hover:bg-primary'
                 )}
               >
                 {picked ? '✓ 已锁入' : '+ 锁入配方'}
@@ -108,8 +108,15 @@ export function GalleryHoloCard({
         }
       >
         <div className={cn('flex flex-col bg-card', flipped && 'pointer-events-none')}>
-          <div onClick={onOpenViewer} className="relative w-full cursor-zoom-in overflow-hidden">
-            {media}
+          <div className="relative w-full overflow-hidden">
+            <button
+              type="button"
+              aria-label={`查看详情：${title}`}
+              onClick={onOpenViewer}
+              className="block w-full cursor-zoom-in overflow-hidden text-left outline-none focus-visible:ring-2 focus-visible:ring-foreground focus-visible:ring-inset"
+            >
+              {media}
+            </button>
 
             <div className="pointer-events-none absolute inset-x-2 top-2 z-10 flex items-center justify-between gap-1.5">
               <button
@@ -154,9 +161,10 @@ export function GalleryHoloCard({
           </div>
 
           {/* 卡底洁净中文铭牌（亮暗自适应） */}
-          <div
+          <button
+            type="button"
             onClick={onOpenViewer}
-            className="relative cursor-zoom-in overflow-hidden border-t border-border bg-card px-3 py-2.5"
+            className="relative w-full cursor-zoom-in overflow-hidden border-t border-border bg-card px-3 py-2.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-foreground focus-visible:ring-inset"
           >
             <div style={PARALLAX_TITLE_STYLE} className="relative flex items-center gap-2">
               <span className={cn('h-3.5 w-1 shrink-0 rounded-full', accent.dot)} />
@@ -164,7 +172,7 @@ export function GalleryHoloCard({
                 {title}
               </span>
             </div>
-          </div>
+          </button>
         </div>
       </TiltedCard>
     </div>

@@ -1,4 +1,5 @@
-import { Hono } from 'hono'
+import { Hono, type Context } from 'hono'
+import { getCookie } from 'hono/cookie'
 import {
   DEFAULT_PROVIDER_PARAMS,
   PROVIDER_META,
@@ -10,18 +11,31 @@ import {
   normalizeProfileResolutions,
   resolveProfileDefaultResolution,
   validatePoseSanitizeInput,
+  type AdminJobsStatsSummary,
   type AdminOverviewPayload,
+  type AdminOverviewRecentFailureItem,
+  type AdminOverviewTrendPoint,
   type ImageProviderId,
   type PlatformConfig,
   type ProfileResolutionOption,
   type StudioResolution,
+  type StylePresetItem,
 } from '../../shared/studio'
-import { encryptSecret, hashPassword, maskApiKey, detectImageFormat } from '../crypto'
 import {
+  detectImageFormat,
+  encryptSecret,
+  hashPassword,
+  maskApiKey,
+  sha256Hex,
+  verifyPassword,
+} from '../crypto'
+import {
+  ADMIN_SESSION_COOKIE_NAME,
   adjustUserCredits,
   createRedeemCodesBatch,
   createSession,
   createUserWithBonus,
+  deleteSession,
   getAdminProviderSlots,
   getAdminWechatConfig,
   getPlatformConfig,
@@ -46,7 +60,11 @@ import {
   type SupplierRow,
   type UserRow,
 } from '../db'
-import { requireAdmin, setSessionCookie } from '../middleware'
+import {
+  clearAdminSessionCookie,
+  requireAdmin,
+  setAdminSessionCookie,
+} from '../middleware'
 import type { AppEnv } from '../types'
 import {
   parseIntSafe,
@@ -58,12 +76,259 @@ import {
 
 export const adminRoutes = new Hono<AppEnv>()
 
+function isLocalBootstrapRequest(c: Context<AppEnv>): boolean {
+  try {
+    const hostname = new URL(c.req.url).hostname.toLowerCase()
+    const isLoopbackHost =
+      hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1'
+    if (!isLoopbackHost) return false
+    const cfIp = (c.req.header('cf-connecting-ip') || '').trim().toLowerCase()
+    return !cfIp || cfIp === '127.0.0.1' || cfIp === '::1'
+  } catch {
+    return false
+  }
+}
+
+function timingSafeTextEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false
+  let diff = 0
+  for (let i = 0; i < a.length; i++) {
+    diff |= a.charCodeAt(i) ^ b.charCodeAt(i)
+  }
+  return diff === 0
+}
+
+function extractStyleAssetKey(url: string | undefined): string | null {
+  if (!url) return null
+  const m = url.trim().match(/^\/api\/style-assets\/([a-zA-Z0-9_-]+\.(?:png|jpe?g|webp|gif))$/i)
+  return m ? `styles/${m[1]}` : null
+}
+
+function buildRecent7DaysBuckets(): { days: string[]; map: Map<string, AdminOverviewTrendPoint>; sinceMs: number } {
+  const tzOffsetMs = 8 * 60 * 60 * 1000
+  const nowCst = new Date(Date.now() + tzOffsetMs)
+  nowCst.setUTCHours(0, 0, 0, 0)
+  const todayMidnightCst = nowCst.getTime()
+  const sinceMs = todayMidnightCst - 6 * 24 * 60 * 60 * 1000 - tzOffsetMs
+  const days: string[] = []
+  const map = new Map<string, AdminOverviewTrendPoint>()
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date(todayMidnightCst - i * 24 * 60 * 60 * 1000)
+    const yyyy = d.getUTCFullYear()
+    const mm = String(d.getUTCMonth() + 1).padStart(2, '0')
+    const dd = String(d.getUTCDate()).padStart(2, '0')
+    const dateKey = `${yyyy}-${mm}-${dd}`
+    const label = `${mm}/${dd}`
+    days.push(dateKey)
+    map.set(dateKey, {
+      date: dateKey,
+      label,
+      jobsTotal: 0,
+      jobsSucceeded: 0,
+      jobsFailed: 0,
+      creditsConsumed: 0,
+    })
+  }
+  return { days, map, sinceMs }
+}
+
+adminRoutes.get('/me', (c) => {
+  c.header('Cache-Control', 'no-store')
+  return c.json({
+    user: c.get('adminUser'),
+    frontendUser: c.get('user'),
+  })
+})
+
+interface AdminLoginRateBucket {
+  count: number
+  windowStart: number
+  lockedUntil: number
+}
+
+const ADMIN_LOGIN_WINDOW_MS = 15 * 60 * 1000
+const ADMIN_LOGIN_LOCK_MS = 5 * 60 * 1000
+const ADMIN_LOGIN_IP_MAX = 8
+const ADMIN_LOGIN_ACCOUNT_MAX = 5
+
+function getAdminClientIp(c: Context<AppEnv>): string {
+  const cfIp = c.req.header('cf-connecting-ip')?.trim()
+  if (cfIp) return cfIp.slice(0, 64)
+  const forwarded = c.req.header('x-forwarded-for')?.split(',')[0]?.trim()
+  if (forwarded) return forwarded.slice(0, 64)
+  return 'unknown'
+}
+
+function parseRateBucket(raw: string | undefined, now: number): AdminLoginRateBucket {
+  if (!raw) return { count: 0, windowStart: now, lockedUntil: 0 }
+  try {
+    const parsed = JSON.parse(raw) as Partial<AdminLoginRateBucket>
+    const count = Number(parsed.count) || 0
+    const windowStart = Number(parsed.windowStart) || now
+    const lockedUntil = Number(parsed.lockedUntil) || 0
+    if (now - windowStart > ADMIN_LOGIN_WINDOW_MS && lockedUntil <= now) {
+      return { count: 0, windowStart: now, lockedUntil: 0 }
+    }
+    return { count, windowStart, lockedUntil }
+  } catch {
+    return { count: 0, windowStart: now, lockedUntil: 0 }
+  }
+}
+
+function formatRetryWait(retryAfterSec: number): string {
+  if (retryAfterSec < 60) return `${retryAfterSec} 秒`
+  const mins = Math.floor(retryAfterSec / 60)
+  const secs = retryAfterSec % 60
+  return secs > 0 ? `${mins} 分 ${secs} 秒` : `${mins} 分钟`
+}
+
+adminRoutes.post('/login', async (c) => {
+  let body: Record<string, unknown>
+  try {
+    body = await c.req.json()
+  } catch {
+    return c.json({ error: { message: '请求体格式错误' } }, 400)
+  }
+
+  const account =
+    typeof body.account === 'string'
+      ? body.account.trim()
+      : typeof body.username === 'string'
+        ? body.username.trim()
+        : ''
+  const password = typeof body.password === 'string' ? body.password : ''
+
+  if (!account || !password) {
+    return c.json({ error: { message: '请输入管理员账号和密码' } }, 400)
+  }
+
+  const lower = account.toLowerCase()
+  const now = Date.now()
+  const clientIp = getAdminClientIp(c)
+  const [ipHash, acctHash] = await Promise.all([
+    sha256Hex(`ip:${clientIp}`),
+    sha256Hex(`acct:${lower}`),
+  ])
+  const ipKey = `admin_login_rl_ip_${ipHash.slice(0, 32)}`
+  const acctKey = `admin_login_rl_acct_${acctHash.slice(0, 32)}`
+
+  const rlRows = await c.env.DB.prepare(
+    'SELECT key, value_json FROM system_settings WHERE key IN (?, ?)'
+  )
+    .bind(ipKey, acctKey)
+    .all<{ key: string; value_json: string }>()
+
+  const rlMap = new Map((rlRows.results || []).map((r) => [r.key, r.value_json]))
+  const ipBucket = parseRateBucket(rlMap.get(ipKey), now)
+  const acctBucket = parseRateBucket(rlMap.get(acctKey), now)
+  const maxLockedUntil = Math.max(ipBucket.lockedUntil, acctBucket.lockedUntil)
+
+  if (maxLockedUntil > now) {
+    const retryAfterSec = Math.max(1, Math.ceil((maxLockedUntil - now) / 1000))
+    c.header('Retry-After', String(retryAfterSec))
+    return c.json(
+      {
+        error: {
+          message: `管理端登录失败次数过多，请 ${formatRetryWait(retryAfterSec)} 后再试`,
+        },
+      },
+      429
+    )
+  }
+
+  const recordFailure = async () => {
+    const nextIpCount = ipBucket.count + 1
+    const nextAcctCount = acctBucket.count + 1
+    const nextIp: AdminLoginRateBucket = {
+      count: nextIpCount,
+      windowStart: ipBucket.windowStart,
+      lockedUntil: nextIpCount >= ADMIN_LOGIN_IP_MAX ? now + ADMIN_LOGIN_LOCK_MS : 0,
+    }
+    const nextAcct: AdminLoginRateBucket = {
+      count: nextAcctCount,
+      windowStart: acctBucket.windowStart,
+      lockedUntil: nextAcctCount >= ADMIN_LOGIN_ACCOUNT_MAX ? now + ADMIN_LOGIN_LOCK_MS : 0,
+    }
+    await c.env.DB.batch([
+      c.env.DB.prepare(
+        `INSERT INTO system_settings (key, value_json, updated_at)
+         VALUES (?, ?, ?)
+         ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at`
+      ).bind(ipKey, JSON.stringify(nextIp), now),
+      c.env.DB.prepare(
+        `INSERT INTO system_settings (key, value_json, updated_at)
+         VALUES (?, ?, ?)
+         ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at`
+      ).bind(acctKey, JSON.stringify(nextAcct), now),
+    ])
+  }
+
+  const row = await c.env.DB.prepare(
+    `SELECT u.*,
+            oa.openid AS wechat_openid,
+            oa.nickname AS wechat_nickname,
+            oa.avatar_url AS wechat_avatar_url
+     FROM users u
+     LEFT JOIN oauth_accounts oa ON oa.user_id = u.id AND oa.provider = 'wechat_open'
+     WHERE u.username_lower = ? OR u.email_lower = ?
+     LIMIT 1`
+  )
+    .bind(lower, lower)
+    .first<UserRow>()
+
+  if (!row || !(await verifyPassword(password, row.password_hash))) {
+    await recordFailure()
+    return c.json({ error: { message: '账号或密码错误' } }, 401)
+  }
+  if (row.status !== 'active') {
+    await recordFailure()
+    return c.json({ error: { message: '该账号已被停用，请联系管理员' } }, 403)
+  }
+  if (row.role !== 'admin') {
+    await recordFailure()
+    return c.json({ error: { message: '该账号不具备管理员权限' } }, 403)
+  }
+
+  await c.env.DB.prepare('DELETE FROM system_settings WHERE key IN (?, ?)')
+    .bind(ipKey, acctKey)
+    .run()
+
+  const { rawToken } = await createSession(c.env.DB, row.id, c.req.header('user-agent'))
+  setAdminSessionCookie(c, rawToken)
+  c.header('Cache-Control', 'no-store')
+  return c.json({ user: mapUserRow({ ...row, last_login_at: now }) })
+})
+
+adminRoutes.post('/session-from-frontend', async (c) => {
+  const frontUser = c.get('user')
+  if (!frontUser || frontUser.role !== 'admin' || frontUser.status !== 'active') {
+    return c.json({ error: { message: '当前前台会话不具备管理员权限' } }, 403)
+  }
+  const { rawToken } = await createSession(c.env.DB, frontUser.id, c.req.header('user-agent'))
+  setAdminSessionCookie(c, rawToken)
+  c.header('Cache-Control', 'no-store')
+  return c.json({ user: frontUser })
+})
+
+adminRoutes.post('/logout', async (c) => {
+  const adminToken = getCookie(c, ADMIN_SESSION_COOKIE_NAME)
+  await deleteSession(c.env.DB, adminToken)
+  clearAdminSessionCookie(c)
+  c.header('Cache-Control', 'no-store')
+  return c.json({ ok: true })
+})
+
 adminRoutes.get('/bootstrap-status', async (c) => {
   const row = await c.env.DB.prepare(
     `SELECT COUNT(*) AS cnt FROM users WHERE role = 'admin'`
   ).first<{ cnt: number }>()
+  const needsSetup = (row?.cnt ?? 0) === 0
+  const envToken = (c.env.BOOTSTRAP_SETUP_TOKEN || '').trim()
+  const requiresSetupToken = Boolean(envToken)
+  const localAllowed = isLocalBootstrapRequest(c)
+  const remoteBlocked = needsSetup && !requiresSetupToken && !localAllowed
   c.header('Cache-Control', 'no-store')
-  return c.json({ needsSetup: (row?.cnt ?? 0) === 0 })
+  return c.json({ needsSetup, requiresSetupToken, remoteBlocked })
 })
 
 adminRoutes.post('/bootstrap', async (c) => {
@@ -79,6 +344,24 @@ adminRoutes.post('/bootstrap', async (c) => {
     body = await c.req.json()
   } catch {
     return c.json({ error: { message: '请求体格式错误' } }, 400)
+  }
+
+  const envToken = (c.env.BOOTSTRAP_SETUP_TOKEN || '').trim()
+  if (envToken) {
+    const providedToken = typeof body.setupToken === 'string' ? body.setupToken.trim() : ''
+    if (!providedToken || !timingSafeTextEqual(providedToken, envToken)) {
+      return c.json({ error: { message: '初始化安全口令不正确' } }, 403)
+    }
+  } else if (!isLocalBootstrapRequest(c)) {
+    return c.json(
+      {
+        error: {
+          message:
+            '公网环境禁止无口令初始化管理员，请先配置 BOOTSTRAP_SETUP_TOKEN 或 BOOTSTRAP_ADMIN_USERNAME/PASSWORD Secret',
+        },
+      },
+      403
+    )
   }
 
   const username = validateUsername(body.username)
@@ -100,7 +383,7 @@ adminRoutes.post('/bootstrap', async (c) => {
   })
 
   const { rawToken } = await createSession(c.env.DB, user.id, c.req.header('user-agent'))
-  setSessionCookie(c, rawToken)
+  setAdminSessionCookie(c, rawToken)
   c.header('Cache-Control', 'no-store')
   return c.json({ user }, 201)
 })
@@ -109,6 +392,8 @@ adminRoutes.use('*', requireAdmin)
 
 adminRoutes.get('/overview', async (c) => {
   await reapStaleProcessingJobs(c.env.DB)
+  const { days, map: trendMap, sinceMs } = buildRecent7DaysBuckets()
+  const staleWarningCutoff = Date.now() - 2 * 60 * 1000
 
   const [
     usersStats,
@@ -120,6 +405,9 @@ adminRoutes.get('/overview', async (c) => {
     channelStats,
     assetsStats,
     platformCfg,
+    recentJobsRes,
+    recentFailuresRes,
+    staleRow,
   ] = await Promise.all([
     c.env.DB.prepare(
       `SELECT COUNT(*) AS total,
@@ -150,7 +438,60 @@ adminRoutes.get('/overview', async (c) => {
          COALESCE((SELECT SUM(bytes) FROM uploaded_assets), 0) + COALESCE((SELECT SUM(result_bytes) FROM generation_jobs), 0) AS total_bytes`
     ).first<{ total_files: number; total_bytes: number }>(),
     getPlatformConfig(c.env.DB),
+    c.env.DB.prepare(
+      `SELECT created_at, status, credits_cost, credits_refunded
+       FROM generation_jobs
+       WHERE created_at >= ?`
+    )
+      .bind(sinceMs)
+      .all<{ created_at: number; status: string; credits_cost: number; credits_refunded: number }>(),
+    c.env.DB.prepare(
+      `SELECT j.id, j.provider, j.profile_name, j.channel_name, j.supplier_name, j.error_message, j.created_at, u.username
+       FROM generation_jobs j
+       LEFT JOIN users u ON u.id = j.user_id
+       WHERE j.status = 'failed'
+       ORDER BY j.created_at DESC
+       LIMIT 5`
+    ).all<{
+      id: string
+      provider: ImageProviderId
+      profile_name: string | null
+      channel_name: string | null
+      supplier_name: string | null
+      error_message: string | null
+      created_at: number
+      username: string | null
+    }>(),
+    c.env.DB.prepare(
+      `SELECT COUNT(*) AS cnt FROM generation_jobs WHERE status = 'processing' AND created_at < ?`
+    )
+      .bind(staleWarningCutoff)
+      .first<{ cnt: number }>(),
   ])
+
+  const tzOffsetMs = 8 * 60 * 60 * 1000
+  for (const job of recentJobsRes.results || []) {
+    const d = new Date(job.created_at + tzOffsetMs)
+    const key = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`
+    const pt = trendMap.get(key)
+    if (!pt) continue
+    pt.jobsTotal += 1
+    if (job.status === 'succeeded') pt.jobsSucceeded += 1
+    else if (job.status === 'failed') pt.jobsFailed += 1
+    pt.creditsConsumed += Math.max(0, (job.credits_cost || 0) - (job.credits_refunded || 0))
+  }
+
+  const trend7d = days.map((k) => trendMap.get(k)!)
+  const recentFailures: AdminOverviewRecentFailureItem[] = (recentFailuresRes.results || []).map((r) => ({
+    id: r.id,
+    username: r.username || '未知用户',
+    provider: r.provider,
+    profileName: r.profile_name,
+    channelName: r.channel_name,
+    supplierName: r.supplier_name,
+    errorMessage: r.error_message || '未知错误',
+    createdAt: r.created_at,
+  }))
 
   const payload: AdminOverviewPayload = {
     usersTotal: usersStats?.total ?? 0,
@@ -169,6 +510,9 @@ adminRoutes.get('/overview', async (c) => {
     r2TotalBytes: assetsStats?.total_bytes ?? 0,
     encryptionConfigured: Boolean(c.env.APP_ENCRYPTION_KEY?.trim()),
     allowRegistration: platformCfg.allowRegistration,
+    trend7d,
+    recentFailures,
+    staleProcessingCount: staleRow?.cnt ?? 0,
   }
 
   c.header('Cache-Control', 'no-store')
@@ -686,9 +1030,11 @@ adminRoutes.post('/providers/:id/channels', async (c) => {
   }
 
   const supplierId = typeof body.supplierId === 'string' ? body.supplierId.trim() : ''
-  const supplier = await c.env.DB.prepare(`SELECT id, name FROM suppliers WHERE id = ?`)
+  const supplier = await c.env.DB.prepare(
+    `SELECT id, name, enabled, api_key_encrypted FROM suppliers WHERE id = ?`
+  )
     .bind(supplierId)
-    .first<{ id: string; name: string }>()
+    .first<{ id: string; name: string; enabled: number; api_key_encrypted: string }>()
   if (!supplier) {
     return c.json({ error: { message: '请选择有效的供应商' } }, 400)
   }
@@ -700,6 +1046,17 @@ adminRoutes.post('/providers/:id/channels', async (c) => {
   }
 
   const enabled = typeof body.enabled === 'boolean' ? (body.enabled ? 1 : 0) : 1
+  if (enabled === 1 && (supplier.enabled !== 1 || !supplier.api_key_encrypted)) {
+    return c.json(
+      {
+        error: {
+          message:
+            '所选供应商已停用或尚未配置 API Key，请先在「03. 供应商凭证」完善后再启用渠道（或取消勾选启用）',
+        },
+      },
+      400
+    )
+  }
   const model =
     typeof body.model === 'string' && body.model.trim()
       ? body.model.trim()
@@ -780,9 +1137,11 @@ adminRoutes.put('/channels/:channelId', async (c) => {
     typeof body.supplierId === 'string' && body.supplierId.trim()
       ? body.supplierId.trim()
       : existing.supplier_id
-  const supplier = await c.env.DB.prepare(`SELECT id, name FROM suppliers WHERE id = ?`)
+  const supplier = await c.env.DB.prepare(
+    `SELECT id, name, enabled, api_key_encrypted FROM suppliers WHERE id = ?`
+  )
     .bind(supplierId)
-    .first<{ id: string; name: string }>()
+    .first<{ id: string; name: string; enabled: number; api_key_encrypted: string }>()
   if (!supplier) {
     return c.json({ error: { message: '所选供应商不存在' } }, 400)
   }
@@ -792,6 +1151,17 @@ adminRoutes.put('/channels/:channelId', async (c) => {
       ? body.name.trim().slice(0, 60) || supplier.name.trim().slice(0, 60)
       : existing.name
   const enabled = typeof body.enabled === 'boolean' ? (body.enabled ? 1 : 0) : existing.enabled
+  if (enabled === 1 && (supplier.enabled !== 1 || !supplier.api_key_encrypted)) {
+    return c.json(
+      {
+        error: {
+          message:
+            '所选供应商已停用或尚未配置 API Key，请先在「03. 供应商凭证」完善后再启用渠道（或取消勾选启用）',
+        },
+      },
+      400
+    )
+  }
   const model =
     typeof body.model === 'string' && body.model.trim() ? body.model.trim() : existing.model
   const customModel =
@@ -996,8 +1366,6 @@ adminRoutes.put('/settings', async (c) => {
       ? requestedDefaultStyle
       : 'none'
 
-  const stylePromptOverrides: Record<string, string> = {}
-
   const validatedPoseSanitize =
     body.poseSanitize !== undefined ? validatePoseSanitizeInput(body.poseSanitize) : null
   if (body.poseSanitize !== undefined && validatedPoseSanitize === null) {
@@ -1008,12 +1376,6 @@ adminRoutes.put('/settings', async (c) => {
     registerBonusCredits: bonus,
     allowRegistration:
       typeof body.allowRegistration === 'boolean' ? body.allowRegistration : current.allowRegistration,
-    defaultSafeMode:
-      typeof body.defaultSafeMode === 'boolean' ? body.defaultSafeMode : current.defaultSafeMode,
-    allowUserNsfwUnlock:
-      typeof body.allowUserNsfwUnlock === 'boolean'
-        ? body.allowUserNsfwUnlock
-        : current.allowUserNsfwUnlock,
     defaultStylePreset,
     defaultPromptPrefix:
       typeof body.defaultPromptPrefix === 'string'
@@ -1036,7 +1398,6 @@ adminRoutes.put('/settings', async (c) => {
     styleCategories: nextStyleCategories,
     styleSubcategories: nextStyleSubcategories,
     stylePresets: nextStylePresets,
-    stylePromptOverrides,
     imagePassMode:
       body.imagePassMode === 'url' || body.imagePassMode === 'base64'
         ? body.imagePassMode
@@ -1046,8 +1407,115 @@ adminRoutes.put('/settings', async (c) => {
   }
 
   await savePlatformConfig(c.env.DB, next)
+
+  // 自动清理已从画风预设中删除或替换掉的 R2 示意图孤儿对象
+  const nextStyleKeys = new Set(
+    nextStylePresets.map((p) => extractStyleAssetKey(p.previewUrl)).filter((k): k is string => Boolean(k))
+  )
+  const obsoleteKeys = new Set<string>()
+  for (const prevPreset of current.stylePresets) {
+    const key = extractStyleAssetKey(prevPreset.previewUrl)
+    if (key && !nextStyleKeys.has(key)) {
+      obsoleteKeys.add(key)
+    }
+  }
+  if (obsoleteKeys.size > 0) {
+    await Promise.allSettled(Array.from(obsoleteKeys, (key) => c.env.BUCKET.delete(key)))
+  }
+
   c.header('Cache-Control', 'no-store')
   return c.json({ platform: next })
+})
+
+adminRoutes.get('/r2-cleanup', async (c) => {
+  const [platform, styleList, stitchedStats, expiredStats] = await Promise.all([
+    getPlatformConfig(c.env.DB),
+    c.env.BUCKET.list({ prefix: 'styles/', limit: 1000 }),
+    c.env.DB.prepare(
+      `SELECT COUNT(*) AS cnt, COALESCE(SUM(bytes), 0) AS bytes
+       FROM uploaded_assets
+       WHERE purpose = 'stitched'`
+    ).first<{ cnt: number; bytes: number }>(),
+    c.env.DB.prepare(
+      `SELECT COUNT(*) AS cnt, COALESCE(SUM(bytes), 0) AS bytes
+       FROM uploaded_assets
+       WHERE purpose = 'stitched' AND created_at < ?`
+    )
+      .bind(Date.now() - 24 * 60 * 60 * 1000)
+      .first<{ cnt: number; bytes: number }>(),
+  ])
+
+  const activeStyleKeys = new Set(
+    platform.stylePresets
+      .map((p: StylePresetItem) => extractStyleAssetKey(p.previewUrl))
+      .filter((k): k is string => Boolean(k))
+  )
+
+  let orphanStyleKeysCount = 0
+  let orphanStyleBytes = 0
+  for (const obj of styleList.objects || []) {
+    if (!activeStyleKeys.has(obj.key)) {
+      orphanStyleKeysCount += 1
+      orphanStyleBytes += obj.size || 0
+    }
+  }
+
+  c.header('Cache-Control', 'no-store')
+  return c.json({
+    orphanStyleKeysCount,
+    orphanStyleBytes,
+    expiredStitchedCount: expiredStats?.cnt ?? 0,
+    expiredStitchedBytes: expiredStats?.bytes ?? 0,
+    totalStitchedCount: stitchedStats?.cnt ?? 0,
+    totalStitchedBytes: stitchedStats?.bytes ?? 0,
+  })
+})
+
+adminRoutes.post('/r2-cleanup', async (c) => {
+  const cutoff = Date.now() - 24 * 60 * 60 * 1000
+  const [platform, styleList, expiredRowsRes] = await Promise.all([
+    getPlatformConfig(c.env.DB),
+    c.env.BUCKET.list({ prefix: 'styles/', limit: 1000 }),
+    c.env.DB.prepare(
+      `SELECT id, r2_key, bytes
+       FROM uploaded_assets
+       WHERE purpose = 'stitched' AND created_at < ?
+       LIMIT 200`
+    )
+      .bind(cutoff)
+      .all<{ id: string; r2_key: string; bytes: number }>(),
+  ])
+
+  const activeStyleKeys = new Set(
+    platform.stylePresets
+      .map((p: StylePresetItem) => extractStyleAssetKey(p.previewUrl))
+      .filter((k): k is string => Boolean(k))
+  )
+
+  const orphanStyleObjs = (styleList.objects || []).filter((obj) => !activeStyleKeys.has(obj.key))
+  const expiredStitched = expiredRowsRes.results || []
+
+  let freedBytes = 0
+  if (orphanStyleObjs.length > 0) {
+    await Promise.allSettled(orphanStyleObjs.map((obj) => c.env.BUCKET.delete(obj.key)))
+    for (const obj of orphanStyleObjs) freedBytes += obj.size || 0
+  }
+
+  if (expiredStitched.length > 0) {
+    await Promise.allSettled(expiredStitched.map((row) => c.env.BUCKET.delete(row.r2_key)))
+    const stmts = expiredStitched.map((row) =>
+      c.env.DB.prepare(`DELETE FROM uploaded_assets WHERE id = ?`).bind(row.id)
+    )
+    await c.env.DB.batch(stmts)
+    for (const row of expiredStitched) freedBytes += row.bytes || 0
+  }
+
+  c.header('Cache-Control', 'no-store')
+  return c.json({
+    deletedStylesCount: orphanStyleObjs.length,
+    deletedStitchedCount: expiredStitched.length,
+    freedBytes,
+  })
 })
 
 adminRoutes.get('/wechat', async (c) => {
@@ -1162,7 +1630,7 @@ adminRoutes.get('/users', async (c) => {
 })
 
 adminRoutes.post('/users', async (c) => {
-  const adminUser = c.get('user')!
+  const adminUser = c.get('adminUser')!
   let body: Record<string, unknown>
   try {
     body = await c.req.json()
@@ -1247,7 +1715,7 @@ adminRoutes.post('/users', async (c) => {
 })
 
 adminRoutes.patch('/users/:id', async (c) => {
-  const adminUser = c.get('user')!
+  const adminUser = c.get('adminUser')!
   const targetUserId = c.req.param('id')
   let body: Record<string, unknown>
   try {
@@ -1326,7 +1794,7 @@ adminRoutes.patch('/users/:id', async (c) => {
 })
 
 adminRoutes.post('/users/:id/credits', async (c) => {
-  const adminUser = c.get('user')!
+  const adminUser = c.get('adminUser')!
   const targetUserId = c.req.param('id')
   let body: Record<string, unknown>
   try {
@@ -1355,7 +1823,7 @@ adminRoutes.post('/users/:id/credits', async (c) => {
 })
 
 adminRoutes.patch('/users/:id/status', async (c) => {
-  const adminUser = c.get('user')!
+  const adminUser = c.get('adminUser')!
   const targetUserId = c.req.param('id')
   let body: Record<string, unknown>
   try {
@@ -1394,25 +1862,112 @@ adminRoutes.patch('/users/:id/status', async (c) => {
 })
 
 adminRoutes.get('/ledger', async (c) => {
-  const limit = Math.min(200, Math.max(1, Number(c.req.query('limit') || '80') || 80))
-  const res = await c.env.DB.prepare(
-    `SELECT l.*, u.username, u.admin_note AS user_admin_note
-     FROM credit_ledger l
-     LEFT JOIN users u ON u.id = l.user_id
-     ORDER BY l.created_at DESC
-     LIMIT ?`
-  )
-    .bind(limit)
-    .all<any>()
+  const limit = Math.min(100, Math.max(1, Number(c.req.query('limit') || '50') || 50))
+  const offset = Math.max(0, Number(c.req.query('offset') || '0') || 0)
+  const q = (c.req.query('q') || '').trim().toLowerCase()
+  const type = (c.req.query('type') || 'all').trim()
+
+  const clauses: string[] = []
+  const bindings: unknown[] = []
+  if (
+    type &&
+    type !== 'all' &&
+    ['register_bonus', 'redeem_code', 'admin_adjust', 'generate_deduct', 'generate_refund'].includes(type)
+  ) {
+    clauses.push('l.type = ?')
+    bindings.push(type)
+  }
+  if (q) {
+    const pattern = `%${q}%`
+    clauses.push(
+      `(LOWER(COALESCE(u.username, '')) LIKE ? OR LOWER(COALESCE(u.admin_note, '')) LIKE ? OR LOWER(COALESCE(l.note, '')) LIKE ?)`
+    )
+    bindings.push(pattern, pattern, pattern)
+  }
+  const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''
+
+  const [res, countRes] = await Promise.all([
+    c.env.DB.prepare(
+      `SELECT l.*, u.username, u.admin_note AS user_admin_note
+       FROM credit_ledger l
+       LEFT JOIN users u ON u.id = l.user_id
+       ${where}
+       ORDER BY l.created_at DESC
+       LIMIT ? OFFSET ?`
+    )
+      .bind(...bindings, limit, offset)
+      .all<any>(),
+    c.env.DB.prepare(
+      `SELECT COUNT(*) AS total
+       FROM credit_ledger l
+       LEFT JOIN users u ON u.id = l.user_id
+       ${where}`
+    )
+      .bind(...bindings)
+      .first<{ total: number }>(),
+  ])
 
   c.header('Cache-Control', 'no-store')
-  return c.json({ items: (res.results || []).map(mapLedgerRow) })
+  return c.json({
+    items: (res.results || []).map(mapLedgerRow),
+    total: countRes?.total ?? 0,
+  })
 })
 
 adminRoutes.get('/redeem-codes', async (c) => {
-  const res = await c.env.DB.prepare(
-    `SELECT * FROM redeem_codes ORDER BY created_at DESC LIMIT 200`
-  ).all<any>()
+  const limit = Math.min(100, Math.max(1, Number(c.req.query('limit') || '50') || 50))
+  const offset = Math.max(0, Number(c.req.query('offset') || '0') || 0)
+  const filter = (c.req.query('filter') || 'all').trim()
+  const q = (c.req.query('q') || '').trim().toLowerCase()
+  const now = Date.now()
+
+  const clauses: string[] = []
+  const bindings: unknown[] = []
+  if (filter === 'active') {
+    clauses.push(`status = 'active' AND used_count < max_uses AND (expires_at IS NULL OR expires_at > ?)`)
+    bindings.push(now)
+  } else if (filter === 'exhausted') {
+    clauses.push(`used_count >= max_uses`)
+  } else if (filter === 'disabled') {
+    clauses.push(`status = 'disabled'`)
+  } else if (filter === 'expired') {
+    clauses.push(`expires_at IS NOT NULL AND expires_at <= ?`)
+    bindings.push(now)
+  }
+  if (q) {
+    const pattern = `%${q}%`
+    clauses.push(`(LOWER(code) LIKE ? OR LOWER(COALESCE(note, '')) LIKE ?)`)
+    bindings.push(pattern, pattern)
+  }
+  const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''
+
+  const [res, countRes, summaryRes] = await Promise.all([
+    c.env.DB.prepare(
+      `SELECT * FROM redeem_codes ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`
+    )
+      .bind(...bindings, limit, offset)
+      .all<any>(),
+    c.env.DB.prepare(`SELECT COUNT(*) AS total FROM redeem_codes ${where}`)
+      .bind(...bindings)
+      .first<{ total: number }>(),
+    c.env.DB.prepare(
+      `SELECT
+         COUNT(*) AS all_count,
+         SUM(CASE WHEN status = 'active' AND used_count < max_uses AND (expires_at IS NULL OR expires_at > ?) THEN 1 ELSE 0 END) AS active_count,
+         SUM(CASE WHEN used_count >= max_uses THEN 1 ELSE 0 END) AS exhausted_count,
+         SUM(CASE WHEN status = 'disabled' THEN 1 ELSE 0 END) AS disabled_count,
+         SUM(CASE WHEN expires_at IS NOT NULL AND expires_at <= ? THEN 1 ELSE 0 END) AS expired_count
+       FROM redeem_codes`
+    )
+      .bind(now, now)
+      .first<{
+        all_count: number
+        active_count: number | null
+        exhausted_count: number | null
+        disabled_count: number | null
+        expired_count: number | null
+      }>(),
+  ])
 
   c.header('Cache-Control', 'no-store')
   return c.json({
@@ -1428,11 +1983,19 @@ adminRoutes.get('/redeem-codes', async (c) => {
       createdBy: r.created_by,
       createdAt: r.created_at,
     })),
+    total: countRes?.total ?? 0,
+    counts: {
+      all: summaryRes?.all_count ?? 0,
+      active: summaryRes?.active_count ?? 0,
+      exhausted: summaryRes?.exhausted_count ?? 0,
+      disabled: summaryRes?.disabled_count ?? 0,
+      expired: summaryRes?.expired_count ?? 0,
+    },
   })
 })
 
 adminRoutes.post('/redeem-codes', async (c) => {
-  const adminUser = c.get('user')!
+  const adminUser = c.get('adminUser')!
   let body: Record<string, unknown>
   try {
     body = await c.req.json()
@@ -1491,6 +2054,7 @@ adminRoutes.patch('/redeem-codes/:id', async (c) => {
 adminRoutes.get('/generations', async (c) => {
   await reapStaleProcessingJobs(c.env.DB)
   const limit = Math.min(100, Math.max(1, Number(c.req.query('limit') || '50') || 50))
+  const offset = Math.max(0, Number(c.req.query('offset') || '0') || 0)
   const status = (c.req.query('status') || '').trim()
   const provider = (c.req.query('provider') || '').trim()
   const q = (c.req.query('q') || '').trim().toLowerCase()
@@ -1514,19 +2078,59 @@ adminRoutes.get('/generations', async (c) => {
   }
   const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''
 
-  const res = await c.env.DB.prepare(
-    `SELECT j.*, u.username
-     FROM generation_jobs j
-     LEFT JOIN users u ON u.id = j.user_id
-     ${where}
-     ORDER BY j.created_at DESC
-     LIMIT ?`
-  )
-    .bind(...bindings, limit)
-    .all<JobRow>()
+  const [res, statsRow] = await Promise.all([
+    c.env.DB.prepare(
+      `SELECT j.*, u.username
+       FROM generation_jobs j
+       LEFT JOIN users u ON u.id = j.user_id
+       ${where}
+       ORDER BY j.created_at DESC
+       LIMIT ? OFFSET ?`
+    )
+      .bind(...bindings, limit, offset)
+      .all<JobRow>(),
+    c.env.DB.prepare(
+      `SELECT
+         COUNT(*) AS total,
+         SUM(CASE WHEN j.status = 'succeeded' THEN 1 ELSE 0 END) AS succeeded,
+         SUM(CASE WHEN j.status = 'failed' THEN 1 ELSE 0 END) AS failed,
+         SUM(CASE WHEN j.status = 'processing' THEN 1 ELSE 0 END) AS processing,
+         SUM(
+           CASE
+             WHEN j.trace_json IS NOT NULL
+              AND json_valid(j.trace_json) = 1
+              AND COALESCE(json_array_length(j.trace_json, '$.attempts'), 0) > 1
+             THEN 1 ELSE 0
+           END
+         ) AS retried
+       FROM generation_jobs j
+       LEFT JOIN users u ON u.id = j.user_id
+       ${where}`
+    )
+      .bind(...bindings)
+      .first<{
+        total: number
+        succeeded: number | null
+        failed: number | null
+        processing: number | null
+        retried: number | null
+      }>(),
+  ])
+
+  const stats: AdminJobsStatsSummary = {
+    total: statsRow?.total ?? 0,
+    succeeded: statsRow?.succeeded ?? 0,
+    failed: statsRow?.failed ?? 0,
+    processing: statsRow?.processing ?? 0,
+    retried: statsRow?.retried ?? 0,
+  }
 
   c.header('Cache-Control', 'no-store')
-  return c.json({ items: (res.results || []).map((row) => mapJobRow(row, { isAdmin: true })) })
+  return c.json({
+    items: (res.results || []).map((row) => mapJobRow(row, { isAdmin: true })),
+    total: stats.total,
+    stats,
+  })
 })
 
 adminRoutes.get('/generations/:id', async (c) => {

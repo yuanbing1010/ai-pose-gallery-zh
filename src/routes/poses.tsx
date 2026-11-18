@@ -14,9 +14,10 @@ import {
   ZoomInIcon,
 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { ANGLES, isNsfwPose, isNsfwPoseSystem, posesQuery } from '@/api/gallery'
+import { ANGLES, posesQuery } from '@/api/gallery'
 import Stack from '@/components/cards/Stack'
 import { EmptyState } from '@/components/common/EmptyState'
+import { HorizontalFilterStrip } from '@/components/common/HorizontalFilterStrip'
 import { ScrollToTopButton } from '@/components/common/ScrollToTopButton'
 import { ShowcaseDialog, ShowcaseStageTabs, type ShowcaseStageTabItem } from '@/components/common/ShowcaseDialog'
 import { GlowCard3D } from '@/components/costumes/GlowCard3D'
@@ -75,7 +76,7 @@ function useMasonryColumns() {
 
 function PosesPage() {
   const { data } = useSuspenseQuery(posesQuery)
-  const { recipe, togglePose, safeMode, poseDepthMode, setPoseDepthMode } = useStudio()
+  const { recipe, togglePose, poseDepthMode, setPoseDepthMode } = useStudio()
 
   const [line, setLine] = useState('')
   const [category, setCategory] = useState('all')
@@ -84,26 +85,19 @@ function PosesPage() {
   const [shown, setShown] = useState(60)
   const [filterOpen, setFilterOpen] = useState(false)
   const [flippedIds, setFlippedIds] = useState<Record<string, boolean>>({})
-  const [viewer, setViewer] = useState<{ groupIndex: number; item: PoseItem; dir?: 1 | -1 } | null>(null)
+  const [viewer, setViewer] = useState<{ groupIndex: number; item: PoseItem; dir?: 1 | -1; depth?: boolean } | null>(null)
   const [viewerOpen, setViewerOpen] = useState(false)
   const [viewerStageMode, setViewerStageMode] = useState<'3d' | 'stack' | 'zoom'>('3d')
   const searchInputRef = useRef<HTMLInputElement>(null)
 
-  const openViewer = (next: { groupIndex: number; item: PoseItem }) => {
+  const openViewer = (next: { groupIndex: number; item: PoseItem; depth?: boolean }) => {
     setViewer({ ...next, dir: 1 })
     setViewerOpen(true)
   }
 
-  const activeLine = safeMode && line && isNsfwPoseSystem(line) ? '' : line
-
-  const baseGroups = useMemo(
-    () => (safeMode ? data.groups.filter((g) => !isNsfwPose(g)) : data.groups),
-    [data.groups, safeMode]
-  )
-  const visibleLines = useMemo(
-    () => (safeMode ? data.lines.filter((l) => !isNsfwPoseSystem(l)) : data.lines),
-    [data.lines, safeMode]
-  )
+  const activeLine = line
+  const baseGroups = data.groups
+  const visibleLines = data.lines
 
   const lineOptions = useMemo(
     () =>
@@ -176,7 +170,7 @@ function PosesPage() {
             const dir: 1 | -1 = e.key === 'ArrowRight' ? 1 : -1
             const idx = grp.order.findIndex((x) => x.id === viewer.item.id)
             const nextItem = grp.order[(idx + dir + grp.order.length) % grp.order.length]
-            if (nextItem) setViewer({ groupIndex: viewer.groupIndex, item: nextItem, dir })
+            if (nextItem) setViewer((prev) => ({ groupIndex: viewer.groupIndex, item: nextItem, dir, depth: prev?.depth }))
             return
           }
           if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
@@ -186,7 +180,7 @@ function PosesPage() {
             if (nextIdx >= 0 && nextIdx < filteredGroups.length) {
               const nextGrp = filteredGroups[nextIdx]
               const nextItem = nextGrp.angles[viewer.item.角度] || nextGrp.order[0]
-              setViewer({ groupIndex: nextIdx, item: nextItem, dir })
+              setViewer((prev) => ({ groupIndex: nextIdx, item: nextItem, dir, depth: prev?.depth }))
             }
             return
           }
@@ -291,7 +285,7 @@ function PosesPage() {
                 : 'text-foreground hover:bg-muted/60'
             )}
           >
-            <div className={cn('text-[11px] whitespace-nowrap', activeLine === '' ? 'opacity-80' : 'text-muted-foreground')}>
+            <div className={cn('text-xs whitespace-nowrap', activeLine === '' ? 'opacity-80' : 'text-muted-foreground')}>
               全部姿势
             </div>
             <div className="mt-0.5 font-mono text-sm font-semibold tabular-nums">
@@ -319,7 +313,7 @@ function PosesPage() {
                     : 'text-foreground hover:bg-muted/60'
                 )}
               >
-                <div className={cn('text-[11px] whitespace-nowrap', active ? 'opacity-80' : 'text-muted-foreground')}>
+                <div className={cn('text-xs whitespace-nowrap', active ? 'opacity-80' : 'text-muted-foreground')}>
                   {lineShortLabel(opt.label)}
                 </div>
                 <div className="mt-0.5 font-mono text-sm font-semibold tabular-nums">
@@ -360,7 +354,7 @@ function PosesPage() {
                 <XIcon className="size-3" />
               </button>
             ) : (
-              <kbd className="ml-2 hidden shrink-0 rounded-md border border-border bg-muted px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground sm:inline-block">
+              <kbd className="ml-2 hidden shrink-0 rounded-md border border-border bg-muted px-1.5 py-0.5 font-mono text-xs text-muted-foreground sm:inline-block">
                 /
               </kbd>
             )}
@@ -379,11 +373,11 @@ function PosesPage() {
             <SlidersHorizontalIcon className="size-3.5" />
             <span>筛选</span>
             {activeFilterCount > 0 ? (
-              <span className="flex size-4 items-center justify-center rounded-full bg-background font-mono text-[10px] font-semibold text-foreground">
+              <span className="flex size-4 items-center justify-center rounded-full bg-background font-mono text-xs font-semibold text-foreground">
                 {activeFilterCount}
               </span>
             ) : (
-              <kbd className="hidden rounded-md border border-border bg-muted px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground sm:inline-block">
+              <kbd className="hidden rounded-md border border-border bg-muted px-1.5 py-0.5 font-mono text-xs text-muted-foreground sm:inline-block">
                 F
               </kbd>
             )}
@@ -429,7 +423,7 @@ function PosesPage() {
         </div>
 
         {/* 单行横向轻盈动作分类胶囊 */}
-        <div className="no-scrollbar flex items-center gap-1.5 overflow-x-auto pb-0.5">
+        <HorizontalFilterStrip>
           {angle && (
             <button
               type="button"
@@ -478,13 +472,13 @@ function PosesPage() {
                 )}
               >
                 {c.label}
-                <span className={cn('ml-1.5 font-mono text-[11px]', isActive ? 'opacity-80' : 'text-muted-foreground')}>
+                <span className={cn('ml-1.5 font-mono text-xs', isActive ? 'opacity-80' : 'text-muted-foreground')}>
                   {c.count}
                 </span>
               </button>
             )
           })}
-        </div>
+        </HorizontalFilterStrip>
       </div>
 
       {/* 真实姿势高度驱动的错落自由手牌瀑布流 */}
@@ -512,7 +506,7 @@ function PosesPage() {
                     flipAriaLabel="翻转查看深度图"
                     onFlipToggle={() => setFlippedIds((prev) => ({ ...prev, [group.key]: !prev[group.key] }))}
                     onPickToggle={() => togglePose({ ...item, useDepth: activeLayerIsDepth })}
-                    onOpenViewer={() => openViewer({ groupIndex: gIdx, item })}
+                    onOpenViewer={() => openViewer({ groupIndex: gIdx, item, depth: activeLayerIsDepth })}
                     media={
                       <div
                         style={{ aspectRatio: `${POSE_THUMB_WIDTH} / ${bounds.cropH}` }}
@@ -549,7 +543,7 @@ function PosesPage() {
                           alt={group.name}
                           className="h-full w-full object-contain"
                         />
-                        <span className="pointer-events-none absolute top-2 left-2 rounded-full bg-black/70 px-2 py-0.5 text-[11px] font-semibold text-white backdrop-blur-xs">
+                        <span className="pointer-events-none absolute top-2 left-2 rounded-full bg-black/70 px-2 py-0.5 text-xs font-semibold text-white backdrop-blur-xs">
                           {!poseDepthMode ? '深度图' : '素体白模'}
                         </span>
                       </div>
@@ -579,8 +573,9 @@ function PosesPage() {
       {viewer && (() => {
         const grp = filteredGroups[viewer.groupIndex]
         const it = viewer.item
-        const picked = recipe.pose?.id === it.id && Boolean(recipe.pose?.useDepth) === poseDepthMode
-        const activeImgPath = poseImagePath(it, poseDepthMode)
+        const viewerDepth = viewer.depth ?? poseDepthMode
+        const picked = recipe.pose?.id === it.id && Boolean(recipe.pose?.useDepth) === viewerDepth
+        const activeImgPath = poseImagePath(it, viewerDepth)
         const accent = getPoseAccent(it.分类, it.体系)
         const stackItems = grp ? ANGLES.map((a) => grp.angles[a]).filter(Boolean) : [it]
         const hasMultiAngles = stackItems.length > 1
@@ -596,7 +591,7 @@ function PosesPage() {
           const nextIdx = (viewer.groupIndex + delta + filteredGroups.length) % filteredGroups.length
           const nextGrp = filteredGroups[nextIdx]
           const nextItem = nextGrp.angles[it.角度] || nextGrp.order[0]
-          setViewer({ groupIndex: nextIdx, item: nextItem, dir: delta })
+          setViewer((prev) => ({ groupIndex: nextIdx, item: nextItem, dir: delta, depth: prev?.depth }))
         }
 
         return (
@@ -611,10 +606,10 @@ function PosesPage() {
             secondaryTag={it.角度}
             title={it.姿势名称}
             picked={picked}
-            pickLabel={picked ? '已在配方中（点击移除）' : `锁入角色配方（${poseDepthMode ? '深度图' : '白模'}）`}
-            onTogglePick={() => togglePose(it)}
+            pickLabel={picked ? '已在配方中（点击移除）' : `锁入角色配方（${viewerDepth ? '深度图' : '白模'}）`}
+            onTogglePick={() => togglePose({ ...it, useDepth: viewerDepth })}
             downloadHref={`/${activeImgPath}`}
-            downloadName={`${it.id}${poseDepthMode ? '_depth.webp' : '.png'}`}
+            downloadName={`${it.id}${viewerDepth ? '_depth.webp' : '.png'}`}
             downloadLabel="下载高清原图"
             externalHref={`/${activeImgPath}`}
             externalLabel="新窗口打开"
@@ -632,20 +627,20 @@ function PosesPage() {
                   <ZoomViewport
                     imageUrl={`/${activeImgPath}`}
                     alt={it.姿势名称}
-                    className="min-h-0 h-[56dvh] rounded-2xl border border-white/12 bg-[#161620] p-3"
+                    className="min-h-0 h-[56dvh] rounded-2xl border border-border bg-card dark:border-white/12 dark:bg-[#161620] p-3"
                   />
                 </div>
               ) : effectiveStageMode === 'stack' && hasMultiAngles ? (
                 <div className="h-[360px] w-[270px] pl-3 pt-2 sm:h-[420px] sm:w-[315px]">
                   <Stack
-                    key={`${grp?.key || it.id}-${poseDepthMode ? 'depth' : 'white'}`}
+                    key={`${grp?.key || it.id}-${viewerDepth ? 'depth' : 'white'}`}
                     layout="fan"
                     visible={stackItems.length}
                     spread={0.44}
                     depth={0.46}
                     radius={22}
                     frame={4}
-                    frameColor={poseDepthMode ? '#2B2B32' : '#F4F4F6'}
+                    frameColor={viewerDepth ? '#2B2B32' : '#F4F4F6'}
                     tilt={22}
                     speed={1.08}
                     sendToBackOnClick
@@ -655,7 +650,7 @@ function PosesPage() {
                       const nextItem = stackItems[nextIdx]
                       if (nextItem && nextItem.id !== it.id) {
                         const dir: 1 | -1 = nextIdx < activeAngleIdx ? -1 : 1
-                        setViewer({ groupIndex: viewer.groupIndex, item: nextItem, dir })
+                        setViewer((prev) => ({ groupIndex: viewer.groupIndex, item: nextItem, dir, depth: prev?.depth }))
                       }
                     }}
                     cards={stackItems.map((angleItem, idx) => (
@@ -663,11 +658,11 @@ function PosesPage() {
                         key={angleItem.id}
                         className={cn(
                           'relative h-full w-full overflow-hidden rounded-[18px]',
-                          poseDepthMode ? 'bg-[#2B2B32]' : 'bg-white'
+                          viewerDepth ? 'bg-[#2B2B32]' : 'bg-white'
                         )}
                       >
                         <img
-                          src={`/${poseImagePath(angleItem, poseDepthMode)}`}
+                          src={`/${poseImagePath(angleItem, viewerDepth)}`}
                           alt={`${angleItem.姿势名称} · ${angleItem.角度}`}
                           draggable={false}
                           className="h-full w-full object-contain"
@@ -676,7 +671,7 @@ function PosesPage() {
                           <span className="rounded-full bg-black/75 px-2.5 py-0.5 text-xs font-medium text-white ring-1 ring-white/15 backdrop-blur-md">
                             {angleItem.角度}
                           </span>
-                          <span className="rounded-full bg-black/60 px-2 py-0.5 font-mono text-xs text-zinc-200 backdrop-blur-md">
+                          <span className="rounded-full bg-black/60 px-2 py-0.5 font-mono text-xs text-foreground backdrop-blur-md">
                             {idx + 1}/{stackItems.length}
                           </span>
                         </div>
@@ -697,9 +692,9 @@ function PosesPage() {
                         aria-label="上一视角"
                         onClick={() => {
                           const prev = stackItems[(activeAngleIdx - 1 + stackItems.length) % stackItems.length]
-                          setViewer({ groupIndex: viewer.groupIndex, item: prev, dir: -1 })
+                          setViewer((v) => ({ groupIndex: viewer.groupIndex, item: prev, dir: -1, depth: v?.depth }))
                         }}
-                        className="absolute top-1/2 left-4 z-20 flex size-9 -translate-y-1/2 items-center justify-center rounded-full bg-black/55 text-zinc-200 ring-1 ring-white/15 backdrop-blur-md transition-all hover:bg-white hover:text-black active:scale-95"
+                        className="absolute top-1/2 left-4 z-20 flex size-9 -translate-y-1/2 items-center justify-center rounded-full border border-border bg-background/85 text-foreground backdrop-blur-md transition-all hover:bg-primary hover:text-primary-foreground active:scale-95"
                       >
                         <ChevronLeftIcon className="size-4" />
                       </button>
@@ -708,9 +703,9 @@ function PosesPage() {
                         aria-label="下一视角"
                         onClick={() => {
                           const next = stackItems[(activeAngleIdx + 1) % stackItems.length]
-                          setViewer({ groupIndex: viewer.groupIndex, item: next, dir: 1 })
+                          setViewer((v) => ({ groupIndex: viewer.groupIndex, item: next, dir: 1, depth: v?.depth }))
                         }}
-                        className="absolute top-1/2 right-4 z-20 flex size-9 -translate-y-1/2 items-center justify-center rounded-full bg-black/55 text-zinc-200 ring-1 ring-white/15 backdrop-blur-md transition-all hover:bg-white hover:text-black active:scale-95"
+                        className="absolute top-1/2 right-4 z-20 flex size-9 -translate-y-1/2 items-center justify-center rounded-full border border-border bg-background/85 text-foreground backdrop-blur-md transition-all hover:bg-primary hover:text-primary-foreground active:scale-95"
                       >
                         <ChevronRightIcon className="size-4" />
                       </button>
@@ -728,7 +723,7 @@ function PosesPage() {
               effectiveStageMode !== 'zoom' ? (
                 <>
                   {hasMultiAngles && (
-                    <div className="flex items-center gap-2 rounded-full bg-black/55 px-3 py-1.5 ring-1 ring-white/12 backdrop-blur-md">
+                    <div className="flex items-center gap-2 rounded-full border border-border bg-background/85 px-3 py-1.5 backdrop-blur-md">
                       <div className="flex items-center gap-1.5">
                         {stackItems.map((angleItem, idx) => {
                           const active = idx === activeAngleIdx
@@ -739,22 +734,22 @@ function PosesPage() {
                               aria-label={`切换到${angleItem.角度}`}
                               onClick={() => {
                                 const dir: 1 | -1 = idx < activeAngleIdx ? -1 : 1
-                                setViewer({ groupIndex: viewer.groupIndex, item: angleItem, dir })
+                                setViewer((v) => ({ groupIndex: viewer.groupIndex, item: angleItem, dir, depth: v?.depth }))
                               }}
                               className={cn(
                                 'h-2 rounded-full transition-all duration-300',
-                                active ? 'w-6 bg-white' : 'w-2 bg-white/25 hover:bg-white/50'
+                                active ? 'w-6 bg-foreground' : 'w-2 bg-muted-foreground/35 hover:bg-muted-foreground/65'
                               )}
                             />
                           )
                         })}
                       </div>
-                      <span className="pl-1 font-mono text-[11px] text-zinc-300">
+                      <span className="pl-1 font-mono text-xs text-muted-foreground">
                         {it.角度} · {activeAngleIdx + 1}/{stackItems.length}
                       </span>
                     </div>
                   )}
-                  <p className="text-xs text-zinc-400">
+                  <p className="text-xs text-muted-foreground">
                     {effectiveStageMode === 'stack'
                       ? '点击或拖拽牌面丝滑切换多视角'
                       : '悬停倾斜 · 按住拖拽旋转 · ←/→ 切视角 · ↑/↓ 换姿势'}
@@ -765,24 +760,32 @@ function PosesPage() {
             sidebarBody={
               <div className="space-y-5">
                 <div className="space-y-2.5">
-                  <div className="text-xs font-medium tracking-wide text-zinc-400">参考底图类型</div>
-                  <div className="grid grid-cols-2 gap-1.5 rounded-2xl bg-white/[0.04] p-1 ring-1 ring-white/[0.08]">
+                  <div className="text-xs font-medium tracking-wide text-muted-foreground">参考底图类型</div>
+                  <div className="grid grid-cols-2 gap-1.5 rounded-2xl border border-border bg-muted/45 p-1">
                     <button
                       type="button"
-                      onClick={() => setPoseDepthMode(false)}
+                      onClick={() => {
+                        setPoseDepthMode(false)
+                        setViewer((v) => (v ? { ...v, depth: false } : v))
+                        if (grp) setFlippedIds((prev) => ({ ...prev, [grp.key]: false }))
+                      }}
                       className={cn(
                         'rounded-xl py-2 text-xs font-medium transition-all',
-                        !poseDepthMode ? 'bg-white text-black shadow-sm' : 'text-zinc-300 hover:text-white'
+                        !viewerDepth ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:text-white'
                       )}
                     >
                       3D 素体白模
                     </button>
                     <button
                       type="button"
-                      onClick={() => setPoseDepthMode(true)}
+                      onClick={() => {
+                        setPoseDepthMode(true)
+                        setViewer((v) => (v ? { ...v, depth: true } : v))
+                        if (grp) setFlippedIds((prev) => ({ ...prev, [grp.key]: false }))
+                      }}
                       className={cn(
                         'rounded-xl py-2 text-xs font-medium transition-all',
-                        poseDepthMode ? 'bg-white text-black shadow-sm' : 'text-zinc-300 hover:text-white'
+                        viewerDepth ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:text-white'
                       )}
                     >
                       深度图
@@ -793,8 +796,8 @@ function PosesPage() {
                 {hasMultiAngles && (
                   <div className="space-y-2.5">
                     <div className="flex items-center justify-between text-xs">
-                      <span className="font-medium tracking-wide text-zinc-400">快速切换视角</span>
-                      <span className="font-mono text-zinc-500">← / →</span>
+                      <span className="font-medium tracking-wide text-muted-foreground">快速切换视角</span>
+                      <span className="font-mono text-muted-foreground">← / →</span>
                     </div>
                     <div className="grid grid-cols-5 gap-1.5">
                       {stackItems.map((angItem, idx) => {
@@ -805,13 +808,13 @@ function PosesPage() {
                             type="button"
                             onClick={() => {
                               const dir: 1 | -1 = idx < activeAngleIdx ? -1 : 1
-                              setViewer({ groupIndex: viewer.groupIndex, item: angItem, dir })
+                              setViewer((v) => ({ groupIndex: viewer.groupIndex, item: angItem, dir, depth: v?.depth }))
                             }}
                             className={cn(
                               'rounded-xl py-2 text-xs font-medium transition-all',
                               isCurrent
-                                ? 'bg-white text-black shadow-sm'
-                                : 'bg-white/[0.05] text-zinc-300 ring-1 ring-white/[0.09] hover:bg-white/[0.12] hover:text-white'
+                                ? 'bg-primary text-primary-foreground shadow-sm'
+                                : 'border border-border bg-muted/40 text-muted-foreground hover:bg-muted hover:text-foreground'
                             )}
                           >
                             {angItem.角度}
@@ -824,44 +827,48 @@ function PosesPage() {
 
                 <div className="space-y-2.5">
                   <div className="flex items-center justify-between text-xs">
-                    <span className="font-medium tracking-wide text-zinc-400">姿势档案</span>
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium tracking-wide text-muted-foreground">姿势档案</span>
+                      {filteredGroups.length > 1 && (
+                        <div className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            aria-label="上一组姿势"
+                            onClick={() => switchGroup(-1)}
+                            className="flex size-6 items-center justify-center rounded-lg border border-border bg-muted/50 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                          >
+                            <ChevronLeftIcon className="size-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            aria-label="下一组姿势"
+                            onClick={() => switchGroup(1)}
+                            className="flex size-6 items-center justify-center rounded-lg border border-border bg-muted/50 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                          >
+                            <ChevronRightIcon className="size-3.5" />
+                          </button>
+                        </div>
+                      )}
+                    </div>
                     {filteredGroups.length > 1 && (
-                      <div className="flex items-center gap-1">
-                        <button
-                          type="button"
-                          aria-label="上一组姿势"
-                          onClick={() => switchGroup(-1)}
-                          className="flex size-6 items-center justify-center rounded-lg bg-white/[0.06] text-zinc-300 transition-colors hover:bg-white/15 hover:text-white"
-                        >
-                          <ChevronLeftIcon className="size-3.5" />
-                        </button>
-                        <span className="px-1 font-mono text-[11px] tabular-nums text-zinc-400">
-                          {viewer.groupIndex + 1}/{filteredGroups.length}
-                        </span>
-                        <button
-                          type="button"
-                          aria-label="下一组姿势"
-                          onClick={() => switchGroup(1)}
-                          className="flex size-6 items-center justify-center rounded-lg bg-white/[0.06] text-zinc-300 transition-colors hover:bg-white/15 hover:text-white"
-                        >
-                          <ChevronRightIcon className="size-3.5" />
-                        </button>
-                      </div>
+                      <span className="font-mono text-xs tabular-nums text-muted-foreground">
+                        {viewer.groupIndex + 1} / {filteredGroups.length}
+                      </span>
                     )}
                   </div>
-                  <dl className="grid grid-cols-[68px_1fr] gap-y-2 rounded-2xl bg-white/[0.04] p-3.5 text-xs ring-1 ring-white/[0.06]">
-                    <dt className="text-zinc-500">编号</dt>
-                    <dd className="font-mono text-zinc-200">{it.id}</dd>
-                    <dt className="text-zinc-500">动作体系</dt>
-                    <dd className="text-zinc-200">{it.体系}</dd>
-                    <dt className="text-zinc-500">动作分类</dt>
-                    <dd className="text-zinc-200">{it.分类}</dd>
-                    <dt className="text-zinc-500">当前视角</dt>
-                    <dd className="text-zinc-200">{it.角度}</dd>
-                    <dt className="text-zinc-500">底图模式</dt>
-                    <dd className="text-zinc-200">{poseDepthMode ? '深度图' : '素体白模'}</dd>
-                    <dt className="text-zinc-500">可用视角</dt>
-                    <dd className="font-mono text-zinc-200">{stackItems.length} 视角</dd>
+                  <dl className="grid grid-cols-[68px_1fr] gap-y-2 rounded-2xl border border-border bg-muted/45 p-3.5 text-xs">
+                    <dt className="text-muted-foreground">编号</dt>
+                    <dd className="font-mono text-foreground">{it.id}</dd>
+                    <dt className="text-muted-foreground">动作体系</dt>
+                    <dd className="text-foreground">{it.体系}</dd>
+                    <dt className="text-muted-foreground">动作分类</dt>
+                    <dd className="text-foreground">{it.分类}</dd>
+                    <dt className="text-muted-foreground">当前视角</dt>
+                    <dd className="text-foreground">{it.角度}</dd>
+                    <dt className="text-muted-foreground">底图模式</dt>
+                    <dd className="text-foreground">{viewerDepth ? '深度图' : '素体白模'}</dd>
+                    <dt className="text-muted-foreground">可用视角</dt>
+                    <dd className="font-mono text-foreground">{stackItems.length} 视角</dd>
                   </dl>
                 </div>
               </div>

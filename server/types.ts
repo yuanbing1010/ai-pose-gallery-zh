@@ -9,6 +9,7 @@ export interface Env {
   DEV_ASSETS_ORIGIN?: string
   BOOTSTRAP_ADMIN_USERNAME?: string
   BOOTSTRAP_ADMIN_PASSWORD?: string
+  BOOTSTRAP_SETUP_TOKEN?: string
   GEMINI_API_KEY?: string
   OPENAI_API_KEY?: string
   XAI_API_KEY?: string
@@ -19,6 +20,8 @@ export interface Env {
 export interface AppVariables {
   user: PublicUser | null
   sessionId: string | null
+  adminUser: PublicUser | null
+  adminSessionId: string | null
 }
 
 export type AppEnv = {

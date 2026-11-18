@@ -410,7 +410,6 @@ function AmbientSpriteParticles({
       aria-hidden="true"
       data-particle-kind="gpt-bubbles"
       className="pointer-events-none absolute inset-[-8%] z-20"
-      style={{ transform: `translateZ(${isLg ? 16 : 11}px)` }}
     >
       {/* 翡翠微光底晕 + 持续上浮的通透翡翠玻璃泡泡（纯 GPU transform/opacity） */}
       <span
@@ -436,21 +435,13 @@ function AmbientSpriteParticles({
                 height: px,
                 border: `1px solid ${b.rim}`,
                 background:
-                  'radial-gradient(circle at 32% 28%, rgba(255,255,255,0.92) 0%, rgba(167,243,208,0.68) 38%, rgba(16,185,129,0.34) 76%, rgba(5,150,105,0.52) 100%)',
+                  'radial-gradient(circle at 30% 26%, rgba(255,255,255,0.96) 0%, rgba(255,255,255,0.92) 14%, rgba(167,243,208,0.7) 38%, rgba(16,185,129,0.34) 76%, rgba(5,150,105,0.52) 100%)',
                 '--bub-dx': b.dx,
                 '--bub-dur': b.dur,
                 '--bub-delay': b.delay,
               } as CSSProperties
             }
-          >
-            <span
-              className="absolute top-[18%] left-[20%] block rounded-full bg-white/95"
-              style={{
-                width: Math.max(1.8, px * 0.28),
-                height: Math.max(1.8, px * 0.28),
-              }}
-            />
-          </span>
+          />
         )
       })}
     </span>
@@ -539,14 +530,14 @@ export function ArtistSprite3D({
     if (observer && targetEl) observer.observe(targetEl)
 
     window.addEventListener('resize', refreshWatchPose, { passive: true })
-    window.addEventListener('scroll', refreshWatchPose, { passive: true })
-    const timer = window.setInterval(refreshWatchPose, 160)
+    window.addEventListener('scroll', refreshWatchPose, { capture: true, passive: true })
+    window.addEventListener('pointerup', refreshWatchPose, { passive: true })
 
     return () => {
       observer?.disconnect()
       window.removeEventListener('resize', refreshWatchPose)
-      window.removeEventListener('scroll', refreshWatchPose)
-      window.clearInterval(timer)
+      window.removeEventListener('scroll', refreshWatchPose, { capture: true })
+      window.removeEventListener('pointerup', refreshWatchPose)
     }
   }, [isPeerWatching, watchTargetSelector])
 
@@ -670,6 +661,8 @@ export function ArtistSprite3D({
     return { x: -0.35, y: -0.45 }
   }, [hovered, isPeerWatching, pointerTiltRef])
 
+  const lastPoseTransformRef = useRef('')
+
   const handlePoseFrame = useCallback(
     ({
       yawDeg,
@@ -689,7 +682,10 @@ export function ArtistSprite3D({
       const el = brushWrapperRef.current
       if (!el) return
       const zPx = isLg ? 20 : 15
-      el.style.transform = `perspective(520px) translate3d(0px, ${bobY.toFixed(2)}px, 0px) rotateZ(${rollDeg.toFixed(2)}deg) rotateX(${pitchDeg.toFixed(2)}deg) rotateY(${yawDeg.toFixed(2)}deg) translateZ(${zPx}px) scale(${scaleX.toFixed(3)}, ${scaleY.toFixed(3)})`
+      const nextTransform = `perspective(520px) translate3d(0px, ${bobY.toFixed(2)}px, 0px) rotateZ(${rollDeg.toFixed(2)}deg) rotateX(${pitchDeg.toFixed(2)}deg) rotateY(${yawDeg.toFixed(2)}deg) translateZ(${zPx}px) scale(${scaleX.toFixed(3)}, ${scaleY.toFixed(3)})`
+      if (nextTransform === lastPoseTransformRef.current) return
+      lastPoseTransformRef.current = nextTransform
+      el.style.transform = nextTransform
     },
     [isLg]
   )
@@ -856,7 +852,7 @@ export function ArtistSprite3D({
           <motion.span
             initial={{ opacity: 0, y: 4, scale: 0.85 }}
             animate={{ opacity: 1, y: -4, scale: 1 }}
-            className="absolute -top-7 -right-8 rounded-full border border-border/80 bg-card px-2 py-0.5 text-[10px] font-bold whitespace-nowrap text-foreground shadow-sm"
+            className="absolute -top-7 -right-8 rounded-full border border-border/80 bg-card px-2 py-0.5 text-xs font-bold whitespace-nowrap text-foreground shadow-sm"
           >
             呼…擦擦汗继续画 ✦
           </motion.span>
@@ -885,7 +881,7 @@ export function ArtistSprite3D({
           <motion.span
             initial={{ opacity: 0, y: 6, scale: 0.85 }}
             animate={{ opacity: 1, y: -6, scale: 1 }}
-            className="absolute -top-8 left-1/2 -translate-x-1/2 rounded-full border border-border/80 bg-card px-2.5 py-0.5 text-[11px] font-extrabold whitespace-nowrap text-foreground shadow-md"
+            className="absolute -top-8 left-1/2 -translate-x-1/2 rounded-full border border-border/80 bg-card px-2.5 py-0.5 text-xs font-extrabold whitespace-nowrap text-foreground shadow-md"
           >
             画好啦！交作业 ✦
           </motion.span>
@@ -1126,10 +1122,10 @@ interface PeekBrushLayout {
 
 function getPeekBrushLayout(idx: number, total: number): PeekBrushLayout {
   if (total <= 1) {
-    // 只有 1 支画笔：正中间垂直向上探出脑袋（配合加长画笔调高露出量）
+    // 只有 1 支画笔：正中间垂直向上探出脑袋，位于快捷色点底座后方
     return {
       leftPct: 50,
-      restBottomPx: -6,
+      restBottomPx: 4,
       hoverLiftPx: 14,
       tiltDeg: 0,
       hoverTiltDeg: 0,
@@ -1137,18 +1133,18 @@ function getPeekBrushLayout(idx: number, total: number): PeekBrushLayout {
   }
   if (total === 2) {
     return idx === 0
-      ? { leftPct: 33, restBottomPx: -5, hoverLiftPx: 14, tiltDeg: -13, hoverTiltDeg: -5 }
-      : { leftPct: 67, restBottomPx: -9, hoverLiftPx: 15, tiltDeg: 14, hoverTiltDeg: 5 }
+      ? { leftPct: 33, restBottomPx: 4, hoverLiftPx: 14, tiltDeg: -13, hoverTiltDeg: -5 }
+      : { leftPct: 67, restBottomPx: 2, hoverLiftPx: 15, tiltDeg: 14, hoverTiltDeg: 5 }
   }
   if (total === 3) {
-    if (idx === 0) return { leftPct: 24, restBottomPx: -9, hoverLiftPx: 14, tiltDeg: -16, hoverTiltDeg: -6 }
-    if (idx === 1) return { leftPct: 50, restBottomPx: -4, hoverLiftPx: 15, tiltDeg: 2, hoverTiltDeg: 0 }
-    return { leftPct: 76, restBottomPx: -10, hoverLiftPx: 14, tiltDeg: 15, hoverTiltDeg: 6 }
+    if (idx === 0) return { leftPct: 24, restBottomPx: 2, hoverLiftPx: 14, tiltDeg: -16, hoverTiltDeg: -6 }
+    if (idx === 1) return { leftPct: 50, restBottomPx: 5, hoverLiftPx: 15, tiltDeg: 2, hoverTiltDeg: 0 }
+    return { leftPct: 76, restBottomPx: 2, hoverLiftPx: 14, tiltDeg: 15, hoverTiltDeg: 6 }
   }
   const t = total > 1 ? idx / (total - 1) : 0.5
   return {
     leftPct: 18 + t * 64,
-    restBottomPx: idx % 2 === 0 ? -5 : -10,
+    restBottomPx: idx % 2 === 0 ? 4 : 2,
     hoverLiftPx: 14,
     tiltDeg: -16 + t * 32,
     hoverTiltDeg: (-16 + t * 32) * 0.4,
@@ -1173,6 +1169,7 @@ export interface ArtistStageSelectorProps {
   providers: ProviderPublicInfo[]
   providersLoaded: boolean
   selectedProvider: ImageProviderId
+  selectedProfileId?: string | null
   equippedBrushId?: string | null
   hasActiveBrush?: boolean
   hideHeldBrush?: boolean
@@ -1194,6 +1191,7 @@ export function ArtistStageSelector({
   providers,
   providersLoaded,
   selectedProvider,
+  selectedProfileId = null,
   equippedBrushId = null,
   hasActiveBrush = false,
   hideHeldBrush = false,
@@ -1268,10 +1266,9 @@ export function ArtistStageSelector({
       const toRect = targetEl.getBoundingClientRect()
       const startX = fromRect.left + fromRect.width * 0.5
       const startY = fromRect.top + fromRect.height * 0.42
-      // 精准对齐放大后画师的持笔右手位置 (-right-5 -bottom-0.5, 角度 -28deg, 宽 58px)
+      // 精准对齐画师右掌持笔位置 (-right-5 -bottom-0.5, 角度 -28deg, 宽 58px)
       const endX = toRect.right - 9
       const endY = toRect.bottom - 9
-      // 弧长均衡抛物线：流畅跃出底沿并平稳落入掌心
       const swingX = startX <= endX ? -30 : 22
       const ctrlX = (startX + endX) * 0.5 + swingX
       const ctrlY = Math.min(startY, endY) - 26
@@ -1323,9 +1320,13 @@ export function ArtistStageSelector({
     if (!modelOpt) return
     const safeIdx = idx >= 0 ? idx : 0
     const scopeRoot = stageRef.current ?? document
-    const brushEl = scopeRoot.querySelector<HTMLElement>(
-      `[data-peeking-brush="${modelOpt.profileId}"], [data-empty-brush-slot="${modelOpt.profileId}"]`
-    )
+    const brushEl =
+      scopeRoot.querySelector<HTMLElement>(
+        `[data-peeking-brush="${modelOpt.profileId}"]`
+      ) ??
+      scopeRoot.querySelector<HTMLElement>(
+        `[data-brush-dot="${modelOpt.profileId}"]`
+      )
     launchBrushHop(autoGrabTrigger.providerId, modelOpt, safeIdx, brushEl)
   }, [autoGrabTrigger, launchBrushHop, providers])
 
@@ -1365,6 +1366,7 @@ export function ArtistStageSelector({
             brushGlowHex={selected ? activeBrushGlowHex : undefined}
             externalReactionTick={selected ? brushReactionTick : 0}
             models={enabledModels}
+            selectedProfileId={selected ? selectedProfileId : null}
             equippedBrushId={selected ? equippedBrushId : null}
             onInteract={() => {
               if (activeWorkingArtistId && activeWorkingArtistId !== artist.id) {
@@ -1387,7 +1389,7 @@ export function ArtistStageSelector({
         )
       })}
 
-      {/* 底部探头画笔点击后：沿着弧长均衡抛物线清晰实体飞入上方 AI小画家手中 */}
+      {/* 方案 A · 点击色点或扇形画笔后：从底座槽跃起并落入上方 AI小画家掌心 */}
       {typeof document !== 'undefined' &&
         flyingBrush &&
         createPortal(
@@ -1446,6 +1448,7 @@ function ArtistPedestalCard({
   brushGlowHex,
   externalReactionTick,
   models,
+  selectedProfileId,
   equippedBrushId,
   onInteract,
   onSelect,
@@ -1465,6 +1468,7 @@ function ArtistPedestalCard({
   brushGlowHex?: string
   externalReactionTick: number
   models: ProviderModelPublicInfo[]
+  selectedProfileId?: string | null
   equippedBrushId?: string | null
   onInteract?: () => void
   onSelect: () => void
@@ -1480,6 +1484,7 @@ function ArtistPedestalCard({
   const bubbleTimerRef = useRef<number | null>(null)
   const [hovered, setHovered] = useState(false)
   const [hoveredBrushId, setHoveredBrushId] = useState<string | null>(null)
+  const hoveredBrushIdRef = useRef<string | null>(null)
   const [pokeCombo, setPokeCombo] = useState(0)
   const [localReactionTick, setLocalReactionTick] = useState(0)
   const [bubbleText, setBubbleText] = useState<string | null>(null)
@@ -1543,7 +1548,6 @@ function ArtistPedestalCard({
     resetTimerRef.current = window.setTimeout(() => setPokeCombo(0), 1900)
   }
 
-  const showPeekingBrushes = selected && enabled && !away && models.length > 0
   const combinedReactionTick = localReactionTick + externalReactionTick
   const spotColor = brushColorHex || artist.accent
   const statusFallback = !providersLoaded
@@ -1553,6 +1557,32 @@ function ArtistPedestalCard({
       : !available
         ? '不可用'
         : null
+  const showPeekingBrushes = selected && enabled && !away && !statusFallback && models.length > 0
+  const activeTierId = equippedBrushId || selectedProfileId || models[0]?.profileId || null
+  const isFanExpanded = showPeekingBrushes && (hovered || hoveredBrushId !== null)
+
+  const handleBrushHoverStart = (
+    modelOpt: ProviderModelPublicInfo,
+    palette: { hex: string; glowHex: string }
+  ) => {
+    if (hoveredBrushIdRef.current !== modelOpt.profileId) {
+      playBrushHover()
+    }
+    hoveredBrushIdRef.current = modelOpt.profileId
+    setHoveredBrushId(modelOpt.profileId)
+    onHoverBrush?.({
+      profile: modelOpt,
+      colorHex: palette.hex,
+      glowHex: palette.glowHex,
+    })
+  }
+
+  const handleBrushHoverEnd = (profileId: string) => {
+    if (hoveredBrushIdRef.current !== profileId) return
+    hoveredBrushIdRef.current = null
+    setHoveredBrushId(null)
+    onHoverBrush?.(null)
+  }
 
   return (
     <div
@@ -1569,12 +1599,13 @@ function ArtistPedestalCard({
       }}
       onPointerLeave={() => {
         setHovered(false)
+        hoveredBrushIdRef.current = null
         setHoveredBrushId(null)
         onHoverBrush?.(null)
         clearPointerTilt()
       }}
       className={cn(
-        'ks-paper-keycap group relative flex min-h-[118px] min-w-0 flex-col items-center justify-start overflow-visible rounded-xl border px-2 pt-2 pb-1 text-center transition-all duration-200 @[320px]/controls:h-[136px]',
+        'ks-paper-keycap group relative flex min-h-[128px] min-w-0 flex-col items-center justify-start overflow-visible rounded-xl border px-2 pt-1.5 pb-1.5 text-center transition-[transform,border-color,background-color] duration-150 @[320px]/controls:h-[144px]',
         !enabled && 'opacity-55',
         selected
           ? '-translate-y-0.5 bg-white text-foreground dark:bg-[#1E2130] dark:text-white'
@@ -1589,7 +1620,7 @@ function ArtistPedestalCard({
           : undefined
       }
     >
-      {/* 主选画师点击热区（与底部画笔独立同级，避免嵌套 button；出勤中同样支持点击选中） */}
+      {/* 主选画师点击热区（与快捷色点及画笔独立同级，避免嵌套 button；出勤中同样支持点击选中） */}
       <button
         type="button"
         role="radio"
@@ -1605,7 +1636,7 @@ function ArtistPedestalCard({
         className="absolute inset-0 z-0 cursor-pointer rounded-[inherit] active:scale-[0.985] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
       />
 
-      {/* 活泼亮彩选中光效：柔和彩光晕、取景框锁定四角标、动态能量灯与底边色条 */}
+      {/* 活泼亮彩选中光效 */}
       {selected && (
         <span
           aria-hidden="true"
@@ -1618,7 +1649,6 @@ function ArtistPedestalCard({
               background: `radial-gradient(96% 88% at 50% 42%, ${spotColor}24 0%, ${spotColor}0B 52%, transparent 80%)`,
             }}
           />
-          {/* 取景框四角高亮括号（SVG 细线避免边框冲突） */}
           <svg viewBox="0 0 12 12" className="absolute top-1.5 left-1.5 size-2.5 opacity-85">
             <path d="M1.5 9V2.5A1 1 0 0 1 2.5 1.5H9" fill="none" stroke={spotColor} strokeWidth="2" strokeLinecap="round" />
           </svg>
@@ -1631,7 +1661,6 @@ function ArtistPedestalCard({
           <svg viewBox="0 0 12 12" className="absolute right-1.5 bottom-1.5 size-2.5 opacity-85">
             <path d="M3 10.5H9.5A1 1 0 0 0 10.5 9.5V3" fill="none" stroke={spotColor} strokeWidth="2" strokeLinecap="round" />
           </svg>
-          {/* 底部彩光能量轨 */}
           <span
             className="absolute inset-x-4 bottom-0 h-[3px] rounded-t-full opacity-90"
             style={{ backgroundColor: spotColor }}
@@ -1639,7 +1668,7 @@ function ArtistPedestalCard({
         </span>
       )}
 
-      {/* 交互浮现小气泡（统一在每位画家头顶居中显示，出勤中点击亦可触发提示） */}
+      {/* 交互浮现小气泡 */}
       <AnimatePresence mode="wait">
         {bubbleText && (
           <motion.span
@@ -1649,7 +1678,7 @@ function ArtistPedestalCard({
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: -3, scale: 0.92 }}
             transition={{ duration: 0.14, ease: [0.22, 1, 0.36, 1] }}
-            className="pointer-events-none absolute -top-2.5 left-1/2 z-30 max-w-[180px] -translate-x-1/2 truncate rounded-full border border-border/90 bg-popover px-2 py-0.5 text-[10px] font-bold leading-none whitespace-nowrap text-popover-foreground shadow-md"
+            className="pointer-events-none absolute -top-2.5 left-1/2 z-30 max-w-[180px] -translate-x-1/2 truncate rounded-full border border-border/90 bg-popover px-2 py-0.5 text-xs font-bold leading-none whitespace-nowrap text-popover-foreground shadow-md"
           >
             {bubbleText}
           </motion.span>
@@ -1660,8 +1689,8 @@ function ArtistPedestalCard({
       <div
         data-artist-sprite-target={artist.id}
         className={cn(
-          'pointer-events-none relative z-10 flex shrink-0 items-center justify-center transition-transform duration-200',
-          showPeekingBrushes ? '-mt-0.5' : 'my-auto'
+          'pointer-events-none relative z-10 flex shrink-0 items-center justify-center transition-transform duration-150',
+          showPeekingBrushes ? '-translate-y-1' : statusFallback ? 'translate-y-1' : 'translate-y-2'
         )}
       >
         {away ? (
@@ -1677,7 +1706,7 @@ function ArtistPedestalCard({
               className="size-3 rounded-full opacity-75"
               style={{ backgroundColor: spotColor }}
             />
-            <span className="mt-1 text-[10px] font-semibold leading-none opacity-75">
+            <span className="mt-1 text-xs font-semibold leading-none opacity-75">
               出勤中
             </span>
           </div>
@@ -1700,151 +1729,203 @@ function ArtistPedestalCard({
         )}
       </div>
 
-      {/* 选中态专属：画笔从卡片底部边界探出脑袋（1支居垂直中央，多支错落有致分布） */}
-      <AnimatePresence>
-        {showPeekingBrushes && (
-          <motion.div
-            key="bottom-brushes-stage"
-            initial={prefersReducedMotion ? false : { opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0, transition: { duration: 0.14 } }}
-            data-bottom-brushes-stage="true"
-            data-brush-count={models.length}
-            aria-label="选择画笔"
-            className="pointer-events-none absolute inset-x-0 bottom-0 z-20 h-[74px] overflow-hidden rounded-b-[11px]"
-          >
-            {/* 底部轻影缝隙遮罩，适配亮色卡片与深色模式，保留笔杆从底沿内部探出的立体感 */}
-            <span
-              aria-hidden="true"
-              className="pointer-events-none absolute inset-x-0 bottom-0 h-2.5 bg-gradient-to-t from-foreground/[0.14] to-transparent dark:from-black/50"
-            />
+      {/* 方案 A - 背后实体画笔扇面：静止时从色点槽后微探笔尖，悬停卡片或色点时展开为扇形 */}
+      {showPeekingBrushes && (
+        <div
+          key="bottom-brushes-stage"
+          data-bottom-brushes-stage="true"
+          data-brush-count={models.length}
+          data-fan-expanded={isFanExpanded ? 'true' : 'false'}
+          aria-label="悬浮展开画笔扇面"
+          className="pointer-events-none absolute inset-x-0 bottom-0 z-20 h-[92px] overflow-hidden rounded-b-[11px]"
+        >
+          <span
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-x-0 bottom-0 h-2.5 bg-gradient-to-t from-foreground/[0.12] to-transparent dark:from-black/45"
+          />
 
-            {models.map((modelOpt, idx) => {
-              const palette = getBrushPalette(idx)
-              const isEmptyTaken = modelOpt.profileId === equippedBrushId
-              const isHovered = !isEmptyTaken && hoveredBrushId === modelOpt.profileId
-              const layout = getPeekBrushLayout(idx, models.length)
-              const brushDisplayLabel = modelOpt.displayName || getPeekingBrushTrait(modelOpt)
+          {models.map((modelOpt, idx) => {
+            const palette = getBrushPalette(idx)
+            const isEmptyTaken = modelOpt.profileId === equippedBrushId
+            if (isEmptyTaken) return null
 
-              if (isEmptyTaken) {
-                return (
-                  <div
-                    key={modelOpt.profileId}
-                    aria-hidden="true"
-                    data-empty-brush-slot={modelOpt.profileId}
-                    data-brush-name={brushDisplayLabel}
-                    style={{
-                      left: `${layout.leftPct}%`,
-                      bottom: `${layout.restBottomPx}px`,
-                      marginLeft: '-29px',
-                      transform: `rotate(${90 + layout.tiltDeg}deg)`,
-                    }}
-                    className="pointer-events-none absolute flex h-[32px] w-[58px] origin-center items-center justify-center"
-                  >
-                    <span className="relative flex h-[12px] w-[46px] items-center justify-end rounded-full border border-dashed border-foreground/30 bg-foreground/[0.06] px-1 dark:border-white/35 dark:bg-black/35">
-                      <span
-                        className="size-1.5 rounded-full opacity-55"
-                        style={{ backgroundColor: palette.hex }}
-                      />
-                    </span>
-                  </div>
-                )
-              }
+            const isHovered = hoveredBrushId === modelOpt.profileId
+            const layout = getPeekBrushLayout(idx, models.length)
+            const brushDisplayLabel = modelOpt.displayName || getPeekingBrushTrait(modelOpt)
+            const targetY = isHovered ? -15 : isFanExpanded ? -6 : 11
+            const targetScale = isHovered ? 1.24 : isFanExpanded ? 1.06 : 0.9
+            const targetRotate =
+              90 +
+              (isHovered
+                ? layout.hoverTiltDeg * 1.15
+                : isFanExpanded
+                  ? layout.tiltDeg * 1.35
+                  : layout.tiltDeg)
 
-              return (
-                <motion.button
-                  key={modelOpt.profileId}
-                  type="button"
-                  data-peeking-brush={modelOpt.profileId}
-                  data-brush-name={brushDisplayLabel}
-                  data-hovered={isHovered ? 'true' : 'false'}
-                  data-active-brush="false"
-                  aria-label={brushDisplayLabel}
-                  aria-pressed={false}
-                  initial={
-                    prefersReducedMotion
-                      ? false
-                      : { y: 42, opacity: 0, rotate: 90 + layout.tiltDeg }
+            return (
+              <motion.button
+                key={modelOpt.profileId}
+                type="button"
+                data-peeking-brush={modelOpt.profileId}
+                data-brush-name={brushDisplayLabel}
+                data-hovered={isHovered ? 'true' : 'false'}
+                data-active-brush="false"
+                aria-label={brushDisplayLabel}
+                aria-pressed={false}
+                initial={
+                  prefersReducedMotion
+                    ? false
+                    : { y: 36, opacity: 0, rotate: 90 + layout.tiltDeg }
+                }
+                animate={{
+                  y: targetY,
+                  scale: targetScale,
+                  rotate: targetRotate,
+                  opacity: isFanExpanded ? 1 : 0.88,
+                }}
+                transition={{
+                  type: 'spring',
+                  stiffness: 500,
+                  damping: 28,
+                  delay: prefersReducedMotion || isFanExpanded || isHovered ? 0 : idx * 0.02,
+                }}
+                onMouseEnter={(e) => {
+                  e.stopPropagation()
+                  handleBrushHoverStart(modelOpt, palette)
+                }}
+                onMouseLeave={() => handleBrushHoverEnd(modelOpt.profileId)}
+                onFocus={() => handleBrushHoverStart(modelOpt, palette)}
+                onBlur={() => handleBrushHoverEnd(modelOpt.profileId)}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  unlockStudioAudio()
+                  handleBrushHoverEnd(modelOpt.profileId)
+                  onPickBrush(modelOpt, idx, e.currentTarget)
+                }}
+                style={{
+                  left: `${layout.leftPct}%`,
+                  bottom: `${layout.restBottomPx}px`,
+                  marginLeft: '-29px',
+                  filter: isHovered
+                    ? `drop-shadow(0 4px 8px ${palette.glowHex})`
+                    : undefined,
+                }}
+                className="pointer-events-auto absolute flex h-[32px] w-[58px] origin-center cursor-pointer items-center justify-center rounded-md focus-visible:outline-2 focus-visible:outline-ring"
+              >
+                <ArtistPaintbrush
+                  colorHex={palette.hex}
+                  glowHex={palette.glowHex}
+                  active={isHovered}
+                  className="h-[22px] w-[58px]"
+                />
+              </motion.button>
+            )
+          })}
+        </div>
+      )}
+
+      {/* 方案 A - 前置常驻快捷色点栏：桌面/触屏一键直切（无积分展示，右上角同步预览名称与标签） */}
+      {showPeekingBrushes && (
+        <div
+          role="radiogroup"
+          aria-label="快捷切换画笔"
+          data-brush-dot-dock="true"
+          className="relative z-30 mt-auto inline-flex max-w-full items-center gap-1 rounded-full border border-border/80 bg-[#FAF8F4]/96 px-1.5 py-0.5 shadow-2xs dark:border-white/15 dark:bg-[#141622]/96"
+        >
+          {models.map((modelOpt, idx) => {
+            const palette = getBrushPalette(idx)
+            const isActiveTier = modelOpt.profileId === activeTierId
+            const isEquipped = modelOpt.profileId === equippedBrushId
+            const isDotHovered = hoveredBrushId === modelOpt.profileId
+            const shortLabel = modelOpt.badge?.trim() || getPeekingBrushTrait(modelOpt)
+            const brushLabel = `${modelOpt.displayName}${modelOpt.badge ? `（${modelOpt.badge}）` : ''}`
+
+            return (
+              <button
+                key={modelOpt.profileId}
+                type="button"
+                role="radio"
+                aria-checked={isActiveTier}
+                aria-label={brushLabel}
+                title={brushLabel}
+                data-brush-dot={modelOpt.profileId}
+                onPointerDown={(e) => e.stopPropagation()}
+                onMouseEnter={(e) => {
+                  e.stopPropagation()
+                  handleBrushHoverStart(modelOpt, palette)
+                }}
+                onMouseLeave={() => handleBrushHoverEnd(modelOpt.profileId)}
+                onFocus={() => handleBrushHoverStart(modelOpt, palette)}
+                onBlur={() => handleBrushHoverEnd(modelOpt.profileId)}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  unlockStudioAudio()
+                  if (isEquipped) {
+                    setLocalReactionTick((n) => n + 1)
+                    playBrushHover()
+                    showBubble(`${shortLabel} · 已装备 ✦`)
+                    return
                   }
-                  animate={{
-                    y: isHovered ? -layout.hoverLiftPx : 0,
-                    scale: isHovered ? 1.22 : 0.96,
-                    rotate: 90 + (isHovered ? layout.hoverTiltDeg : layout.tiltDeg),
-                    opacity: 1,
-                  }}
-                  exit={
-                    prefersReducedMotion
-                      ? { opacity: 0 }
-                      : { y: 38, opacity: 0, transition: { duration: 0.14 } }
-                  }
-                  transition={{
-                    type: 'spring',
-                    stiffness: 430,
-                    damping: 22,
-                    delay: prefersReducedMotion || isHovered ? 0 : idx * 0.05,
-                  }}
-                  onMouseEnter={(e) => {
-                    e.stopPropagation()
-                    if (hoveredBrushId !== modelOpt.profileId) {
-                      playBrushHover()
-                    }
-                    setHoveredBrushId(modelOpt.profileId)
-                    onHoverBrush?.({
-                      profile: modelOpt,
-                      colorHex: palette.hex,
-                      glowHex: palette.glowHex,
-                    })
-                  }}
-                  onMouseLeave={() => {
-                    setHoveredBrushId((curr) => (curr === modelOpt.profileId ? null : curr))
-                    onHoverBrush?.(null)
-                  }}
-                  onFocus={() => {
-                    setHoveredBrushId(modelOpt.profileId)
-                    onHoverBrush?.({
-                      profile: modelOpt,
-                      colorHex: palette.hex,
-                      glowHex: palette.glowHex,
-                    })
-                  }}
-                  onBlur={() => {
-                    setHoveredBrushId((curr) => (curr === modelOpt.profileId ? null : curr))
-                    onHoverBrush?.(null)
-                  }}
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    unlockStudioAudio()
-                    setHoveredBrushId(null)
-                    onHoverBrush?.(null)
-                    onPickBrush(modelOpt, idx, e.currentTarget)
-                  }}
+                  const peekingEl =
+                    cardRef.current?.querySelector<HTMLElement>(
+                      `[data-peeking-brush="${modelOpt.profileId}"]`
+                    ) ?? e.currentTarget
+                  handleBrushHoverEnd(modelOpt.profileId)
+                  onPickBrush(modelOpt, idx, peekingEl)
+                }}
+                className={cn(
+                  'relative flex shrink-0 cursor-pointer items-center justify-center rounded-full transition-all active:scale-95 focus-visible:outline-2 focus-visible:outline-ring',
+                  isActiveTier
+                    ? 'h-[18px] min-w-[24px] gap-1 bg-foreground px-1.5 text-background shadow-2xs'
+                    : 'size-[18px] hover:scale-115'
+                )}
+              >
+                <span
+                  aria-hidden="true"
+                  className={cn(
+                    'block rounded-full transition-transform',
+                    isActiveTier
+                      ? 'size-2.5 ring-1 ring-white/80'
+                      : isDotHovered
+                        ? 'size-3 ring-2 ring-foreground/40'
+                        : 'size-2.5 ring-1 ring-black/20 dark:ring-white/25'
+                  )}
                   style={{
-                    left: `${layout.leftPct}%`,
-                    bottom: `${layout.restBottomPx}px`,
-                    marginLeft: '-29px',
-                    filter: isHovered
-                      ? `drop-shadow(0 4px 8px ${palette.glowHex})`
-                      : undefined,
+                    backgroundColor: palette.hex,
+                    boxShadow: isActiveTier || isDotHovered ? `0 0 6px ${palette.glowHex}` : undefined,
                   }}
-                  className="pointer-events-auto absolute flex h-[32px] w-[58px] origin-center cursor-pointer items-center justify-center rounded-md focus-visible:outline-2 focus-visible:outline-ring"
-                >
-                  <ArtistPaintbrush
-                    colorHex={palette.hex}
-                    glowHex={palette.glowHex}
-                    active={isHovered}
-                    className="h-[22px] w-[58px]"
-                  />
-                </motion.button>
-              )
-            })}
-          </motion.div>
-        )}
-      </AnimatePresence>
+                />
+                {isActiveTier && (
+                  <span className="hidden max-w-[54px] truncate text-xs font-bold leading-none @[440px]/controls:inline">
+                    {shortLabel}
+                  </span>
+                )}
+              </button>
+            )
+          })}
+        </div>
+      )}
+
+      {/* 未选中多档位画师底部迷你指示点 */}
+      {!selected && enabled && !away && !statusFallback && models.length > 1 && (
+        <span
+          aria-hidden="true"
+          className="pointer-events-none relative z-20 mt-auto mb-0.5 flex items-center justify-center gap-1 opacity-60"
+        >
+          {models.map((modelOpt, idx) => (
+            <span
+              key={modelOpt.profileId}
+              className="size-1.5 rounded-full"
+              style={{ backgroundColor: getBrushPalette(idx).hex }}
+            />
+          ))}
+        </span>
+      )}
 
       {statusFallback && (
         <span
           className={cn(
-            'pointer-events-none relative z-30 mt-auto shrink-0 rounded-md px-1.5 py-0.5 font-mono text-[10px] font-semibold leading-none',
+            'pointer-events-none relative z-30 mt-auto shrink-0 rounded-md px-1.5 py-0.5 font-mono text-xs font-semibold leading-none',
             selected
               ? 'bg-foreground/10 text-foreground dark:bg-white/15 dark:text-white'
               : 'bg-muted text-muted-foreground'

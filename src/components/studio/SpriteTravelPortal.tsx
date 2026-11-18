@@ -266,11 +266,11 @@ export function SpriteTravelPortal({
               }}
             >
               <div className="flex size-full flex-col items-center justify-center gap-1.5 rounded-lg border border-dashed border-[#E5A918]/45">
-                <span className="font-mono text-[10px] font-black tracking-[0.26em] text-[#E5A918]">
+                <span className="font-mono text-xs font-black tracking-[0.2em] text-[#E5A918]">
                   CAST · DECK
                 </span>
                 <span className="h-px w-10 bg-white/25" />
-                <span className="text-[11px] font-bold tracking-widest text-white/85">
+                <span className="text-xs font-bold tracking-widest text-white/85">
                   AI 作品卡
                 </span>
               </div>

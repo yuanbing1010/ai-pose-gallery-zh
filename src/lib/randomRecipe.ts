@@ -4,7 +4,6 @@ export type ReferenceSlot = 'portrait' | 'costume' | 'pose'
 export type RandomScope = 'similar' | 'other'
 export interface ReferencePools { portraits?: PortraitItem[]; costumes?: CostumeItem[]; poses?: PoseItem[] }
 
-/** Pools are already filtered by the current safety setting. */
 export function randomSlot(
   recipe: RecipeState,
   slot: ReferenceSlot,

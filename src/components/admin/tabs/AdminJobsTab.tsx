@@ -1,16 +1,22 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link, useNavigate } from '@tanstack/react-router'
-import { ActivityIcon, SearchIcon } from 'lucide-react'
+import {
+  ActivityIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  SearchIcon,
+} from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { fetchAdminGenerationsApi } from '@/lib/apiClient'
 import { toast } from '@/lib/notifications'
-import type { GenerationHistoryItem } from '@/types/gallery'
+import type { AdminJobsStatsSummary, GenerationHistoryItem } from '@/types/gallery'
 import { PROVIDER_META, PROVIDER_ORDER } from '../../../../shared/studio'
 import { AdminMetricGrid, AdminPageHeader } from '../AdminPrimitives'
 import {
   ADMIN_BTN_CLS,
+  ADMIN_BTN_SM_CLS,
   ADMIN_SELECT_CLS,
   AUDIT_STATUS_META,
   formatAdminDateTime,
@@ -22,13 +28,24 @@ interface AdminJobsTabProps {
   onLoadingChange: (loading: boolean) => void
 }
 
+const PAGE_LIMIT = 50
+
 export function AdminJobsTab({ reloadTick, onLoadingChange }: AdminJobsTabProps) {
   const navigate = useNavigate()
   const [jobs, setJobs] = useState<GenerationHistoryItem[]>([])
+  const [total, setTotal] = useState(0)
+  const [stats, setStats] = useState<AdminJobsStatsSummary>({
+    total: 0,
+    succeeded: 0,
+    failed: 0,
+    processing: 0,
+    retried: 0,
+  })
   const [jobStatusFilter, setJobStatusFilter] = useState('all')
   const [jobProviderFilter, setJobProviderFilter] = useState('all')
   const [jobQuery, setJobQuery] = useState('')
   const [appliedJobQuery, setAppliedJobQuery] = useState('')
+  const [offset, setOffset] = useState(0)
 
   const loadData = useCallback(async () => {
     onLoadingChange(true)
@@ -37,19 +54,23 @@ export function AdminJobsTab({ reloadTick, onLoadingChange }: AdminJobsTabProps)
         status: jobStatusFilter === 'all' ? undefined : jobStatusFilter,
         provider: jobProviderFilter === 'all' ? undefined : jobProviderFilter,
         q: appliedJobQuery.trim() || undefined,
-        limit: 60,
+        limit: PAGE_LIMIT,
+        offset,
       })
       setJobs(res.items)
+      setTotal(res.total)
+      setStats(res.stats)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : '加载生图记录失败')
     } finally {
       onLoadingChange(false)
     }
-  }, [appliedJobQuery, jobProviderFilter, jobStatusFilter, onLoadingChange])
+  }, [appliedJobQuery, jobProviderFilter, jobStatusFilter, offset, onLoadingChange])
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
       setAppliedJobQuery(jobQuery)
+      setOffset(0)
     }, 280)
     return () => window.clearTimeout(timer)
   }, [jobQuery])
@@ -71,7 +92,8 @@ export function AdminJobsTab({ reloadTick, onLoadingChange }: AdminJobsTabProps)
             <form
               onSubmit={(e) => {
                 e.preventDefault()
-                if (appliedJobQuery === jobQuery) {
+                setOffset(0)
+                if (appliedJobQuery === jobQuery && offset === 0) {
                   void loadData()
                 } else {
                   setAppliedJobQuery(jobQuery)
@@ -92,7 +114,13 @@ export function AdminJobsTab({ reloadTick, onLoadingChange }: AdminJobsTabProps)
                 查询
               </Button>
             </form>
-            <Select value={jobStatusFilter} onValueChange={setJobStatusFilter}>
+            <Select
+              value={jobStatusFilter}
+              onValueChange={(v) => {
+                setJobStatusFilter(v)
+                setOffset(0)
+              }}
+            >
               <SelectTrigger className={`w-28 font-mono ${ADMIN_SELECT_CLS}`}>
                 <SelectValue />
               </SelectTrigger>
@@ -103,12 +131,18 @@ export function AdminJobsTab({ reloadTick, onLoadingChange }: AdminJobsTabProps)
                 <SelectItem value="failed">失败</SelectItem>
               </SelectContent>
             </Select>
-            <Select value={jobProviderFilter} onValueChange={setJobProviderFilter}>
+            <Select
+              value={jobProviderFilter}
+              onValueChange={(v) => {
+                setJobProviderFilter(v)
+                setOffset(0)
+              }}
+            >
               <SelectTrigger className={`w-32 font-mono ${ADMIN_SELECT_CLS}`}>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">全部厂商</SelectItem>
+                <SelectItem value="all">全部画师</SelectItem>
                 {PROVIDER_ORDER.map((pid) => (
                   <SelectItem key={pid} value={pid}>
                     {PROVIDER_META[pid].shortName}
@@ -122,20 +156,20 @@ export function AdminJobsTab({ reloadTick, onLoadingChange }: AdminJobsTabProps)
 
       <AdminMetricGrid
         items={[
-          { label: '当前匹配任务', value: jobs.length },
+          { label: '匹配任务总量', value: stats.total },
           {
             label: '成功',
-            value: jobs.filter((j) => j.status === 'succeeded').length,
+            value: stats.succeeded,
             tone: 'success',
           },
           {
             label: '失败',
-            value: jobs.filter((j) => j.status === 'failed').length,
+            value: stats.failed,
             tone: 'danger',
           },
           {
             label: '发生切换或重试',
-            value: jobs.filter((j) => (j.auditTrace?.attempts?.length ?? 0) > 1).length,
+            value: stats.retried,
             tone: 'warning',
           },
         ]}
@@ -187,33 +221,47 @@ export function AdminJobsTab({ reloadTick, onLoadingChange }: AdminJobsTabProps)
                 return (
                   <tr
                     key={j.id}
+                    tabIndex={0}
+                    aria-label={`查看任务 ${j.id} 详情`}
                     onClick={() =>
                       void navigate({ to: '/admin/jobs/$jobId', params: { jobId: j.id } })
                     }
-                    className="cursor-pointer transition-colors hover:bg-zinc-50/80 dark:hover:bg-zinc-900/50"
+                    onKeyDown={(e) => {
+                      if (
+                        e.target !== e.currentTarget &&
+                        (e.target as HTMLElement).closest('button,a,input,select')
+                      ) {
+                        return
+                      }
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault()
+                        void navigate({ to: '/admin/jobs/$jobId', params: { jobId: j.id } })
+                      }
+                    }}
+                    className="cursor-pointer transition-colors hover:bg-zinc-50/80 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-zinc-950 dark:hover:bg-zinc-900/50 dark:focus-visible:outline-zinc-100"
                   >
                     <td className="px-3.5 py-3 whitespace-nowrap">
                       <div className="font-bold">@{j.username || j.userId?.slice(0, 8)}</div>
-                      <div className="mt-0.5 text-[11px] text-zinc-500">
+                      <div className="mt-0.5 text-xs text-zinc-500">
                         {formatAdminDateTime(j.createdAt)}
                       </div>
                     </td>
                     <td className="px-3.5 py-3">
-                      <div className="flex items-center gap-1 font-bold uppercase">
+                      <div className="flex flex-wrap items-center gap-1 font-bold uppercase">
                         <span>{PROVIDER_META[j.provider]?.shortName || j.provider}</span>
                         {j.profileName && (
-                          <span className="border border-zinc-300 px-1 font-sans text-[10px] font-semibold normal-case text-zinc-700 dark:border-zinc-700 dark:text-zinc-300">
+                          <span className="border border-zinc-300 px-1 font-sans text-xs font-semibold normal-case text-zinc-700 dark:border-zinc-700 dark:text-zinc-300">
                             {j.profileName}
                           </span>
                         )}
                         {j.resolution && (
-                          <span className="border border-zinc-300 px-1 text-[10px] font-semibold text-zinc-600 dark:border-zinc-700 dark:text-zinc-400">
+                          <span className="border border-zinc-300 px-1 text-xs font-semibold text-zinc-600 dark:border-zinc-700 dark:text-zinc-400">
                             {j.resolution}
                           </span>
                         )}
                       </div>
                       <div
-                        className="mt-0.5 max-w-[150px] truncate text-[11px] text-zinc-500"
+                        className="mt-0.5 max-w-[150px] truncate text-xs text-zinc-500"
                         title={j.model}
                       >
                         {j.model}
@@ -224,7 +272,7 @@ export function AdminJobsTab({ reloadTick, onLoadingChange }: AdminJobsTabProps)
                         {j.supplierName || '—'}
                       </div>
                       <div
-                        className="mt-0.5 max-w-[140px] truncate text-[11px] text-zinc-500"
+                        className="mt-0.5 max-w-[140px] truncate text-xs text-zinc-500"
                         title={j.channelName || undefined}
                       >
                         {j.channelName || '—'}
@@ -239,7 +287,7 @@ export function AdminJobsTab({ reloadTick, onLoadingChange }: AdminJobsTabProps)
                       </div>
                       {j.recipeSummary && (
                         <div
-                          className="mt-1 truncate text-[11px] text-zinc-500"
+                          className="mt-1 truncate text-xs text-zinc-500"
                           title={j.recipeSummary}
                         >
                           {j.recipeSummary}
@@ -249,10 +297,10 @@ export function AdminJobsTab({ reloadTick, onLoadingChange }: AdminJobsTabProps)
                     <td className="px-3.5 py-3 whitespace-nowrap">
                       {!trace ? (
                         <div className="space-y-1">
-                          <span className="inline-block border border-zinc-300 px-1.5 py-0.5 text-[11px] text-zinc-500 dark:border-zinc-700">
+                          <span className="inline-block border border-zinc-300 px-1.5 py-0.5 text-xs text-zinc-500 dark:border-zinc-700">
                             历史记录
                           </span>
-                          <div className="text-[11px] text-zinc-500">
+                          <div className="text-xs text-zinc-500">
                             {formatAdminShortDuration(durationMs)}
                           </div>
                         </div>
@@ -260,12 +308,12 @@ export function AdminJobsTab({ reloadTick, onLoadingChange }: AdminJobsTabProps)
                         <div className="space-y-1">
                           <div className="flex flex-wrap items-center gap-1">
                             {attemptCount === 0 ? (
-                              <span className="border border-zinc-300 px-1.5 py-0.5 text-[11px] text-zinc-600 dark:border-zinc-700 dark:text-zinc-400">
+                              <span className="border border-zinc-300 px-1.5 py-0.5 text-xs text-zinc-600 dark:border-zinc-700 dark:text-zinc-400">
                                 {j.status === 'processing' ? '调度中' : '0次调用'}
                               </span>
                             ) : attemptCount === 1 ? (
                               <span
-                                className={`border px-1.5 py-0.5 text-[11px] font-bold ${
+                                className={`border px-1.5 py-0.5 text-xs font-bold ${
                                   j.status === 'succeeded'
                                     ? 'border-emerald-600/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400'
                                     : j.status === 'failed'
@@ -282,28 +330,28 @@ export function AdminJobsTab({ reloadTick, onLoadingChange }: AdminJobsTabProps)
                             ) : (
                               <>
                                 {hasFailover ? (
-                                  <span className="border border-amber-600/45 bg-amber-500/10 px-1.5 py-0.5 text-[11px] font-bold text-amber-800 dark:text-amber-300">
+                                  <span className="border border-amber-600/45 bg-amber-500/10 px-1.5 py-0.5 text-xs font-bold text-amber-800 dark:text-amber-300">
                                     切换{uniqueChannels}渠道
                                   </span>
                                 ) : hasRetry ? (
-                                  <span className="border border-sky-600/45 bg-sky-500/10 px-1.5 py-0.5 text-[11px] font-bold text-sky-800 dark:text-sky-300">
+                                  <span className="border border-sky-600/45 bg-sky-500/10 px-1.5 py-0.5 text-xs font-bold text-sky-800 dark:text-sky-300">
                                     重试{attemptCount}次
                                   </span>
                                 ) : null}
                                 {hasDowngrade && (
-                                  <span className="border border-purple-600/45 bg-purple-500/10 px-1.5 py-0.5 text-[11px] font-bold text-purple-800 dark:text-purple-300">
+                                  <span className="border border-purple-600/45 bg-purple-500/10 px-1.5 py-0.5 text-xs font-bold text-purple-800 dark:text-purple-300">
                                     降级重试
                                   </span>
                                 )}
                                 {!hasFailover && !hasRetry && !hasDowngrade && (
-                                  <span className="border border-zinc-400/50 px-1.5 py-0.5 text-[11px] font-bold">
+                                  <span className="border border-zinc-400/50 px-1.5 py-0.5 text-xs font-bold">
                                     {attemptCount}次调用
                                   </span>
                                 )}
                               </>
                             )}
                           </div>
-                          <div className="text-[11px] text-zinc-500">
+                          <div className="text-xs text-zinc-500">
                             {attemptCount}次 · {formatAdminShortDuration(durationMs)}
                           </div>
                         </div>
@@ -312,7 +360,7 @@ export function AdminJobsTab({ reloadTick, onLoadingChange }: AdminJobsTabProps)
                     <td className="px-3.5 py-3 whitespace-nowrap">
                       <div>-{j.creditsCost}</div>
                       {j.creditsRefunded > 0 && (
-                        <div className="text-[11px] text-emerald-600 dark:text-emerald-400">
+                        <div className="text-xs text-emerald-600 dark:text-emerald-400">
                           +{j.creditsRefunded} 退
                         </div>
                       )}
@@ -331,7 +379,7 @@ export function AdminJobsTab({ reloadTick, onLoadingChange }: AdminJobsTabProps)
                       </span>
                       {j.errorMessage && (
                         <div
-                          className="mt-0.5 truncate font-sans text-[11px] text-zinc-500"
+                          className="mt-0.5 truncate font-sans text-xs text-zinc-500"
                           title={j.errorMessage}
                         >
                           {j.errorMessage}
@@ -343,7 +391,7 @@ export function AdminJobsTab({ reloadTick, onLoadingChange }: AdminJobsTabProps)
                         to="/admin/jobs/$jobId"
                         params={{ jobId: j.id }}
                         onClick={(e) => e.stopPropagation()}
-                        className="inline-flex items-center gap-1 border border-zinc-950 bg-zinc-950 px-2.5 py-1 text-[11px] font-bold text-white transition-opacity hover:opacity-85 dark:border-zinc-200 dark:bg-zinc-100 dark:text-zinc-950"
+                        className="inline-flex items-center gap-1 border border-zinc-950 bg-zinc-950 px-2.5 py-1 text-xs font-bold text-white transition-opacity hover:opacity-85 dark:border-zinc-200 dark:bg-zinc-100 dark:text-zinc-950"
                       >
                         <ActivityIcon className="size-3" />
                         全链路
@@ -356,6 +404,38 @@ export function AdminJobsTab({ reloadTick, onLoadingChange }: AdminJobsTabProps)
           </tbody>
         </table>
       </div>
+
+      {total > PAGE_LIMIT && (
+        <div className="flex items-center justify-between border border-zinc-200 px-4 py-2.5 font-mono text-xs text-zinc-500 dark:border-zinc-800">
+          <span>
+            第 {Math.floor(offset / PAGE_LIMIT) + 1} / {Math.ceil(total / PAGE_LIMIT)} 页 · 共 {total} 条
+          </span>
+          <div className="flex items-center gap-1.5">
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className={ADMIN_BTN_SM_CLS}
+              disabled={offset === 0}
+              onClick={() => setOffset((o) => Math.max(0, o - PAGE_LIMIT))}
+            >
+              <ChevronLeftIcon className="size-3.5" />
+              上一页
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className={ADMIN_BTN_SM_CLS}
+              disabled={offset + PAGE_LIMIT >= total}
+              onClick={() => setOffset((o) => o + PAGE_LIMIT)}
+            >
+              下一页
+              <ChevronRightIcon className="size-3.5" />
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

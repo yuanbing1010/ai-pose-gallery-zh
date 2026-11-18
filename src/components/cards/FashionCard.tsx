@@ -137,7 +137,7 @@ export function FashionCard({
           {/* 左下角：多视角微标 */}
           {viewCount > 1 && (
             <div className="pointer-events-none absolute bottom-2 left-2 z-[4]">
-              <span className="md-pill inline-flex h-6 items-center gap-1 rounded-full px-2 text-[11px] font-medium">
+              <span className="md-pill inline-flex h-6 items-center gap-1 rounded-full px-2 text-xs font-medium">
                 <LayersIcon className="size-3" />
                 <span>{viewCount} 视角</span>
               </span>

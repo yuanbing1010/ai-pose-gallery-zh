@@ -8,7 +8,6 @@ import { useStudio } from '@/store/studioStore'
 
 const STEP_DEG = 19
 const WHEEL_RADIUS = 360
-const IDLE_SPEED_DEG = 6
 
 function wrapDelta(deg: number, total: number): number {
   if (total <= 0) return 0
@@ -24,6 +23,7 @@ export function StyleWheelDeck() {
 
   const stageRef = useRef<HTMLDivElement>(null)
   const cardRefs = useRef<(HTMLDivElement | null)[]>([])
+  const ensureAnimRef = useRef<(() => void) | null>(null)
   const [activeIndex, setActiveIndex] = useState(0)
   const [draggingUi, setDraggingUi] = useState(false)
 
@@ -32,8 +32,6 @@ export function StyleWheelDeck() {
     vel: 0,
     snapTarget: null as number | null,
     dragging: false,
-    hovered: false,
-    lastInteractAt: 0,
     activeIdx: 0,
   })
   const dragRef = useRef<{
@@ -65,25 +63,37 @@ export function StyleWheelDeck() {
     if (diff < -count / 2) diff += count
     st.vel = 0
     st.snapTarget = (currentStep + diff) * STEP_DEG
-    st.lastInteractAt = performance.now()
+    ensureAnimRef.current?.()
   }
 
   const stepWheel = (dir: 1 | -1) => {
     const st = stateRef.current
-    const base = st.snapTarget !== null ? Math.round(st.snapTarget / STEP_DEG) : Math.round(st.angle / STEP_DEG)
+    const base =
+      st.snapTarget !== null
+        ? Math.round(st.snapTarget / STEP_DEG)
+        : Math.round(st.angle / STEP_DEG)
     st.vel = 0
     st.snapTarget = (base + dir) * STEP_DEG
-    st.lastInteractAt = performance.now()
+    ensureAnimRef.current?.()
   }
 
   useEffect(() => {
     const stage = stageRef.current
-    if (!stage || !count) return
+    if (!stage || !count) {
+      ensureAnimRef.current = null
+      return
+    }
 
-    const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
     let raf = 0
     let last = performance.now()
     let visible = true
+
+    const stopRaf = () => {
+      if (raf) {
+        cancelAnimationFrame(raf)
+        raf = 0
+      }
+    }
 
     const renderCards = () => {
       const st = stateRef.current
@@ -117,10 +127,12 @@ export function StyleWheelDeck() {
     }
 
     const tick = (now: number) => {
-      raf = requestAnimationFrame(tick)
+      raf = 0
+      if (!visible || document.visibilityState === 'hidden') return
       const dt = Math.min(0.05, Math.max(0.001, (now - last) / 1000))
       last = now
       const st = stateRef.current
+      let needsMore = st.dragging
 
       if (!st.dragging) {
         if (st.snapTarget !== null) {
@@ -130,6 +142,8 @@ export function StyleWheelDeck() {
           if (Math.abs(diff) < 0.08) {
             st.angle = st.snapTarget
             st.snapTarget = null
+          } else {
+            needsMore = true
           }
         } else if (Math.abs(st.vel) > 16) {
           st.angle += st.vel * dt
@@ -138,8 +152,7 @@ export function StyleWheelDeck() {
             st.vel = 0
             st.snapTarget = Math.round(st.angle / STEP_DEG) * STEP_DEG
           }
-        } else if (!reduce && !st.hovered && now - st.lastInteractAt > 1800) {
-          st.angle += IDLE_SPEED_DEG * dt
+          needsMore = true
         }
       }
 
@@ -150,19 +163,50 @@ export function StyleWheelDeck() {
         setActiveIndex(nextIdx)
       }
 
-      if (visible) renderCards()
+      renderCards()
+      if (needsMore) {
+        raf = requestAnimationFrame(tick)
+      }
     }
+
+    const ensureAnimating = () => {
+      if (!visible || document.visibilityState === 'hidden') return
+      const st = stateRef.current
+      const rawIdx = Math.round(st.angle / STEP_DEG)
+      const nextIdx = ((rawIdx % count) + count) % count
+      if (nextIdx !== st.activeIdx) {
+        st.activeIdx = nextIdx
+        setActiveIndex(nextIdx)
+      }
+      renderCards()
+      if (!raf && (st.dragging || st.snapTarget !== null || Math.abs(st.vel) > 16)) {
+        last = performance.now()
+        raf = requestAnimationFrame(tick)
+      }
+    }
+
+    ensureAnimRef.current = ensureAnimating
 
     const obs = new IntersectionObserver((entries) => {
       visible = entries.some((e) => e.isIntersecting)
+      if (!visible) stopRaf()
+      else ensureAnimating()
     })
     obs.observe(stage)
+
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') stopRaf()
+      else ensureAnimating()
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+
     renderCards()
-    raf = requestAnimationFrame(tick)
 
     return () => {
-      cancelAnimationFrame(raf)
+      ensureAnimRef.current = null
+      stopRaf()
       obs.disconnect()
+      document.removeEventListener('visibilitychange', onVisibility)
     }
   }, [count, totalSpan])
 
@@ -178,7 +222,6 @@ export function StyleWheelDeck() {
     st.dragging = true
     st.vel = 0
     st.snapTarget = null
-    st.lastInteractAt = performance.now()
     setDraggingUi(true)
     dragRef.current = {
       id: e.pointerId,
@@ -190,6 +233,7 @@ export function StyleWheelDeck() {
       downCardIdx: downCardIdx !== null && !Number.isNaN(downCardIdx) ? downCardIdx : null,
       samples: [],
     }
+    ensureAnimRef.current?.()
   }
 
   const onPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -218,6 +262,7 @@ export function StyleWheelDeck() {
       stateRef.current.angle += dAngle
       drag.samples.push({ dx: dAngle, dt })
       if (drag.samples.length > 6) drag.samples.shift()
+      ensureAnimRef.current?.()
     }
   }
 
@@ -227,7 +272,6 @@ export function StyleWheelDeck() {
     dragRef.current = null
     const st = stateRef.current
     st.dragging = false
-    st.lastInteractAt = performance.now()
     setDraggingUi(false)
     if (drag.captured) {
       try {
@@ -248,10 +292,10 @@ export function StyleWheelDeck() {
       } else {
         st.snapTarget = Math.round(st.angle / STEP_DEG) * STEP_DEG
       }
+      ensureAnimRef.current?.()
       return
     }
 
-    // 轻点卡片：点中侧翼卡则旋转居中，点中正中心主卡则直接带该画风前往合成台
     if (drag.downCardIdx !== null) {
       if (drag.downCardIdx === st.activeIdx) {
         applyAndGo(drag.downCardIdx)
@@ -263,26 +307,26 @@ export function StyleWheelDeck() {
 
   if (count === 0) {
     return (
-      <div className="relative flex min-h-[300px] flex-col items-center justify-between overflow-hidden border-t border-border bg-[#121215] px-5 py-4 lg:border-t-0 lg:border-l">
-        <span aria-hidden="true" className="pointer-events-none absolute top-3.5 left-3.5 size-3 border-t border-l border-white/20" />
-        <span aria-hidden="true" className="pointer-events-none absolute top-3.5 right-3.5 size-3 border-t border-r border-white/20" />
-        <span aria-hidden="true" className="pointer-events-none absolute bottom-3.5 left-3.5 size-3 border-b border-l border-white/20" />
-        <span aria-hidden="true" className="pointer-events-none absolute right-3.5 bottom-3.5 size-3 border-r border-b border-white/20" />
+      <div className="relative flex min-h-[300px] flex-col items-center justify-between overflow-hidden border-t border-border bg-muted/40 px-5 py-4 lg:border-t-0 lg:border-l dark:bg-[#121215]">
+        <span aria-hidden="true" className="pointer-events-none absolute top-3.5 left-3.5 size-3 border-t border-l border-foreground/20" />
+        <span aria-hidden="true" className="pointer-events-none absolute top-3.5 right-3.5 size-3 border-t border-r border-foreground/20" />
+        <span aria-hidden="true" className="pointer-events-none absolute bottom-3.5 left-3.5 size-3 border-b border-l border-foreground/20" />
+        <span aria-hidden="true" className="pointer-events-none absolute right-3.5 bottom-3.5 size-3 border-r border-b border-foreground/20" />
 
         <div className="relative z-20 flex w-full items-center justify-between gap-2">
-          <span className="inline-flex items-center gap-1.5 rounded-full bg-white/[0.07] px-2.5 py-0.5 font-mono text-xs font-medium text-zinc-300 ring-1 ring-white/10">
-            <span className="size-1.5 rounded-full bg-zinc-500" />
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-background/80 px-2.5 py-0.5 font-mono text-xs font-medium text-muted-foreground">
+            <span className="size-1.5 rounded-full bg-muted-foreground" />
             STYLE WHEEL // 0 种画风
           </span>
-          <span className="font-mono text-[11px] tabular-nums text-zinc-400">00 / 00</span>
+          <span className="font-mono text-xs tabular-nums text-muted-foreground">00 / 00</span>
         </div>
 
         <div className="relative z-10 flex flex-1 flex-col items-center justify-center gap-2.5 px-4 text-center">
-          <div className="flex size-12 items-center justify-center rounded-2xl border border-dashed border-white/20 bg-white/[0.04] text-[#E5A918]">
+          <div className="flex size-12 items-center justify-center rounded-2xl border border-dashed border-border bg-card text-[#E5A918]">
             <WandSparklesIcon className="size-5" />
           </div>
-          <div className="text-xs font-bold text-white">暂无预设画风</div>
-          <p className="max-w-xs text-[11px] leading-relaxed text-zinc-400">
+          <div className="text-xs font-bold text-foreground">暂无预设画风</div>
+          <p className="max-w-xs text-xs leading-relaxed text-muted-foreground">
             当前暂未配置画风预设，可直接前往合成台以无预设画风出图。
           </p>
         </div>
@@ -304,11 +348,15 @@ export function StyleWheelDeck() {
   return (
     <div
       ref={stageRef}
-      onMouseEnter={() => {
-        stateRef.current.hovered = true
-      }}
-      onMouseLeave={() => {
-        stateRef.current.hovered = false
+      tabIndex={0}
+      onKeyDown={(e) => {
+        if (e.key === 'ArrowLeft') {
+          e.preventDefault()
+          stepWheel(-1)
+        } else if (e.key === 'ArrowRight') {
+          e.preventDefault()
+          stepWheel(1)
+        }
       }}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
@@ -320,34 +368,34 @@ export function StyleWheelDeck() {
           stepWheel(e.deltaX > 0 ? 1 : -1)
         }
       }}
-      className={`relative flex min-h-[300px] flex-col items-center justify-between overflow-hidden border-t border-border bg-[#121215] px-5 py-4 select-none lg:border-t-0 lg:border-l ${
+      className={`relative flex min-h-[300px] flex-col items-center justify-between overflow-hidden border-t border-border bg-muted/40 px-5 py-4 outline-none select-none focus-visible:ring-2 focus-visible:ring-ring lg:border-t-0 lg:border-l dark:bg-[#121215] ${
         draggingUi ? 'cursor-grabbing' : 'cursor-grab'
       }`}
     >
-      {/* 暗房取景器四角刻度 */}
-      <span aria-hidden="true" className="pointer-events-none absolute top-3.5 left-3.5 size-3 border-t border-l border-white/20" />
-      <span aria-hidden="true" className="pointer-events-none absolute top-3.5 right-3.5 size-3 border-t border-r border-white/20" />
-      <span aria-hidden="true" className="pointer-events-none absolute bottom-3.5 left-3.5 size-3 border-b border-l border-white/20" />
-      <span aria-hidden="true" className="pointer-events-none absolute right-3.5 bottom-3.5 size-3 border-r border-b border-white/20" />
+      {/* 取景器四角刻度 */}
+      <span aria-hidden="true" className="pointer-events-none absolute top-3.5 left-3.5 size-3 border-t border-l border-foreground/20" />
+      <span aria-hidden="true" className="pointer-events-none absolute top-3.5 right-3.5 size-3 border-t border-r border-foreground/20" />
+      <span aria-hidden="true" className="pointer-events-none absolute bottom-3.5 left-3.5 size-3 border-b border-l border-foreground/20" />
+      <span aria-hidden="true" className="pointer-events-none absolute right-3.5 bottom-3.5 size-3 border-r border-b border-foreground/20" />
 
       {/* 轮盘弧形虚线轨道与聚光 */}
       <div
         aria-hidden="true"
-        className="pointer-events-none absolute top-1/2 left-1/2 size-80 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[radial-gradient(circle,rgba(255,255,255,0.085)_0%,transparent_70%)]"
+        className="pointer-events-none absolute top-1/2 left-1/2 size-80 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[radial-gradient(circle,rgba(20,20,20,0.06)_0%,transparent_70%)] dark:bg-[radial-gradient(circle,rgba(255,255,255,0.085)_0%,transparent_70%)]"
       />
       <div
         aria-hidden="true"
         style={{ width: WHEEL_RADIUS * 2, height: WHEEL_RADIUS * 2 }}
-        className="pointer-events-none absolute top-[148px] left-1/2 -translate-x-1/2 rounded-full border border-dashed border-white/[0.1]"
+        className="pointer-events-none absolute top-[148px] left-1/2 -translate-x-1/2 rounded-full border border-dashed border-foreground/12 dark:border-white/[0.1]"
       />
 
       {/* 顶部仪表栏 */}
       <div className="relative z-20 flex w-full items-center justify-between gap-2">
-        <span className="inline-flex items-center gap-1.5 rounded-full bg-white/[0.07] px-2.5 py-0.5 font-mono text-xs font-medium text-zinc-300 ring-1 ring-white/10">
+        <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-background/85 px-2.5 py-0.5 font-mono text-xs font-medium text-foreground">
           <span className="size-1.5 rounded-full bg-[#E5A918]" />
           STYLE WHEEL // {count} 种画风
         </span>
-        <span className="font-mono text-[11px] tabular-nums text-zinc-400">
+        <span className="font-mono text-xs tabular-nums text-muted-foreground">
           {String(activeIndex + 1).padStart(2, '0')} / {String(count).padStart(2, '0')}
         </span>
       </div>
@@ -361,7 +409,7 @@ export function StyleWheelDeck() {
               cardRefs.current[idx] = el
             }}
             data-wheel-card-idx={idx}
-            className="group absolute top-2 aspect-[3/4] w-[108px] origin-bottom overflow-hidden rounded-2xl border border-white/20 bg-zinc-900 shadow-[0_18px_40px_rgba(0,0,0,0.72)] transition-[border-color,box-shadow] duration-200 will-change-transform data-[center]:border-white/75 data-[center]:ring-2 data-[center]:ring-[#D9381E]/75 sm:w-[118px]"
+            className="group absolute top-2 aspect-[3/4] w-[108px] origin-bottom overflow-hidden rounded-2xl border border-border bg-card shadow-lg transition-[border-color,box-shadow] duration-200 will-change-transform data-[center]:border-foreground/75 data-[center]:ring-2 data-[center]:ring-[#D9381E]/75 sm:w-[118px] dark:border-white/20 dark:bg-zinc-900 dark:shadow-[0_18px_40px_rgba(0,0,0,0.72)] dark:data-[center]:border-white/75"
           >
             {card.preview ? (
               <img
@@ -371,13 +419,13 @@ export function StyleWheelDeck() {
                 className="pointer-events-none size-full object-cover object-top"
               />
             ) : (
-              <div className="flex size-full flex-col items-center justify-center gap-1.5 bg-zinc-800 p-2 text-center text-zinc-200">
+              <div className="flex size-full flex-col items-center justify-center gap-1.5 bg-muted p-2 text-center text-foreground dark:bg-zinc-800 dark:text-zinc-200">
                 <WandSparklesIcon className="size-5 text-[#E5A918]" />
                 <span className="text-xs font-semibold">{card.shortLabel}</span>
               </div>
             )}
             <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/95 via-black/55 to-transparent px-2 pt-5 pb-1.5 text-center">
-              <span className="block truncate text-[11px] font-bold text-white">{card.shortLabel}</span>
+              <span className="block truncate text-xs font-bold text-white">{card.shortLabel}</span>
             </div>
           </div>
         ))}
@@ -390,7 +438,7 @@ export function StyleWheelDeck() {
           data-wheel-control
           aria-label="上一张画风"
           onClick={() => stepWheel(-1)}
-          className="flex size-8 shrink-0 items-center justify-center rounded-full bg-white/[0.08] text-zinc-200 ring-1 ring-white/12 transition-colors hover:bg-white hover:text-black active:scale-95"
+          className="flex size-8 shrink-0 items-center justify-center rounded-full border border-border bg-background/85 text-foreground transition-colors hover:bg-primary hover:text-primary-foreground active:scale-95"
         >
           <ChevronLeftIcon className="size-4" />
         </button>
@@ -407,21 +455,21 @@ export function StyleWheelDeck() {
                 className="space-y-0.5"
               >
                 <div className="flex flex-wrap items-center justify-center gap-1.5">
-                  <span className="rounded bg-white/10 px-1.5 py-0.5 text-[11px] font-medium text-zinc-300">
+                  <span className="rounded border border-border bg-background/75 px-1.5 py-0.5 text-xs font-medium text-muted-foreground">
                     {activeStyle.categoryLabel} · {activeStyle.subcategoryLabel}
                   </span>
-                  <span className="truncate text-xs font-bold text-white">{activeStyle.label}</span>
+                  <span className="truncate text-xs font-bold text-foreground">{activeStyle.label}</span>
                   <button
                     type="button"
                     data-wheel-control
                     onClick={() => applyAndGo(activeIndex)}
-                    className="inline-flex shrink-0 items-center gap-0.5 rounded-full bg-[#D9381E] px-2.5 py-0.5 text-[11px] font-semibold text-white transition-colors hover:bg-[#C23018]"
+                    className="inline-flex shrink-0 items-center gap-0.5 rounded-full bg-[#D9381E] px-2.5 py-0.5 text-xs font-semibold text-white transition-colors hover:bg-[#C23018]"
                   >
                     <span>试用</span>
                     <ArrowRightIcon className="size-3" />
                   </button>
                 </div>
-                <p className="truncate text-xs text-zinc-300">
+                <p className="truncate text-xs text-muted-foreground">
                   {activeStyle.tagline || '左右拖动轮盘浏览全部画风 · 点击主卡直接试用'}
                 </p>
               </motion.div>
@@ -434,7 +482,7 @@ export function StyleWheelDeck() {
           data-wheel-control
           aria-label="下一张画风"
           onClick={() => stepWheel(1)}
-          className="flex size-8 shrink-0 items-center justify-center rounded-full bg-white/[0.08] text-zinc-200 ring-1 ring-white/12 transition-colors hover:bg-white hover:text-black active:scale-95"
+          className="flex size-8 shrink-0 items-center justify-center rounded-full border border-border bg-background/85 text-foreground transition-colors hover:bg-primary hover:text-primary-foreground active:scale-95"
         >
           <ChevronRightIcon className="size-4" />
         </button>

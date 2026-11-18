@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useState } from 'react'
-import { CopyIcon, LoaderCircleIcon, PlusIcon } from 'lucide-react'
+import {
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  CopyIcon,
+  LoaderCircleIcon,
+  PlusIcon,
+  SearchIcon,
+} from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
@@ -25,7 +32,7 @@ import {
   type AdminConfirmAction,
 } from '../auditHelpers'
 
-type RedeemFilter = 'all' | 'active' | 'exhausted' | 'disabled'
+type RedeemFilter = 'all' | 'active' | 'exhausted' | 'disabled' | 'expired'
 
 interface AdminRedeemTabProps {
   reloadTick: number
@@ -33,13 +40,27 @@ interface AdminRedeemTabProps {
   onConfirm: (action: AdminConfirmAction) => void
 }
 
+const PAGE_LIMIT = 50
+
 export function AdminRedeemTab({
   reloadTick,
   onLoadingChange,
   onConfirm,
 }: AdminRedeemTabProps) {
   const [codes, setCodes] = useState<RedeemCodeItem[]>([])
+  const [total, setTotal] = useState(0)
+  const [counts, setCounts] = useState({
+    all: 0,
+    active: 0,
+    exhausted: 0,
+    disabled: 0,
+    expired: 0,
+  })
   const [codeFilter, setCodeFilter] = useState<RedeemFilter>('all')
+  const [queryInput, setQueryInput] = useState('')
+  const [appliedQuery, setAppliedQuery] = useState('')
+  const [offset, setOffset] = useState(0)
+
   const [newCodeCount, setNewCodeCount] = useState('5')
   const [newCodeCredits, setNewCodeCredits] = useState('50')
   const [newCodeMaxUses, setNewCodeMaxUses] = useState('1')
@@ -47,18 +68,35 @@ export function AdminRedeemTab({
   const [newCodePrefix, setNewCodePrefix] = useState('POSE')
   const [newCodeNote, setNewCodeNote] = useState('')
   const [creatingCodes, setCreatingCodes] = useState(false)
+  const [renderedAt, setRenderedAt] = useState(() => Date.now())
 
   const loadData = useCallback(async () => {
     onLoadingChange(true)
     try {
-      const res = await fetchAdminRedeemCodesApi()
+      const res = await fetchAdminRedeemCodesApi({
+        limit: PAGE_LIMIT,
+        offset,
+        filter: codeFilter,
+        q: appliedQuery.trim() || undefined,
+      })
       setCodes(res.codes)
+      setTotal(res.total)
+      setCounts(res.counts)
+      setRenderedAt(Date.now())
     } catch (err) {
       toast.error(err instanceof Error ? err.message : '加载兑换码失败')
     } finally {
       onLoadingChange(false)
     }
-  }, [onLoadingChange])
+  }, [appliedQuery, codeFilter, offset, onLoadingChange])
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setAppliedQuery(queryInput)
+      setOffset(0)
+    }, 280)
+    return () => window.clearTimeout(timer)
+  }, [queryInput])
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -104,13 +142,16 @@ export function AdminRedeemTab({
         prefix: newCodePrefix.trim() || 'POSE',
         note: newCodeNote.trim(),
       })
-      setCodes((prev) => [...res.codes, ...prev])
       setNewCodeNote('')
       toast.success(`已生成 ${res.codes.length} 个兑换码`)
       try {
         await navigator.clipboard.writeText(res.codes.map((c) => c.code).join('\n'))
         toast.info('已自动复制新生成的兑换码到剪贴板')
-      } catch {}
+      } catch {
+        // Ignore clipboard fallback
+      }
+      setOffset(0)
+      await loadData()
     } catch (err) {
       toast.error(err instanceof Error ? err.message : '生成失败')
     } finally {
@@ -122,8 +163,8 @@ export function AdminRedeemTab({
     const next = item.status === 'active' ? 'disabled' : 'active'
     const exec = async () => {
       await toggleAdminRedeemCodeApi(item.id, next)
-      setCodes((prev) => prev.map((c) => (c.id === item.id ? { ...c, status: next } : c)))
       toast.success(next === 'active' ? '已启用兑换码' : '已停用兑换码')
+      await loadData()
     }
     if (next === 'disabled') {
       onConfirm({
@@ -142,22 +183,18 @@ export function AdminRedeemTab({
     }
   }
 
-  const activeAvailableCodes = codes.filter(
-    (c) => c.status === 'active' && c.usedCount < c.maxUses
+  const activeAvailableOnPage = codes.filter(
+    (c) =>
+      c.status === 'active' &&
+      c.usedCount < c.maxUses &&
+      (c.expiresAt === null || c.expiresAt > renderedAt)
   )
-  const filteredCodes = codes.filter((c) => {
-    const exhausted = c.usedCount >= c.maxUses
-    if (codeFilter === 'active') return c.status === 'active' && !exhausted
-    if (codeFilter === 'disabled') return c.status === 'disabled'
-    if (codeFilter === 'exhausted') return exhausted
-    return true
-  })
 
   return (
     <div className="space-y-6">
       <AdminPageHeader
-        title={`积分兑换码管理 (${codes.length})`}
-        description="批量生成一次性或多次可用兑换码，成员在前端点击积分余额即可自助兑换。"
+        title={`积分兑换码管理 (${counts.all})`}
+        description="批量生成一次性或多次可用兑换码，支持按卡密码/批次备注检索及服务端分页。"
       />
 
       <AdminPanel title="批量生成兑换码">
@@ -234,41 +271,66 @@ export function AdminRedeemTab({
 
       <AdminFilterBar
         options={[
-          { id: 'all', label: `全部 (${codes.length})` },
-          { id: 'active', label: `可用 (${activeAvailableCodes.length})` },
-          {
-            id: 'exhausted',
-            label: `已领完 (${codes.filter((c) => c.usedCount >= c.maxUses).length})`,
-          },
-          {
-            id: 'disabled',
-            label: `已停用 (${codes.filter((c) => c.status === 'disabled').length})`,
-          },
+          { id: 'all', label: `全部 (${counts.all})` },
+          { id: 'active', label: `可用 (${counts.active})` },
+          { id: 'exhausted', label: `已领完 (${counts.exhausted})` },
+          { id: 'expired', label: `已过期 (${counts.expired})` },
+          { id: 'disabled', label: `已停用 (${counts.disabled})` },
         ]}
         value={codeFilter}
-        onChange={setCodeFilter}
+        onChange={(f) => {
+          setCodeFilter(f)
+          setOffset(0)
+        }}
         rightSlot={
-          activeAvailableCodes.length > 0 ? (
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              className={ADMIN_BTN_SM_CLS}
-              onClick={async () => {
-                try {
-                  await navigator.clipboard.writeText(
-                    activeAvailableCodes.map((c) => c.code).join('\n')
-                  )
-                  toast.success(`已复制 ${activeAvailableCodes.length} 个可用兑换码`)
-                } catch {
-                  toast.error('剪贴板复制失败')
+          <div className="flex flex-wrap items-center gap-2">
+            <form
+              onSubmit={(e) => {
+                e.preventDefault()
+                setOffset(0)
+                if (appliedQuery === queryInput && offset === 0) {
+                  void loadData()
+                } else {
+                  setAppliedQuery(queryInput)
                 }
               }}
+              className="flex items-center gap-1.5"
             >
-              <CopyIcon className="size-3" />
-              复制全部可用码 ({activeAvailableCodes.length})
-            </Button>
-          ) : null
+              <div className="relative">
+                <SearchIcon className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-zinc-400" />
+                <Input
+                  value={queryInput}
+                  onChange={(e) => setQueryInput(e.target.value)}
+                  placeholder="搜卡密 / 备注…"
+                  className="h-8 w-44 rounded-none pl-8 font-mono text-xs sm:w-52"
+                />
+              </div>
+              <Button type="submit" size="sm" variant="outline" className={ADMIN_BTN_CLS}>
+                查询
+              </Button>
+            </form>
+            {activeAvailableOnPage.length > 0 && (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className={ADMIN_BTN_SM_CLS}
+                onClick={async () => {
+                  try {
+                    await navigator.clipboard.writeText(
+                      activeAvailableOnPage.map((c) => c.code).join('\n')
+                    )
+                    toast.success(`已复制本页 ${activeAvailableOnPage.length} 个可用兑换码`)
+                  } catch {
+                    toast.error('剪贴板复制失败')
+                  }
+                }}
+              >
+                <CopyIcon className="size-3" />
+                复制本页可用 ({activeAvailableOnPage.length})
+              </Button>
+            )}
+          </div>
         }
       />
 
@@ -286,74 +348,111 @@ export function AdminRedeemTab({
             </tr>
           </thead>
           <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800">
-            {filteredCodes.length === 0 ? (
+            {codes.length === 0 ? (
               <tr>
                 <td colSpan={7} className="px-4 py-8 text-center font-sans text-xs text-zinc-500">
-                  {codes.length === 0
+                  {counts.all === 0
                     ? '暂无兑换码，可在上方表单批量生成。'
-                    : '当前筛选状态下无兑换码记录。'}
+                    : '当前筛选条件下无兑换码记录。'}
                 </td>
               </tr>
             ) : (
-              filteredCodes.map((c) => (
-                <tr key={c.id} className="hover:bg-zinc-50/70 dark:hover:bg-zinc-900/50">
-                  <td className="px-4 py-2.5 font-bold">
-                    <div className="inline-flex items-center gap-2">
-                      <span>{c.code}</span>
-                      <button
-                        type="button"
-                        aria-label="复制兑换码"
-                        onClick={() => {
-                          void navigator.clipboard.writeText(c.code)
-                          toast.success(`已复制 ${c.code}`)
-                        }}
-                        className="text-zinc-400 transition-colors hover:text-zinc-950 dark:hover:text-white"
+              codes.map((c) => {
+                const isExpired = c.expiresAt !== null && c.expiresAt <= renderedAt
+                return (
+                  <tr key={c.id} className="hover:bg-zinc-50/70 dark:hover:bg-zinc-900/50">
+                    <td className="px-4 py-2.5 font-bold">
+                      <div className="inline-flex items-center gap-2">
+                        <span>{c.code}</span>
+                        <button
+                          type="button"
+                          aria-label="复制兑换码"
+                          onClick={() => {
+                            void navigator.clipboard.writeText(c.code)
+                            toast.success(`已复制 ${c.code}`)
+                          }}
+                          className="text-zinc-400 transition-colors hover:text-zinc-950 dark:hover:text-white"
+                        >
+                          <CopyIcon className="size-3" />
+                        </button>
+                      </div>
+                    </td>
+                    <td className="px-4 py-2.5 font-bold">{c.credits}</td>
+                    <td className="px-4 py-2.5">
+                      {c.usedCount} / {c.maxUses}
+                    </td>
+                    <td className="px-4 py-2.5 text-zinc-500">
+                      {c.expiresAt ? formatAdminDateTime(c.expiresAt) : '永久'}
+                    </td>
+                    <td className="px-4 py-2.5 font-sans text-zinc-500">{c.note || '—'}</td>
+                    <td className="px-4 py-2.5">
+                      <AdminBadge
+                        tone={
+                          c.status !== 'active'
+                            ? 'danger'
+                            : c.usedCount >= c.maxUses || isExpired
+                              ? 'neutral'
+                              : 'success'
+                        }
                       >
-                        <CopyIcon className="size-3" />
-                      </button>
-                    </div>
-                  </td>
-                  <td className="px-4 py-2.5 font-bold">{c.credits}</td>
-                  <td className="px-4 py-2.5">
-                    {c.usedCount} / {c.maxUses}
-                  </td>
-                  <td className="px-4 py-2.5 text-zinc-500">
-                    {c.expiresAt ? formatAdminDateTime(c.expiresAt) : '永久'}
-                  </td>
-                  <td className="px-4 py-2.5 font-sans text-zinc-500">{c.note || '—'}</td>
-                  <td className="px-4 py-2.5">
-                    <AdminBadge
-                      tone={
-                        c.status !== 'active'
-                          ? 'danger'
-                          : c.usedCount >= c.maxUses
-                            ? 'neutral'
-                            : 'success'
-                      }
-                    >
-                      {c.status !== 'active'
-                        ? '已停用'
-                        : c.usedCount >= c.maxUses
-                          ? '已领完'
-                          : '可用'}
-                    </AdminBadge>
-                  </td>
-                  <td className="px-4 py-2.5 text-right">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className={ADMIN_BTN_SM_CLS}
-                      onClick={() => void handleToggleCodeStatus(c)}
-                    >
-                      {c.status === 'active' ? '停用' : '启用'}
-                    </Button>
-                  </td>
-                </tr>
-              ))
+                        {c.status !== 'active'
+                          ? '已停用'
+                          : isExpired
+                            ? '已过期'
+                            : c.usedCount >= c.maxUses
+                              ? '已领完'
+                              : '可用'}
+                      </AdminBadge>
+                    </td>
+                    <td className="px-4 py-2.5 text-right">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className={ADMIN_BTN_SM_CLS}
+                        onClick={() => void handleToggleCodeStatus(c)}
+                      >
+                        {c.status === 'active' ? '停用' : '启用'}
+                      </Button>
+                    </td>
+                  </tr>
+                )
+              })
             )}
           </tbody>
         </table>
       </div>
+
+      {total > PAGE_LIMIT && (
+        <div className="flex items-center justify-between border border-zinc-200 px-4 py-2.5 font-mono text-xs text-zinc-500 dark:border-zinc-800">
+          <span>
+            第 {Math.floor(offset / PAGE_LIMIT) + 1} / {Math.ceil(total / PAGE_LIMIT)} 页 · 共 {total} 条
+          </span>
+          <div className="flex items-center gap-1.5">
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className={ADMIN_BTN_SM_CLS}
+              disabled={offset === 0}
+              onClick={() => setOffset((o) => Math.max(0, o - PAGE_LIMIT))}
+            >
+              <ChevronLeftIcon className="size-3.5" />
+              上一页
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className={ADMIN_BTN_SM_CLS}
+              disabled={offset + PAGE_LIMIT >= total}
+              onClick={() => setOffset((o) => o + PAGE_LIMIT)}
+            >
+              下一页
+              <ChevronRightIcon className="size-3.5" />
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

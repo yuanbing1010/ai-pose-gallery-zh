@@ -8,12 +8,12 @@
 - **Paper Canvas (Light)**: `#F7F6F2` (`oklch(0.975 0.005 85)`) 温润画册纸底，搭配 `#FFFFFF` 纯白画框卡片。
 - **Obsidian Studio (Dark)**: `#121210` (`oklch(0.14 0.005 85)`) 暖黑暗房底色，搭配 `#1C1C19` 炭黑仪器面板。
 - **Instrument Chrome**: `#1F1F1C` (`oklch(0.22 0.005 85)`) 精密硬件控制条底色，搭配实体凹槽轨道与凸起键帽。
-- **Primary Accent — Vermilion (朱砂橘红)**: `#E54D2E` (`oklch(0.62 0.20 32)`)，用于主行动按钮与关键触发器。
+- **Primary Accent — Vermilion (朱砂橘红)**: `#D9381E`（实际暖纸白底高对比主行动色，兼顾可读性对比度与印章朱砂质感），用于主行动按钮与关键触发器。
 - **Secondary Accent — Kinpaku Gold (金箔琥珀)**: `#E5A918` (`oklch(0.80 0.16 82)`)，用于指示灯、排名徽章与高亮标记。
-- **Tertiary Accent — Patina Jade (青铜松石)**: `#19857B` (`oklch(0.58 0.11 188)`)，用于安全模式、3D 姿势与状态确认。
+- **Tertiary Accent — Patina Jade (青铜松石)**: `#19857B`（`oklch(0.58 0.11 188)`），用于 3D 姿势、服装材质与状态确认。
 
 ## Typography
-- **Heading & UI Sans**: `'Plus Jakarta Sans'`, `'PingFang SC'`, `'HarmonyOS Sans SC'`, `'Microsoft YaHei'`, sans-serif。标题与正文保持明确字号阶梯（H1 `2.25rem–3rem`，H2 `1.35rem–1.65rem`，正文 `0.875rem–1rem`）。
+- **Heading & UI Sans**: `'Inter Variable'`, `'PingFang SC'`, `'Hiragino Sans GB'`, `'Microsoft YaHei'`, sans-serif。标题与正文保持明确字号阶梯（H1 `2.25rem–3rem`，H2 `1.35rem–1.65rem`，正文 `0.875rem–1rem`）。
 - **Technical Mono**: `'JetBrains Mono'`, monospace，用于资产编号、分辨率与配方槽位序号。
 - **Legibility Floor**: 所有功能性文字、徽章、标签字号不得低于 `12px`（`0.75rem` / `text-xs`），正文行高保持 `1.5–1.65`，标题使用 `text-wrap: balance`。
 

@@ -106,7 +106,7 @@ export function PortraitFilterModal({
           <button
             type="button"
             onClick={() => onOpenChange(false)}
-            className="shrink-0 rounded-md border border-border bg-muted px-2 py-0.5 font-mono text-[11px] text-muted-foreground transition-colors hover:text-foreground"
+            className="shrink-0 rounded-md border border-border bg-muted px-2 py-0.5 font-mono text-xs text-muted-foreground transition-colors hover:text-foreground"
           >
             esc
           </button>
@@ -145,7 +145,7 @@ export function PortraitFilterModal({
           <div className="overflow-y-auto p-3.5 space-y-5">
             {showSection && (
               <section className="space-y-1.5">
-                <div className="px-2 text-[11px] font-medium tracking-wider text-muted-foreground uppercase">
+                <div className="px-2 text-xs font-medium tracking-wider text-muted-foreground uppercase">
                   画面分区
                 </div>
                 <div className="space-y-0.5">
@@ -211,7 +211,7 @@ export function PortraitFilterModal({
 
             {showHair && (
               <section className="space-y-1.5">
-                <div className="px-2 text-[11px] font-medium tracking-wider text-muted-foreground uppercase">
+                <div className="px-2 text-xs font-medium tracking-wider text-muted-foreground uppercase">
                   头发长度
                 </div>
                 <div className="space-y-0.5">
@@ -251,7 +251,7 @@ export function PortraitFilterModal({
 
             {showHot && (
               <section className="space-y-1.5">
-                <div className="px-2 text-[11px] font-medium tracking-wider text-muted-foreground uppercase">
+                <div className="px-2 text-xs font-medium tracking-wider text-muted-foreground uppercase">
                   人气榜单
                 </div>
                 <button
@@ -283,7 +283,7 @@ export function PortraitFilterModal({
 
             {showStyle && (
               <section className="space-y-1.5">
-                <div className="px-2 text-[11px] font-medium tracking-wider text-muted-foreground uppercase">
+                <div className="px-2 text-xs font-medium tracking-wider text-muted-foreground uppercase">
                   细分发型（{filteredStyles.length} 款）
                 </div>
                 <div className="space-y-0.5">

@@ -9,9 +9,9 @@ export interface ArtistPaintbrushProps {
 }
 
 /**
- * 立体多层 3D 画家油画/水彩画笔：
- * 通过 preserve-3d 将地面接触影、底层深色木脊背壁、中层车床圆柱笔杆/压纹金属笔箍/湿润毛刷头，
- * 以及顶层镜面反光带按 Z 轴层次分离，转动与飞入时具备真实的圆柱体块感。
+ * 立体多层画师油画/水彩画笔：
+ * 单一轻量 SVG 内部分层绘制地面接触影、木质与金属厚度脊背、圆柱渐变笔杆/压纹笔箍/湿润毛刷头
+ * 及顶层镜面高光带，保持立体视觉的同时大幅减少 SVG DOM 与 3D 合成层数量。
  */
 export function ArtistPaintbrush({
   colorHex,
@@ -25,49 +25,12 @@ export function ArtistPaintbrush({
   return (
     <span
       aria-hidden="true"
-      className={cn(
-        'st-preserve-3d relative inline-block overflow-visible select-none',
-        className
-      )}
+      className={cn('relative inline-block overflow-visible select-none', className)}
     >
-      {/* Z = -5px：画笔悬浮投射软影（免 blur 滤镜减少动态重绘开销） */}
       <svg
         viewBox="0 0 64 24"
         fill="none"
-        className="pointer-events-none absolute inset-0 size-full overflow-visible opacity-22"
-        style={{ transform: 'translate3d(0px, 2.2px, -5px)' }}
-      >
-        <path
-          d="M2.2 12.6C5 7.4 10.6 6 17 7.8L24.2 8.4C35 7.4 49 8.8 59.8 11C61.6 11.4 61.6 13.4 59.8 13.8C49 16 35 17.4 24.2 16.4L17 17C10.6 18.8 5 17.4 2.2 12.6Z"
-          fill="#0F172A"
-        />
-      </svg>
-
-      {/* Z = -2.5px：背面立体木质与金属厚度脊背 */}
-      <svg
-        viewBox="0 0 64 24"
-        fill="none"
-        className="pointer-events-none absolute inset-0 size-full overflow-visible"
-        style={{ transform: 'translateZ(-2.5px)' }}
-      >
-        <path
-          d="M23.5 8.3C34.5 7.2 48.5 8.6 59.8 10.9C61.8 11.3 61.8 13.1 59.8 13.5C48.5 15.8 34.5 17.2 23.5 16.1Z"
-          fill="#5C280B"
-        />
-        <path d="M16.4 7.5L24.2 8.2V16.2L16.4 16.9Z" fill="#334155" />
-        <path
-          d="M1.8 12.2C4.6 6.9 10.2 5.6 16.8 7.5V16.9C10.2 18.8 4.6 17.5 1.8 12.2Z"
-          fill={colorHex}
-          fillOpacity="0.65"
-        />
-      </svg>
-
-      {/* Z = 0px：3D 圆柱面渐变主体层（亮面木肩 -> 实木暗腹 + 压纹金属箍 + 饱满湿润笔毛） */}
-      <svg
-        viewBox="0 0 64 24"
-        fill="none"
-        className="relative size-full overflow-visible"
-        style={{ transform: 'translateZ(0.5px)' }}
+        className="size-full overflow-visible"
       >
         <defs>
           {/* 垂直于笔身轴线的圆柱明暗过渡：强立体滚圆感 */}
@@ -92,6 +55,20 @@ export function ArtistPaintbrush({
             <path d="M1.6 12C4.5 6.4 10.2 5.2 16.8 7.2V16.8C10.2 18.8 4.5 17.6 1.6 12Z" />
           </clipPath>
         </defs>
+
+        {/* 接触影 */}
+        <path
+          d="M2.2 14.8C5 9.6 10.6 8.2 17 10L24.2 10.6C35 9.6 49 11 59.8 13.2C61.6 13.6 61.6 15.6 59.8 16C49 18.2 35 19.6 24.2 18.6L17 19.2C10.6 21 5 19.6 2.2 14.8Z"
+          fill="#0F172A"
+          fillOpacity="0.22"
+        />
+
+        {/* 背面立体厚度脊背 */}
+        <path
+          d="M23.5 8.5C34.5 7.4 48.5 8.8 59.8 11.1C61.8 11.5 61.8 13.3 59.8 13.7C48.5 16 34.5 17.4 23.5 16.3Z"
+          fill="#5C280B"
+        />
+        <path d="M16.4 7.7L24.2 8.4V16.4L16.4 17.1Z" fill="#334155" />
 
         {/* 笔尖湿润颜料光晕 */}
         {active && (
@@ -142,15 +119,8 @@ export function ArtistPaintbrush({
           strokeOpacity="0.26"
           strokeWidth="0.85"
         />
-      </svg>
 
-      {/* Z = +3.5px：顶层凸起圆柱高光条 + 笔尖湿润高光水滴 */}
-      <svg
-        viewBox="0 0 64 24"
-        fill="none"
-        className="pointer-events-none absolute inset-0 size-full overflow-visible"
-        style={{ transform: 'translateZ(3.5px)' }}
-      >
+        {/* 顶层圆柱高光条 + 笔尖湿润高光水滴 */}
         <path
           d="M17.4 8.6L23.2 9.0M25.6 9.3C36 8.6 48 9.6 57.2 11.1"
           stroke="#FFFFFF"

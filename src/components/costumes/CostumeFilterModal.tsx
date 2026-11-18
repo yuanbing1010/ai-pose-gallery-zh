@@ -108,7 +108,7 @@ export function CostumeFilterModal({
           <button
             type="button"
             onClick={() => onOpenChange(false)}
-            className="shrink-0 rounded-md border border-border bg-muted px-2 py-0.5 font-mono text-[11px] text-muted-foreground transition-colors hover:text-foreground"
+            className="shrink-0 rounded-md border border-border bg-muted px-2 py-0.5 font-mono text-xs text-muted-foreground transition-colors hover:text-foreground"
           >
             esc
           </button>
@@ -148,7 +148,7 @@ export function CostumeFilterModal({
           <div className="overflow-y-auto p-3.5 space-y-5">
             {showStyle && (
               <section className="space-y-1.5">
-                <div className="px-2 text-[11px] font-medium tracking-wider text-muted-foreground uppercase">
+                <div className="px-2 text-xs font-medium tracking-wider text-muted-foreground uppercase">
                   风格板块
                 </div>
                 <div className="space-y-0.5">
@@ -188,7 +188,7 @@ export function CostumeFilterModal({
 
             {showCategory && (
               <section className="space-y-1.5">
-                <div className="px-2 text-[11px] font-medium tracking-wider text-muted-foreground uppercase">
+                <div className="px-2 text-xs font-medium tracking-wider text-muted-foreground uppercase">
                   穿搭分类
                 </div>
                 <div className="space-y-0.5">
@@ -228,7 +228,7 @@ export function CostumeFilterModal({
 
             {showSource && (
               <section className="space-y-1.5">
-                <div className="px-2 text-[11px] font-medium tracking-wider text-muted-foreground uppercase">
+                <div className="px-2 text-xs font-medium tracking-wider text-muted-foreground uppercase">
                   素材来源
                 </div>
                 <div className="space-y-0.5">
@@ -269,11 +269,11 @@ export function CostumeFilterModal({
             {showTag && (
               <section className="space-y-1.5">
                 <div className="flex items-center justify-between px-2">
-                  <span className="text-[11px] font-medium tracking-wider text-muted-foreground uppercase">
+                  <span className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
                     单品与色彩标签
                   </span>
                   {!q && tagOptions.length > 48 && (
-                    <span className="text-[11px] text-muted-foreground">展示高频前 48 项，输入可搜全部</span>
+                    <span className="text-xs text-muted-foreground">展示高频前 48 项，输入可搜全部</span>
                   )}
                 </div>
                 <div className="space-y-0.5">

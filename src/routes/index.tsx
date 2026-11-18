@@ -1,7 +1,7 @@
 import { useCallback, useState } from 'react'
 import { useSuspenseQuery } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
-import { costumesQuery, isNsfwCostume, isNsfwPose, portraitsQuery, posesQuery } from '@/api/gallery'
+import { costumesQuery, portraitsQuery, posesQuery } from '@/api/gallery'
 import { PackStage, type DrawnPack } from '@/components/home/PackStage'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useStudio } from '@/store/studioStore'
@@ -33,28 +33,22 @@ function DashboardPage() {
     setCostume,
     setPose,
     poseDepthMode,
-    safeMode,
   } = useStudio()
 
   const [packSeed, setPackSeed] = useState(0)
   const [muted, setMuted] = useState(false)
 
-  const sfwCostumes = costumes.filter(
-    (c) => !c.source && c.一级分类 !== '二次元' && (!safeMode || !isNsfwCostume(c))
-  )
-
   const rollDrawnPack = useCallback((): DrawnPack | null => {
-    const posePool = safeMode ? posesData.items.filter((p) => !isNsfwPose(p)) : posesData.items
-    if (!posePool.length || !sfwCostumes.length || !portraits.length) return null
+    if (!posesData.items.length || !costumes.length || !portraits.length) return null
     return {
       portrait: portraits[Math.floor(Math.random() * portraits.length)],
-      costume: sfwCostumes[Math.floor(Math.random() * sfwCostumes.length)],
+      costume: costumes[Math.floor(Math.random() * costumes.length)],
       pose: {
-        ...posePool[Math.floor(Math.random() * posePool.length)],
+        ...posesData.items[Math.floor(Math.random() * posesData.items.length)],
         useDepth: poseDepthMode,
       },
     }
-  }, [posesData.items, sfwCostumes, portraits, poseDepthMode, safeMode])
+  }, [posesData.items, costumes, portraits, poseDepthMode])
 
   const [drawnPack, setDrawnPack] = useState<DrawnPack | null>(() => rollDrawnPack())
 

@@ -1,5 +1,6 @@
 import { DurableObject } from 'cloudflare:workers'
 import { Hono } from 'hono'
+import { cleanupExpiredSessionsAndOauth, reapStaleProcessingJobs } from './server/db'
 import { withSession } from './server/middleware'
 import { accountRoutes } from './server/routes/account'
 import { adminRoutes } from './server/routes/admin'
@@ -106,4 +107,12 @@ app.all('*', (c) => {
 
 export default {
   fetch: app.fetch,
+  async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext) {
+    ctx.waitUntil(
+      Promise.allSettled([
+        reapStaleProcessingJobs(env.DB),
+        cleanupExpiredSessionsAndOauth(env.DB),
+      ])
+    )
+  },
 }

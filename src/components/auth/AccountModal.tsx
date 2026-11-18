@@ -215,13 +215,13 @@ export function AccountModal() {
               ) : null}
               <span className="truncate">{user.displayName}</span>
               {user.role === 'admin' && (
-                <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-foreground px-2 py-0.5 font-mono text-[11px] font-semibold text-background">
+                <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-foreground px-2 py-0.5 font-mono text-xs font-semibold text-background">
                   <ShieldCheckIcon className="size-3" />
                   ADMIN
                 </span>
               )}
               {user.wechatBound && (
-                <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-[#07C160]/12 px-2 py-0.5 text-[11px] font-semibold text-[#059449] dark:text-[#34D399]">
+                <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-[#07C160]/12 px-2 py-0.5 text-xs font-semibold text-[#059449] dark:text-[#34D399]">
                   <WechatIcon className="size-3" />
                   <span>微信已绑定</span>
                 </span>
@@ -405,7 +405,7 @@ export function AccountModal() {
                         </span>
                         <span className="truncate text-muted-foreground">{item.note}</span>
                       </div>
-                      <div className="mt-0.5 font-mono text-[11px] text-muted-foreground">
+                      <div className="mt-0.5 font-mono text-xs text-muted-foreground">
                         {formatTime(item.createdAt)} · 余额 {item.balanceAfter}
                       </div>
                     </div>
@@ -448,7 +448,7 @@ export function AccountModal() {
                         <div className="text-xs font-bold text-foreground">
                           {user.wechatBound ? '已绑定微信账号' : '绑定微信账号'}
                         </div>
-                        <div className="truncate text-[11px] text-muted-foreground">
+                        <div className="truncate text-xs text-muted-foreground">
                           {user.wechatBound
                             ? `微信昵称：${user.wechatNickname || '微信用户'}`
                             : '绑定后可直接使用微信扫码快捷登录'}
@@ -509,7 +509,7 @@ export function AccountModal() {
                   </div>
 
                   {user.wechatBound && !hasPassword && (
-                    <div className="mt-2.5 rounded-lg border border-amber-500/35 bg-amber-500/10 px-2.5 py-1.5 text-[11px] text-amber-800 dark:text-amber-300">
+                    <div className="mt-2.5 rounded-lg border border-amber-500/35 bg-amber-500/10 px-2.5 py-1.5 text-xs text-amber-800 dark:text-amber-300">
                       解绑微信前请先在下方设置账号登录密码，以免解绑后无法登录。
                     </div>
                   )}

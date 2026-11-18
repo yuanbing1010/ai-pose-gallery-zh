@@ -168,6 +168,22 @@ function buildGptVectorTemplates(): GptVectorTemplates {
 
 const GPT_VECTOR = buildGptVectorTemplates()
 
+const GPT_DEPTH_SLICES = [
+  { z: -0.125, fill: '#053B35' },
+  { z: -0.098, fill: '#074C45' },
+  { z: -0.071, fill: '#0A5C53' },
+  { z: -0.044, fill: '#0C6B61' },
+  { z: -0.017, fill: '#107B70' },
+  { z: 0.008, fill: '#158A7D' },
+] as const
+
+const GPT_PETAL_PT_COUNT = GPT_VECTOR.petal.length
+const GPT_SLICE_WX0 = new Float64Array(6 * GPT_PETAL_PT_COUNT)
+const GPT_SLICE_WY0 = new Float64Array(6 * GPT_PETAL_PT_COUNT)
+const GPT_SLICE_WZ0 = new Float64Array(6 * GPT_PETAL_PT_COUNT)
+const GPT_WEAVE_PX = new Float64Array(GPT_PETAL_PT_COUNT)
+const GPT_WEAVE_PY = new Float64Array(GPT_PETAL_PT_COUNT)
+
 /** 预构建 Google Gemini 官方 4 尖角内凹四角星高精度 128 点矢量轮廓 */
 function buildGeminiVectorOutline(): Array<[number, number]> {
   const pts: Array<[number, number]> = []
@@ -208,6 +224,7 @@ function buildGeminiVectorOutline(): Array<[number, number]> {
 }
 
 const GEMINI_OUTLINE = buildGeminiVectorOutline()
+const GEMINI_OUTLINE_COMPACT = GEMINI_OUTLINE.filter((_, idx) => idx % 2 === 0)
 
 interface GrokVectorTemplates {
   shapeA: Array<[number, number]>
@@ -633,25 +650,50 @@ function drawGpt3D(
   }
 
   const drawFlowerBody = () => {
-    // 1. 紧密堆积的 3D 实心挤压侧壁（Δz = 0.026，任意旋转角度无断层缝隙）
-    const depthSlices = [
-      { z: -0.125, fill: '#053B35' },
-      { z: -0.098, fill: '#074C45' },
-      { z: -0.071, fill: '#0A5C53' },
-      { z: -0.044, fill: '#0C6B61' },
-      { z: -0.017, fill: '#107B70' },
-      { z: 0.008, fill: '#158A7D' },
-    ]
-    const orderedSlices = facingFront ? depthSlices : [...depthSlices].reverse()
-    for (const sl of orderedSlices) {
+    // 1. 紧密堆积的 3D 实心挤压侧壁：先一次计算 z=0 的六瓣世界基坐标，6 层切片直接复用并偏移 Z 轴分量
+    const ptCount = GPT_PETAL_PT_COUNT
+    const petalPts = GPT_VECTOR.petal
+    for (let p = 0; p < 6; p++) {
+      const ang = spinRad + (p * Math.PI) / 3
+      const ca = Math.cos(ang)
+      const sa = Math.sin(ang)
+      const baseOffset = p * ptCount
+      for (let i = 0; i < ptCount; i++) {
+        const px = petalPts[i][0] * ca - petalPts[i][1] * sa
+        const py = petalPts[i][0] * sa + petalPts[i][1] * ca
+        const idx = baseOffset + i
+        GPT_SLICE_WX0[idx] = rot[0] * px + rot[1] * py
+        GPT_SLICE_WY0[idx] = rot[3] * px + rot[4] * py
+        GPT_SLICE_WZ0[idx] = rot[6] * px + rot[7] * py
+      }
+    }
+
+    const sliceCount = GPT_DEPTH_SLICES.length
+    const sliceLineW = Math.max(0.8, s * 0.024)
+    ctx.lineJoin = 'round'
+    ctx.lineWidth = sliceLineW
+    for (let step = 0; step < sliceCount; step++) {
+      const sl = GPT_DEPTH_SLICES[facingFront ? step : sliceCount - 1 - step]
+      const zx = rot[2] * sl.z
+      const zy = rot[5] * sl.z
+      const zz = rot[8] * sl.z
+
       ctx.beginPath()
       for (let p = 0; p < 6; p++) {
-        traceLoopAtZ(GPT_VECTOR.petal, spinRad + (p * Math.PI) / 3, sl.z, true)
+        const baseOffset = p * ptCount
+        for (let i = 0; i < ptCount; i++) {
+          const idx = baseOffset + i
+          const vz = GPT_SLICE_WZ0[idx] + zz
+          const f = CAM_DIST / Math.max(0.8, CAM_DIST - vz)
+          const sx = cx + (GPT_SLICE_WX0[idx] + zx) * s * f
+          const sy = cy + (GPT_SLICE_WY0[idx] + zy) * s * f
+          if (i === 0) ctx.moveTo(sx, sy)
+          else ctx.lineTo(sx, sy)
+        }
+        ctx.closePath()
       }
       ctx.fillStyle = sl.fill
       ctx.fill()
-      ctx.lineWidth = Math.max(0.8, s * 0.024)
-      ctx.lineJoin = 'round'
       ctx.strokeStyle = sl.fill
       ctx.stroke()
     }
@@ -700,22 +742,41 @@ function drawGpt3D(
         petalGrad.addColorStop(0.82, '#5EEAD4')
         petalGrad.addColorStop(1, '#14B8A6')
 
-        // 先向下层花瓣投射柔和叠压阴影（上层花瓣真实压在下层花瓣上方）
+        // 单次投影花瓣主轮廓，投影与填充直接复用屏幕坐标，避免重复矩阵计算与 ctx.save/restore
+        const fillLen = fillPts.length
+        for (let i = 0; i < fillLen; i++) {
+          const lx = fillPts[i][0]
+          const ly = fillPts[i][1]
+          const dz = clamp((-lx - 0.14) * 0.036, -0.02, 0.024)
+          const px = lx * ca - ly * sa
+          const py = lx * sa + ly * ca
+          const w = xformVec(rot, px, py, zVal + dz)
+          const p = projectPt(w, cx, cy, s)
+          GPT_WEAVE_PX[i] = p.x
+          GPT_WEAVE_PY[i] = p.y
+        }
+
         if (castShadow) {
-          ctx.save()
+          const shX = s * 0.016
+          const shY = s * 0.026
           ctx.beginPath()
-          traceWeaveLoopAtZ(fillPts, angle, zVal, true)
-          ctx.shadowColor = 'rgba(4, 47, 46, 0.34)'
-          ctx.shadowBlur = Math.max(2.5, s * 0.085)
-          ctx.shadowOffsetX = s * 0.012
-          ctx.shadowOffsetY = s * 0.02
-          ctx.fillStyle = 'rgba(13, 89, 82, 0.25)'
+          for (let i = 0; i < fillLen; i++) {
+            const x = GPT_WEAVE_PX[i] + shX
+            const y = GPT_WEAVE_PY[i] + shY
+            if (i === 0) ctx.moveTo(x, y)
+            else ctx.lineTo(x, y)
+          }
+          ctx.closePath()
+          ctx.fillStyle = 'rgba(4, 47, 46, 0.18)'
           ctx.fill()
-          ctx.restore()
         }
 
         ctx.beginPath()
-        traceWeaveLoopAtZ(fillPts, angle, zVal, true)
+        for (let i = 0; i < fillLen; i++) {
+          if (i === 0) ctx.moveTo(GPT_WEAVE_PX[i], GPT_WEAVE_PY[i])
+          else ctx.lineTo(GPT_WEAVE_PX[i], GPT_WEAVE_PY[i])
+        }
+        ctx.closePath()
         ctx.fillStyle = petalGrad
         ctx.fill()
         ctx.fillStyle = sheenGrad
@@ -954,11 +1015,15 @@ function makeQuadPrim(
 function paintQuadPrims(ctx: CanvasRenderingContext2D, quads: QuadPrim[]) {
   if (quads.length === 0) return
   const sorted = [...quads].sort((a, b) => a.zAvg - b.zAvg)
+  ctx.save()
   ctx.lineJoin = 'round'
+  const baseAlpha = ctx.globalAlpha
+  let prevAlpha = 1
   for (const q of sorted) {
-    ctx.save()
-    if (q.alpha !== undefined && q.alpha < 1) {
-      ctx.globalAlpha *= q.alpha
+    const a = q.alpha !== undefined && q.alpha < 1 ? q.alpha : 1
+    if (a !== prevAlpha) {
+      prevAlpha = a
+      ctx.globalAlpha = baseAlpha * a
     }
     ctx.beginPath()
     ctx.moveTo(q.pts[0].x, q.pts[0].y)
@@ -975,8 +1040,8 @@ function paintQuadPrims(ctx: CanvasRenderingContext2D, quads: QuadPrim[]) {
       ctx.strokeStyle = q.stroke ?? q.fill
       ctx.stroke()
     }
-    ctx.restore()
   }
+  ctx.restore()
 }
 
 function mixRgbColor(
@@ -1151,11 +1216,13 @@ function drawGrok3D(
       silverGrad.addColorStop(1, '#64748B')
     }
     ctx.save()
-    ctx.shadowColor = 'rgba(30, 27, 75, 0.34)'
-    ctx.shadowBlur = scale * 0.075
-    ctx.fillStyle = silverGrad
+    ctx.translate(0, scale * 0.018)
+    ctx.fillStyle = 'rgba(30, 27, 75, 0.22)'
     ctx.fill()
     ctx.restore()
+    traceCap(frontCap)
+    ctx.fillStyle = silverGrad
+    ctx.fill()
 
     // 柔和内倒角亮边 + 深岩靛微描边（令白银雕塑在浅米色背景卡面上轮廓利落分明）
     if (sharpOutline) {
@@ -1286,12 +1353,13 @@ function drawGemini3D(
   const s = scale * breatheScale * (hovered ? 1.04 : 1)
   const faceNz = rot[8]
   const facingFront = faceNz >= 0
-  const nOutline = GEMINI_OUTLINE.length
+  const outlinePts = scale < 42 ? GEMINI_OUTLINE_COMPACT : GEMINI_OUTLINE
+  const nOutline = outlinePts.length
 
   const traceStarAtZ = (zLocal: number, scaleXY = 1) => {
     ctx.beginPath()
     for (let i = 0; i < nOutline; i++) {
-      const w = xformVec(rot, GEMINI_OUTLINE[i][0] * scaleXY, GEMINI_OUTLINE[i][1] * scaleXY, zLocal)
+      const w = xformVec(rot, outlinePts[i][0] * scaleXY, outlinePts[i][1] * scaleXY, zLocal)
       const p = projectPt(w, cx, cy, s)
       if (i === 0) ctx.moveTo(p.x, p.y)
       else ctx.lineTo(p.x, p.y)
@@ -1421,12 +1489,12 @@ function drawGemini3D(
     paintStarFourColorCap(zBack, 0.945, true)
   }
 
-  // 2. 128 段连续无缝 3D 倒角 + 晶体侧壁（按段逐面 Z 深度排序，彻底告别斜视分层锯齿）
+  // 2. 连续无缝 3D 倒角 + 晶体侧壁（按段逐面 Z 深度排序，彻底告别斜视分层锯齿）
   const wallQuads: QuadPrim[] = []
   for (let i = 0; i < nOutline; i++) {
     const j = (i + 1) % nOutline
-    const p0 = GEMINI_OUTLINE[i]
-    const p1 = GEMINI_OUTLINE[j]
+    const p0 = outlinePts[i]
+    const p1 = outlinePts[j]
     const xm = (p0[0] + p1[0]) * 0.5
     const ym = (p0[1] + p1[1]) * 0.5
     const baseRgb = sampleGeminiPerimeterRgb(xm, ym)
@@ -1588,11 +1656,34 @@ export function ArtistMesh3D({
   }, [reactionTick, providerId])
 
   const lastDrawMsRef = useRef<number | null>(null)
+  const lastUiDrawMsRef = useRef(0)
 
   const drawSingleFrame = (nowMs: number, explicitDtSec?: number) => {
     const canvas = canvasRef.current
     if (!canvas) return
     const p = latestPropsRef.current
+    const st = animRef.current
+    const target = p.getTargetPose()
+
+    // 平静待机呼吸保持 30fps 节流，悬停/跟随/生图/受击等交互态恢复满帧渲染
+    if (explicitDtSec === undefined) {
+      const isActiveMotion =
+        p.hovered ||
+        p.generating ||
+        p.cheering ||
+        p.isWiping ||
+        nowMs < st.squishUntilMs ||
+        nowMs < st.gyroUntilMs ||
+        Math.abs(target.yawDeg - st.yaw) > 0.1 ||
+        Math.abs(target.pitchDeg - st.pitch) > 0.1 ||
+        Math.abs(target.lookX - st.lookX) > 0.005 ||
+        Math.abs(target.lookY - st.lookY) > 0.005
+      if (!isActiveMotion && nowMs - lastUiDrawMsRef.current < 33) {
+        return
+      }
+    }
+    lastUiDrawMsRef.current = nowMs
+
     const dtSec =
       explicitDtSec !== undefined
         ? explicitDtSec
@@ -1601,7 +1692,7 @@ export function ArtistMesh3D({
           : clamp((nowMs - lastDrawMsRef.current) / 1000, 0.001, 0.05)
     lastDrawMsRef.current = nowMs
 
-    const dpr = typeof window !== 'undefined' ? Math.min(window.devicePixelRatio || 1, 3) : 1
+    const dpr = typeof window !== 'undefined' ? Math.min(window.devicePixelRatio || 1, 2) : 1
     const targetW = Math.round(p.canvasCssSize * dpr)
     const targetH = Math.round(p.canvasCssSize * dpr)
     if (canvas.width !== targetW || canvas.height !== targetH) {
@@ -1611,8 +1702,6 @@ export function ArtistMesh3D({
     const ctx = canvas.getContext('2d')
     if (!ctx) return
 
-    const st = animRef.current
-    const target = p.getTargetPose()
     const smoothRate = p.prefersReducedMotion
       ? 1
       : dtSec === 0
@@ -1768,26 +1857,78 @@ export function ArtistMesh3D({
     ctx.restore()
   }
 
-  // 首帧与状态变更同步重绘（explicitDtSec = 0，彻底避免眨眼/悬停状态切换时花瓣与旋转角度跳变卡顿）
+  // 仅在首次挂载或尺寸/厂商切换时同步绘制首帧；其余状态切换交给正在运行的 rAF 异步承接，避免阻塞 React commit
   useLayoutEffect(() => {
     drawSingleFrame(performance.now(), 0)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [providerId, sizePx, mood, isBlinking, selected, hovered, disabled, generating, isWiping, cheering, prefersReducedMotion])
+  }, [providerId, sizePx])
 
   useEffect(() => {
-    if (prefersReducedMotion) {
-      drawSingleFrame(performance.now(), 0)
-      return
-    }
+    if (prefersReducedMotion || disabled) return
     let rafId = 0
+    let inViewport = true
+
+    const isActive = () =>
+      inViewport && (typeof document === 'undefined' || document.visibilityState !== 'hidden')
+
     const loop = (now: number) => {
+      if (!isActive()) {
+        rafId = 0
+        lastDrawMsRef.current = null
+        return
+      }
       drawSingleFrame(now)
       rafId = window.requestAnimationFrame(loop)
     }
-    rafId = window.requestAnimationFrame(loop)
-    return () => window.cancelAnimationFrame(rafId)
+
+    const syncLoop = () => {
+      if (isActive()) {
+        if (rafId === 0) {
+          lastDrawMsRef.current = null
+          rafId = window.requestAnimationFrame(loop)
+        }
+      } else if (rafId !== 0) {
+        window.cancelAnimationFrame(rafId)
+        rafId = 0
+        lastDrawMsRef.current = null
+      }
+    }
+
+    const onVisibilityChange = () => syncLoop()
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', onVisibilityChange)
+    }
+
+    let observer: IntersectionObserver | null = null
+    if (typeof IntersectionObserver !== 'undefined' && canvasRef.current) {
+      observer = new IntersectionObserver(
+        (entries) => {
+          const entry = entries[0]
+          if (!entry) return
+          inViewport = entry.isIntersecting
+          syncLoop()
+        },
+        { threshold: 0.01 }
+      )
+      observer.observe(canvasRef.current)
+    }
+
+    syncLoop()
+    return () => {
+      if (rafId !== 0) window.cancelAnimationFrame(rafId)
+      if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', onVisibilityChange)
+      }
+      observer?.disconnect()
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [prefersReducedMotion])
+  }, [prefersReducedMotion, disabled])
+
+  useEffect(() => {
+    if (!prefersReducedMotion && !disabled) return
+    drawSingleFrame(performance.now(), 0)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prefersReducedMotion, disabled, mood, isBlinking, selected, hovered, generating, isWiping, cheering])
 
   return (
     <canvas

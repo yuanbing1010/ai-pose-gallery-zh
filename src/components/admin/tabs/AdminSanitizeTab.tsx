@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ClipboardEvent } from 'react'
+﻿import { useCallback, useEffect, useMemo, useState, type ClipboardEvent } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
   CheckIcon,
@@ -712,19 +712,19 @@ export function AdminSanitizeTab({
                 <div className="space-y-2.5 border border-zinc-200 p-3.5 dark:border-zinc-800">
                   <div>
                     <div className="text-xs font-bold">整类静默的姿势体系（精确匹配）</div>
-                    <p className="mt-0.5 text-[11px] text-zinc-500 dark:text-zinc-400">
+                    <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">
                       属于以下体系的姿势，发往云端时直接省去全部文本标注。
                     </p>
                   </div>
 
                   <div className="flex flex-wrap gap-1.5">
                     {cfg.blockedPoseSystems.length === 0 ? (
-                      <span className="text-[11px] text-zinc-400">暂无整类静默体系</span>
+                      <span className="text-xs text-zinc-400">暂无整类静默体系</span>
                     ) : (
                       cfg.blockedPoseSystems.map((sys) => (
                         <span
                           key={sys}
-                          className="inline-flex items-center gap-1 border border-zinc-950 bg-zinc-950 px-2 py-0.5 font-mono text-[11px] text-white dark:border-zinc-100 dark:bg-zinc-100 dark:text-zinc-950"
+                          className="inline-flex items-center gap-1 border border-zinc-950 bg-zinc-950 px-2 py-0.5 font-mono text-xs text-white dark:border-zinc-100 dark:bg-zinc-100 dark:text-zinc-950"
                         >
                           <span>{sys}</span>
                           <button
@@ -742,7 +742,7 @@ export function AdminSanitizeTab({
 
                   {knownSystems.length > 0 && (
                     <div className="flex flex-wrap items-center gap-1.5 border-t border-zinc-100 pt-2 dark:border-zinc-800/80">
-                      <span className="text-[10px] font-medium text-zinc-500">图库现有体系：</span>
+                      <span className="text-xs font-medium text-zinc-500">图库现有体系：</span>
                       {knownSystems.map((sys) => {
                         const active = cfg.blockedPoseSystems.some(
                           (s) => s.toLowerCase() === sys.toLowerCase()
@@ -752,7 +752,7 @@ export function AdminSanitizeTab({
                             key={sys}
                             type="button"
                             onClick={() => handleToggleSystem(sys)}
-                            className={`border px-1.5 py-0.5 text-[11px] transition-colors ${
+                            className={`border px-1.5 py-0.5 text-xs transition-colors ${
                               active
                                 ? 'border-zinc-950 bg-zinc-100 font-bold text-zinc-950 dark:border-zinc-200 dark:bg-zinc-800 dark:text-zinc-100'
                                 : 'border-zinc-200 text-zinc-600 hover:border-zinc-400 dark:border-zinc-800 dark:text-zinc-400'
@@ -795,19 +795,19 @@ export function AdminSanitizeTab({
                 <div className="space-y-2.5 border border-zinc-200 p-3.5 dark:border-zinc-800">
                   <div>
                     <div className="text-xs font-bold">整类静默的分类关键词（包含匹配）</div>
-                    <p className="mt-0.5 text-[11px] text-zinc-500 dark:text-zinc-400">
+                    <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">
                       姿势「分类」包含任一关键词时整条静默（大小写不敏感）。
                     </p>
                   </div>
 
                   <div className="flex flex-wrap gap-1.5">
                     {cfg.blockedPoseCategoryKeywords.length === 0 ? (
-                      <span className="text-[11px] text-zinc-400">暂无静默分类关键词</span>
+                      <span className="text-xs text-zinc-400">暂无静默分类关键词</span>
                     ) : (
                       cfg.blockedPoseCategoryKeywords.map((kw) => (
                         <span
                           key={kw}
-                          className="inline-flex items-center gap-1 border border-zinc-300 bg-zinc-100 px-2 py-0.5 font-mono text-[11px] text-zinc-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+                          className="inline-flex items-center gap-1 border border-zinc-300 bg-zinc-100 px-2 py-0.5 font-mono text-xs text-zinc-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
                         >
                           <span>{kw}</span>
                           <button
@@ -928,7 +928,7 @@ export function AdminSanitizeTab({
                   className="rounded-none font-mono text-xs leading-relaxed"
                 />
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span className="font-mono text-[11px] text-zinc-500">
+                  <span className="font-mono text-xs text-zinc-500">
                     当前文本解析词数：{parseTermBatchInput(bulkText).length}
                   </span>
                   <div className="flex items-center gap-2">
@@ -980,7 +980,7 @@ export function AdminSanitizeTab({
                   </Button>
                 </div>
 
-                <div className="flex flex-wrap items-center justify-between gap-2 text-[11px]">
+                <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
                   <div className="flex items-center gap-1">
                     {(
                       [
@@ -1020,7 +1020,7 @@ export function AdminSanitizeTab({
                       {filteredTerms.map((term) => (
                         <span
                           key={term}
-                          className="inline-flex items-center gap-1 border border-zinc-300 bg-white px-2 py-0.5 font-mono text-[11px] text-zinc-900 transition-colors hover:border-zinc-950 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100 dark:hover:border-zinc-400"
+                          className="inline-flex items-center gap-1 border border-zinc-300 bg-white px-2 py-0.5 font-mono text-xs text-zinc-900 transition-colors hover:border-zinc-950 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100 dark:hover:border-zinc-400"
                         >
                           <span>{term}</span>
                           <button
@@ -1140,7 +1140,7 @@ export function AdminSanitizeTab({
             subtitle="实时使用当前编辑中的规则（无需先保存）预览云端提示词与命中明细。"
           >
             <div className="space-y-4">
-              <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+              <div className="flex flex-wrap items-center gap-1.5 text-xs">
                 <span className="text-zinc-500">快捷示例：</span>
                 {SANDBOX_PRESETS.map((preset) => (
                   <button
@@ -1194,7 +1194,7 @@ export function AdminSanitizeTab({
                         {sandboxInspection.result.reason}
                       </span>
                     </div>
-                    <div className="font-mono text-[11px] text-zinc-500">
+                    <div className="font-mono text-xs text-zinc-500">
                       云端标注：
                       <strong className="ml-1 text-zinc-950 dark:text-zinc-100">
                         {sandboxInspection.result.sanitized
@@ -1206,7 +1206,7 @@ export function AdminSanitizeTab({
 
                   {(sandboxInspection.result.matchedReplacements.length > 0 ||
                     sandboxInspection.result.matchedTerms.length > 0) && (
-                    <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+                    <div className="flex flex-wrap items-center gap-1.5 text-xs">
                       {sandboxInspection.result.matchedReplacements.map((r) => (
                         <AdminBadge key={r.from} tone="info">
                           替换：{r.from} → {r.to || '删除'}
@@ -1220,7 +1220,7 @@ export function AdminSanitizeTab({
                     </div>
                   )}
 
-                  <pre className="whitespace-pre-wrap border border-zinc-200 bg-white p-3 font-mono text-[11px] leading-relaxed text-zinc-800 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-200">
+                  <pre className="whitespace-pre-wrap border border-zinc-200 bg-white p-3 font-mono text-xs leading-relaxed text-zinc-800 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-200">
                     {sandboxInspection.promptPreview}
                   </pre>
                 </div>
@@ -1294,7 +1294,7 @@ export function AdminSanitizeTab({
                 </div>
 
                 <div className="flex flex-wrap items-center gap-1.5">
-                  <span className="mr-1 text-[11px] text-zinc-500">词段一键屏蔽/解除：</span>
+                  <span className="mr-1 text-xs text-zinc-500">词段一键屏蔽/解除：</span>
                   {extractCandidateSegments(selectedAuditRow.group.name).map((seg) => {
                     const inBlocked = cfg.blockedTerms.some(
                       (t) => t.toLowerCase() === seg.toLowerCase()
@@ -1304,7 +1304,7 @@ export function AdminSanitizeTab({
                         key={seg}
                         type="button"
                         onClick={() => handleToggleTerm(seg)}
-                        className={`inline-flex items-center gap-1 border px-2 py-0.5 font-mono text-[11px] transition-colors ${
+                        className={`inline-flex items-center gap-1 border px-2 py-0.5 font-mono text-xs transition-colors ${
                           inBlocked
                             ? 'border-amber-600/50 bg-amber-500/15 font-bold text-amber-800 dark:text-amber-300'
                             : 'border-zinc-300 bg-white text-zinc-800 hover:border-zinc-950 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200'
@@ -1400,7 +1400,7 @@ export function AdminSanitizeTab({
                       setAuditStatus(opt.id)
                       setAuditPage(1)
                     }}
-                    className={`border px-2 py-0.5 font-mono text-[11px] transition-colors ${
+                    className={`border px-2 py-0.5 font-mono text-xs transition-colors ${
                       auditStatus === opt.id
                         ? 'border-zinc-950 bg-zinc-950 font-bold text-white dark:border-zinc-100 dark:bg-zinc-100 dark:text-zinc-950'
                         : 'border-zinc-200 text-zinc-600 hover:border-zinc-400 dark:border-zinc-800 dark:text-zinc-400'
@@ -1410,7 +1410,7 @@ export function AdminSanitizeTab({
                   </button>
                 ))}
               </div>
-              <span className="font-mono text-[11px] text-zinc-500">
+              <span className="font-mono text-xs text-zinc-500">
                 匹配 {filteredAuditRows.length} 条
               </span>
             </div>
@@ -1432,7 +1432,7 @@ export function AdminSanitizeTab({
               <div className="overflow-x-auto border border-zinc-200 dark:border-zinc-800">
                 <table className="w-full border-collapse text-left text-xs">
                   <thead>
-                    <tr className="border-b border-zinc-200 bg-zinc-50 text-[11px] font-bold text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900/70 dark:text-zinc-300">
+                    <tr className="border-b border-zinc-200 bg-zinc-50 text-xs font-bold text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900/70 dark:text-zinc-300">
                       <th className="px-3 py-2">编号 / 体系·分类</th>
                       <th className="px-3 py-2">原始姿势名称</th>
                       <th className="px-3 py-2">云端脱敏结果</th>
@@ -1453,15 +1453,15 @@ export function AdminSanitizeTab({
                           }
                         >
                           <td className="px-3 py-2 align-top whitespace-nowrap">
-                            <div className="font-mono text-[11px] font-bold">{group.number}</div>
-                            <div className="text-[11px] text-zinc-500">
+                            <div className="font-mono text-xs font-bold">{group.number}</div>
+                            <div className="text-xs text-zinc-500">
                               {group.system} · {group.category}
                             </div>
                           </td>
                           <td className="px-3 py-2 align-top font-medium text-zinc-900 dark:text-zinc-100">
                             {group.name}
                           </td>
-                          <td className="px-3 py-2 align-top font-mono text-[11px]">
+                          <td className="px-3 py-2 align-top font-mono text-xs">
                             {result.sanitized ? (
                               <span className="text-zinc-900 dark:text-zinc-100">
                                 {result.sanitized}
@@ -1475,7 +1475,7 @@ export function AdminSanitizeTab({
                           <td className="px-3 py-2 align-top">
                             <div className="flex flex-wrap items-center gap-1.5">
                               {renderActionBadge(result)}
-                              <span className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                              <span className="text-xs text-zinc-500 dark:text-zinc-400">
                                 {result.reason}
                               </span>
                             </div>
@@ -1503,7 +1503,7 @@ export function AdminSanitizeTab({
 
             {totalAuditPages > 1 && (
               <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs">
-                <span className="font-mono text-[11px] text-zinc-500">
+                <span className="font-mono text-xs text-zinc-500">
                   第 {safeAuditPage} / {totalAuditPages} 页
                 </span>
                 <div className="flex items-center gap-1.5">

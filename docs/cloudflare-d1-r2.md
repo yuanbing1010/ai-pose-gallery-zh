@@ -58,4 +58,4 @@
    ```bash
    pnpm run deploy
    ```
-6. 访问线上 `https://<你的域名>/admin/login` 完成首个管理员初始化，配置至少一家厂商的 API Key 与积分单价即可开放使用。
+6. 访问线上 `https://<你的域名>/admin/login` 完成首个管理员初始化（建议提前通过 `npx wrangler secret put BOOTSTRAP_SETUP_TOKEN` 设置初始化口令，或直接配置 `BOOTSTRAP_ADMIN_USERNAME` / `BOOTSTRAP_ADMIN_PASSWORD` 自动建号），配置至少一家厂商的 API Key 与积分单价即可开放使用。

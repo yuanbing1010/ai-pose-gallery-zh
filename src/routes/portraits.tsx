@@ -16,6 +16,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { portraitsQuery } from '@/api/gallery'
 import { PortraitCard } from '@/components/cards/PortraitCard'
 import { EmptyState } from '@/components/common/EmptyState'
+import { HorizontalFilterStrip } from '@/components/common/HorizontalFilterStrip'
 import { ShowcaseDialog, ShowcaseStageTabs } from '@/components/common/ShowcaseDialog'
 import { ScrollToTopButton } from '@/components/common/ScrollToTopButton'
 import { ZoomViewport } from '@/components/common/ZoomViewport'
@@ -225,7 +226,7 @@ function PortraitsPage() {
                     : 'text-foreground hover:bg-muted/60'
                 )}
               >
-                <div className={cn('text-[11px] whitespace-nowrap', active ? 'opacity-80' : 'text-muted-foreground')}>
+                <div className={cn('text-xs whitespace-nowrap', active ? 'opacity-80' : 'text-muted-foreground')}>
                   {tab.label}
                 </div>
                 <div className="mt-0.5 font-mono text-sm font-semibold tabular-nums">
@@ -266,7 +267,7 @@ function PortraitsPage() {
                 <XIcon className="size-3" />
               </button>
             ) : (
-              <kbd className="ml-2 hidden shrink-0 rounded-md border border-border bg-muted px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground sm:inline-block">
+              <kbd className="ml-2 hidden shrink-0 rounded-md border border-border bg-muted px-1.5 py-0.5 font-mono text-xs text-muted-foreground sm:inline-block">
                 /
               </kbd>
             )}
@@ -285,11 +286,11 @@ function PortraitsPage() {
             <SlidersHorizontalIcon className="size-3.5" />
             <span>筛选</span>
             {activeFilterCount > 0 ? (
-              <span className="flex size-4 items-center justify-center rounded-full bg-background font-mono text-[10px] font-semibold text-foreground">
+              <span className="flex size-4 items-center justify-center rounded-full bg-background font-mono text-xs font-semibold text-foreground">
                 {activeFilterCount}
               </span>
             ) : (
-              <kbd className="hidden rounded-md border border-border bg-muted px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground sm:inline-block">
+              <kbd className="hidden rounded-md border border-border bg-muted px-1.5 py-0.5 font-mono text-xs text-muted-foreground sm:inline-block">
                 F
               </kbd>
             )}
@@ -326,7 +327,7 @@ function PortraitsPage() {
         </div>
 
         {/* 单行横向发长 + 细分发型胶囊带 */}
-        <div className="no-scrollbar flex items-center gap-1.5 overflow-x-auto pb-0.5">
+        <HorizontalFilterStrip>
           {styleName !== 'all' && (
             <button
               type="button"
@@ -377,7 +378,7 @@ function PortraitsPage() {
                 )}
               >
                 {h.label}
-                <span className={cn('ml-1.5 font-mono text-[11px]', isActive ? 'opacity-80' : 'text-muted-foreground')}>{h.count}</span>
+                <span className={cn('ml-1.5 font-mono text-xs', isActive ? 'opacity-80' : 'text-muted-foreground')}>{h.count}</span>
               </button>
             )
           })}
@@ -400,11 +401,11 @@ function PortraitsPage() {
                 )}
               >
                 {s.label}
-                <span className={cn('ml-1.5 font-mono text-[11px]', isActive ? 'opacity-80' : 'text-muted-foreground')}>{s.count}</span>
+                <span className={cn('ml-1.5 font-mono text-xs', isActive ? 'opacity-80' : 'text-muted-foreground')}>{s.count}</span>
               </button>
             )
           })}
-        </div>
+        </HorizontalFilterStrip>
       </div>
 
       {/* 与服装库完全对齐的 4:5 架构画廊网格 */}
@@ -521,7 +522,7 @@ function PortraitsPage() {
                         type="button"
                         aria-label="上一张人像"
                         onClick={() => setViewerNav({ index: (viewerIndex - 1 + filtered.length) % filtered.length, dir: -1 })}
-                        className="absolute top-1/2 left-4 z-20 flex size-9 -translate-y-1/2 items-center justify-center rounded-full bg-black/55 text-zinc-200 ring-1 ring-white/15 backdrop-blur-md transition-all hover:bg-white hover:text-black active:scale-95"
+                        className="absolute top-1/2 left-4 z-20 flex size-9 -translate-y-1/2 items-center justify-center rounded-full border border-border bg-background/85 text-foreground backdrop-blur-md transition-all hover:bg-primary hover:text-primary-foreground active:scale-95"
                       >
                         <ChevronLeftIcon className="size-4" />
                       </button>
@@ -529,7 +530,7 @@ function PortraitsPage() {
                         type="button"
                         aria-label="下一张人像"
                         onClick={() => setViewerNav({ index: (viewerIndex + 1) % filtered.length, dir: 1 })}
-                        className="absolute top-1/2 right-4 z-20 flex size-9 -translate-y-1/2 items-center justify-center rounded-full bg-black/55 text-zinc-200 ring-1 ring-white/15 backdrop-blur-md transition-all hover:bg-white hover:text-black active:scale-95"
+                        className="absolute top-1/2 right-4 z-20 flex size-9 -translate-y-1/2 items-center justify-center rounded-full border border-border bg-background/85 text-foreground backdrop-blur-md transition-all hover:bg-primary hover:text-primary-foreground active:scale-95"
                       >
                         <ChevronRightIcon className="size-4" />
                       </button>
@@ -546,7 +547,7 @@ function PortraitsPage() {
                   <ZoomViewport
                     imageUrl={`/${currentItem.原图}`}
                     alt={currentItem.标题}
-                    className="min-h-0 h-[56dvh] rounded-2xl border border-white/12 bg-[#161620] p-3"
+                    className="min-h-0 h-[56dvh] rounded-2xl border border-border bg-card dark:border-white/12 dark:bg-[#161620] p-3"
                   />
                 </div>
               )
@@ -555,11 +556,11 @@ function PortraitsPage() {
               viewerStageMode !== 'zoom' ? (
                 <>
                   {filtered.length > 1 && (
-                    <span className="rounded-full bg-black/55 px-3 py-1 font-mono text-xs font-medium tabular-nums text-zinc-300 ring-1 ring-white/12 backdrop-blur-md">
+                    <span className="rounded-full border border-border bg-background/85 px-3 py-1 font-mono text-xs font-medium tabular-nums text-foreground backdrop-blur-md">
                       {viewerIndex + 1} / {filtered.length}
                     </span>
                   )}
-                  <p className="text-xs text-zinc-400">
+                  <p className="text-xs text-muted-foreground">
                     悬停倾斜 · 按住拖拽旋转 · 左右箭头切牌
                   </p>
                 </>
@@ -575,18 +576,18 @@ function PortraitsPage() {
                 )}
 
                 <div className="space-y-2.5">
-                  <div className="text-xs font-medium tracking-wide text-zinc-400">人像档案</div>
-                  <dl className="grid grid-cols-[68px_1fr] gap-y-2 rounded-2xl bg-white/[0.04] p-3.5 text-xs ring-1 ring-white/[0.06]">
-                    <dt className="text-zinc-500">编号</dt>
-                    <dd className="font-mono text-zinc-200">{currentItem.id}</dd>
-                    <dt className="text-zinc-500">发型款式</dt>
-                    <dd className="text-zinc-200">{currentItem.发型名称}</dd>
-                    <dt className="text-zinc-500">画面分区</dt>
-                    <dd className="text-zinc-200">{currentItem.分区}</dd>
-                    <dt className="text-zinc-500">头发长度</dt>
-                    <dd className="text-zinc-200">{currentItem.发长}</dd>
-                    <dt className="text-zinc-500">原图尺寸</dt>
-                    <dd className="font-mono text-zinc-200">
+                  <div className="text-xs font-medium tracking-wide text-muted-foreground">人像档案</div>
+                  <dl className="grid grid-cols-[68px_1fr] gap-y-2 rounded-2xl border border-border bg-muted/45 p-3.5 text-xs">
+                    <dt className="text-muted-foreground">编号</dt>
+                    <dd className="font-mono text-foreground">{currentItem.id}</dd>
+                    <dt className="text-muted-foreground">发型款式</dt>
+                    <dd className="text-foreground">{currentItem.发型名称}</dd>
+                    <dt className="text-muted-foreground">画面分区</dt>
+                    <dd className="text-foreground">{currentItem.分区}</dd>
+                    <dt className="text-muted-foreground">头发长度</dt>
+                    <dd className="text-foreground">{currentItem.发长}</dd>
+                    <dt className="text-muted-foreground">原图尺寸</dt>
+                    <dd className="font-mono text-foreground">
                       {currentItem.宽} × {currentItem.高}
                     </dd>
                   </dl>

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+﻿import { useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
 import {
@@ -29,8 +29,9 @@ import {
 } from '@/components/admin/auditHelpers'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { fetchAdminGenerationByIdApi } from '@/lib/apiClient'
+import { fetchAdminGenerationByIdApi, fetchAdminMeApi } from '@/lib/apiClient'
 import { useStudio } from '@/store/studioStore'
+import type { PublicUser } from '@/types/gallery'
 import { PROVIDER_META, getStudioArtist, resolveStyleInfo } from '../../shared/studio'
 
 export const Route = createFileRoute('/admin/jobs/$jobId')({
@@ -41,8 +42,10 @@ export const Route = createFileRoute('/admin/jobs/$jobId')({
 function AdminJobDetailPage() {
   const { jobId } = Route.useParams()
   const navigate = useNavigate()
-  const { user, bootstrapLoaded, platform } = useStudio()
+  const { platform } = useStudio()
 
+  const [sessionChecking, setSessionChecking] = useState(true)
+  const [adminUser, setAdminUser] = useState<PublicUser | null>(null)
   const [previewImg, setPreviewImg] = useState<{ url: string; title: string } | null>(null)
   const [expandOverride, setExpandOverride] = useState<{
     version: number
@@ -50,24 +53,41 @@ function AdminJobDetailPage() {
   } | null>(null)
 
   useEffect(() => {
-    if (!bootstrapLoaded) return
-    if (!user || user.role !== 'admin') {
-      void navigate({ to: '/admin/login' })
+    let active = true
+    const verify = async () => {
+      try {
+        const res = await fetchAdminMeApi()
+        if (!active) return
+        if (!res.user || res.user.role !== 'admin') {
+          void navigate({ to: '/admin/login', replace: true })
+          return
+        }
+        setAdminUser(res.user)
+      } catch {
+        if (!active) return
+        void navigate({ to: '/admin/login', replace: true })
+      } finally {
+        if (active) setSessionChecking(false)
+      }
     }
-  }, [bootstrapLoaded, navigate, user])
+    void verify()
+    return () => {
+      active = false
+    }
+  }, [navigate])
 
   const detailQuery = useQuery({
     queryKey: ['admin', 'generation', jobId],
     queryFn: () => fetchAdminGenerationByIdApi(jobId),
-    enabled: bootstrapLoaded && user?.role === 'admin',
+    enabled: !sessionChecking && adminUser?.role === 'admin',
     retry: false,
   })
 
-  if (!bootstrapLoaded || !user || user.role !== 'admin') {
+  if (sessionChecking || !adminUser || adminUser.role !== 'admin') {
     return (
       <div className="flex min-h-dvh items-center justify-center bg-white text-xs text-zinc-500 dark:bg-zinc-950">
         <LoaderCircleIcon className="mr-2 size-4 animate-spin" />
-        正在校验管理员会话…
+        正在校验独立管理端会话…
       </div>
     )
   }
@@ -97,6 +117,7 @@ function AdminJobDetailPage() {
       <AdminShell
         activeTab="jobs"
         directoryLabel={`05. 生成记录审计 / 详情 ${jobId.slice(0, 8)}`}
+        adminUser={adminUser}
         headerLeftExtra={backButton}
         loading={loading}
         onRefresh={() => void detailQuery.refetch()}
@@ -114,6 +135,7 @@ function AdminJobDetailPage() {
       <AdminShell
         activeTab="jobs"
         directoryLabel={`05. 生成记录审计 / 详情 ${jobId.slice(0, 8)}`}
+        adminUser={adminUser}
         headerLeftExtra={backButton}
         loading={loading}
         onRefresh={() => void detailQuery.refetch()}
@@ -194,6 +216,7 @@ function AdminJobDetailPage() {
     <AdminShell
       activeTab="jobs"
       directoryLabel={`05. 生成记录审计 / 详情 ${job.id.slice(0, 8)}`}
+      adminUser={adminUser}
       headerLeftExtra={backButton}
       loading={loading}
       onRefresh={() => void detailQuery.refetch()}
@@ -210,7 +233,7 @@ function AdminJobDetailPage() {
             <span>·</span>
             <span className="font-mono">{formatTimestampMs(trace?.startedAt ?? job.createdAt)}</span>
           </div>
-          <span className="border border-zinc-300 px-2 py-0.5 text-[11px] dark:border-zinc-700">
+          <span className="border border-zinc-300 px-2 py-0.5 text-xs dark:border-zinc-700">
             {trace ? '全链路埋点记录' : '历史记录（无全链路埋点）'}
           </span>
         </div>
@@ -241,7 +264,7 @@ function AdminJobDetailPage() {
         {/* 4 列瑞士风格关键指标带 */}
         <div className="grid grid-cols-1 divide-y divide-zinc-200 border border-zinc-200 sm:grid-cols-2 sm:divide-x lg:grid-cols-4 lg:divide-y-0 dark:divide-zinc-800 dark:border-zinc-800">
           <div className="min-w-0 p-4">
-            <div className="text-[11px] font-medium text-zinc-500">01. 命中模型与路由</div>
+            <div className="text-xs font-medium text-zinc-500">01. 命中模型与路由</div>
             <div className="mt-1.5 truncate font-mono text-sm font-bold" title={winningModel}>
               {winningModel}
             </div>
@@ -251,17 +274,17 @@ function AdminJobDetailPage() {
           </div>
 
           <div className="min-w-0 p-4">
-            <div className="text-[11px] font-medium text-zinc-500">02. 总耗时与调度次数</div>
+            <div className="text-xs font-medium text-zinc-500">02. 总耗时与调度次数</div>
             <div className="mt-1.5 text-sm font-bold">{formatTraceDuration(totalDurationMs)}</div>
             <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-zinc-600 dark:text-zinc-400">
               <span>{trace ? `共 ${attempts.length} 次调用` : '历史记录'}</span>
               {failoverCount > 0 && (
-                <span className="border border-amber-500/40 bg-amber-500/10 px-1 text-[10px] font-bold text-amber-800 dark:text-amber-300">
+                <span className="border border-amber-500/40 bg-amber-500/10 px-1 text-xs font-bold text-amber-800 dark:text-amber-300">
                   切换 {uniqueChannelsTried} 渠道
                 </span>
               )}
               {retryCount > 0 && (
-                <span className="border border-sky-500/40 bg-sky-500/10 px-1 text-[10px] font-bold text-sky-800 dark:text-sky-300">
+                <span className="border border-sky-500/40 bg-sky-500/10 px-1 text-xs font-bold text-sky-800 dark:text-sky-300">
                   重试 {retryCount} 次
                 </span>
               )}
@@ -269,11 +292,11 @@ function AdminJobDetailPage() {
           </div>
 
           <div className="min-w-0 p-4">
-            <div className="text-[11px] font-medium text-zinc-500">03. 积分账本</div>
+            <div className="text-xs font-medium text-zinc-500">03. 积分账本</div>
             <div className="mt-1.5 flex items-center gap-2 font-mono text-sm font-bold">
               <span>-{job.creditsCost} 积分</span>
               {creditsRefunded > 0 && (
-                <span className="border border-emerald-600/40 bg-emerald-500/10 px-1.5 py-0.5 font-sans text-[11px] text-emerald-700 dark:text-emerald-400">
+                <span className="border border-emerald-600/40 bg-emerald-500/10 px-1.5 py-0.5 font-sans text-xs text-emerald-700 dark:text-emerald-400">
                   +{creditsRefunded} 已退还
                 </span>
               )}
@@ -288,7 +311,7 @@ function AdminJobDetailPage() {
           </div>
 
           <div className="min-w-0 p-4">
-            <div className="text-[11px] font-medium text-zinc-500">04. 执行时间窗</div>
+            <div className="text-xs font-medium text-zinc-500">04. 执行时间窗</div>
             <div className="mt-1.5 font-mono text-sm font-bold">
               {formatTimeMs(trace?.startedAt ?? job.createdAt)} →{' '}
               {formatTimeMs(trace?.finishedAt ?? job.finishedAt)}
@@ -329,20 +352,20 @@ function AdminJobDetailPage() {
             <div className="min-w-0 border border-zinc-200 dark:border-zinc-800">
               <div className="grid grid-cols-2 divide-x divide-y divide-zinc-200 border-b border-zinc-200 sm:grid-cols-4 sm:divide-y-0 dark:divide-zinc-800 dark:border-zinc-800">
                 <div className="min-w-0 p-3.5">
-                  <div className="text-[11px] text-zinc-500">画风预设</div>
+                  <div className="text-xs text-zinc-500">画风预设</div>
                   <div className="mt-1 truncate text-xs font-bold" title={styleLabel}>
                     {styleLabel}
                   </div>
                 </div>
                 <div className="min-w-0 p-3.5">
-                  <div className="text-[11px] text-zinc-500">画幅与分辨率</div>
+                  <div className="text-xs text-zinc-500">画幅与分辨率</div>
                   <div className="mt-1 font-mono text-xs font-bold">
                     {job.aspectRatio}
                     {job.resolution ? ` · ${job.resolution}` : ''}
                   </div>
                 </div>
                 <div className="min-w-0 p-3.5">
-                  <div className="text-[11px] text-zinc-500">参考图传参</div>
+                  <div className="text-xs text-zinc-500">参考图传参</div>
                   <div className="mt-1 text-xs font-bold">
                     {trace
                       ? trace.imagePassMode === 'url'
@@ -352,7 +375,7 @@ function AdminJobDetailPage() {
                   </div>
                 </div>
                 <div className="min-w-0 p-3.5">
-                  <div className="text-[11px] text-zinc-500">三合一拼图</div>
+                  <div className="text-xs text-zinc-500">三合一拼图</div>
                   <div className="mt-1 text-xs font-bold">
                     {trace ? (trace.sendStitchedSheet ? '已开启' : '未开启') : '—'}
                   </div>
@@ -362,7 +385,7 @@ function AdminJobDetailPage() {
               {(trace?.promptBreakdown || job.snapshot?.sceneNote) && (
                 <div className="grid grid-cols-1 divide-y divide-zinc-200 border-b border-zinc-200 sm:grid-cols-2 lg:grid-cols-4 sm:divide-x lg:divide-y-0 dark:divide-zinc-800 dark:border-zinc-800">
                   <div className="min-w-0 p-3.5">
-                    <div className="text-[11px] text-zinc-500">画面补充</div>
+                    <div className="text-xs text-zinc-500">画面补充</div>
                     <div className="mt-1 text-xs [overflow-wrap:anywhere] text-zinc-800 dark:text-zinc-200">
                       {(trace?.promptBreakdown?.sceneNote ?? job.snapshot?.sceneNote)?.trim() || (
                         <span className="text-zinc-400">（空）</span>
@@ -370,7 +393,7 @@ function AdminJobDetailPage() {
                     </div>
                   </div>
                   <div className="min-w-0 p-3.5">
-                    <div className="text-[11px] text-zinc-500">负面提示词</div>
+                    <div className="text-xs text-zinc-500">负面提示词</div>
                     <div className="mt-1 text-xs [overflow-wrap:anywhere] text-zinc-800 dark:text-zinc-200">
                       {trace?.promptBreakdown?.negativePrompt?.trim() || (
                         <span className="text-zinc-400">（空）</span>
@@ -378,7 +401,7 @@ function AdminJobDetailPage() {
                     </div>
                   </div>
                   <div className="min-w-0 p-3.5">
-                    <div className="text-[11px] text-zinc-500">默认前置</div>
+                    <div className="text-xs text-zinc-500">默认前置</div>
                     <div className="mt-1 text-xs [overflow-wrap:anywhere] text-zinc-800 dark:text-zinc-200">
                       {trace?.promptBreakdown?.prefix?.trim() || (
                         <span className="text-zinc-400">（空）</span>
@@ -386,7 +409,7 @@ function AdminJobDetailPage() {
                     </div>
                   </div>
                   <div className="min-w-0 p-3.5">
-                    <div className="text-[11px] text-zinc-500">默认后置</div>
+                    <div className="text-xs text-zinc-500">默认后置</div>
                     <div className="mt-1 text-xs [overflow-wrap:anywhere] text-zinc-800 dark:text-zinc-200">
                       {trace?.promptBreakdown?.suffix?.trim() || (
                         <span className="text-zinc-400">（空）</span>
@@ -422,7 +445,7 @@ function AdminJobDetailPage() {
 
               <div className="overflow-x-auto border border-zinc-200 dark:border-zinc-800">
                 <table className="w-full text-left text-xs">
-                  <thead className="border-b border-zinc-200 bg-zinc-50 text-[11px] text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900/70">
+                  <thead className="border-b border-zinc-200 bg-zinc-50 text-xs text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900/70">
                     <tr>
                       <th className="px-4 py-2.5">调度序</th>
                       <th className="px-4 py-2.5">渠道名称</th>
@@ -452,21 +475,21 @@ function AdminJobDetailPage() {
                           <td className="px-4 py-2.5 font-mono font-bold">{ch.priority}</td>
                           <td className="px-4 py-2.5 text-right whitespace-nowrap">
                             {isWinner ? (
-                              <span className="border border-emerald-600/50 bg-emerald-500/15 px-2 py-0.5 text-[11px] font-bold text-emerald-700 dark:text-emerald-400">
+                              <span className="border border-emerald-600/50 bg-emerald-500/15 px-2 py-0.5 text-xs font-bold text-emerald-700 dark:text-emerald-400">
                                 最终命中（第 {trace?.result?.winningAttemptIndex} 次 ·{' '}
                                 {formatTraceShortDuration(totalChannelMs)}）
                               </span>
                             ) : hasFailed ? (
-                              <span className="border border-red-500/50 bg-red-500/10 px-2 py-0.5 text-[11px] font-bold text-red-700 dark:text-red-400">
+                              <span className="border border-red-500/50 bg-red-500/10 px-2 py-0.5 text-xs font-bold text-red-700 dark:text-red-400">
                                 调用失败（{channelAttempts.length} 次 ·{' '}
                                 {formatTraceShortDuration(totalChannelMs)}）
                               </span>
                             ) : job.status === 'processing' ? (
-                              <span className="border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[11px] text-amber-700 dark:text-amber-300">
+                              <span className="border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-xs text-amber-700 dark:text-amber-300">
                                 队列等待
                               </span>
                             ) : (
-                              <span className="text-[11px] text-zinc-400">未触发（备用）</span>
+                              <span className="text-xs text-zinc-400">未触发（备用）</span>
                             )}
                           </td>
                         </tr>
@@ -487,7 +510,7 @@ function AdminJobDetailPage() {
               </div>
 
               {attempts.length > 0 && (
-                <div className="flex items-center gap-1.5 text-[11px]">
+                <div className="flex items-center gap-1.5 text-xs">
                   <button
                     type="button"
                     onClick={() =>
@@ -551,7 +574,7 @@ function AdminJobDetailPage() {
                     <div key={`${job.id}-${attempt.attemptIndex}`} className="relative min-w-0">
                       <span
                         aria-hidden="true"
-                        className={`absolute top-3 -left-6 flex size-4 items-center justify-center border font-mono text-[9px] font-bold sm:-left-7 ${
+                        className={`absolute top-3 -left-6 flex size-5 items-center justify-center border font-mono text-xs font-bold sm:-left-7 ${
                           isOk
                             ? 'border-emerald-600 bg-emerald-600 text-white'
                             : 'border-red-600 bg-red-600 text-white'
@@ -601,7 +624,7 @@ function AdminJobDetailPage() {
                 </button>
                 <div className="space-y-2.5 border-t border-zinc-200 p-3.5 dark:border-zinc-800">
                   {trace?.result && (
-                    <div className="space-y-1 text-[11px] text-zinc-600 dark:text-zinc-400">
+                    <div className="space-y-1 text-xs text-zinc-600 dark:text-zinc-400">
                       <div className="flex justify-between gap-2">
                         <span className="text-zinc-500">图片格式与大小</span>
                         <span className="font-mono font-semibold text-zinc-950 dark:text-zinc-100">
@@ -612,7 +635,7 @@ function AdminJobDetailPage() {
                         <span className="text-zinc-500">命中调用</span>
                         <span>第 {trace.result.winningAttemptIndex} 次</span>
                       </div>
-                      <div className="font-mono break-all text-[10px] text-zinc-500">
+                      <div className="font-mono break-all text-xs text-zinc-500">
                         {trace.result.r2Key}
                       </div>
                     </div>
@@ -709,22 +732,22 @@ function AdminJobDetailPage() {
                           />
                         </button>
                       ) : (
-                        <div className="flex size-14 shrink-0 items-center justify-center border border-dashed border-zinc-300 font-mono text-[10px] text-zinc-400 dark:border-zinc-700">
+                        <div className="flex size-14 shrink-0 items-center justify-center border border-dashed border-zinc-300 font-mono text-xs text-zinc-400 dark:border-zinc-700">
                           #{ref.index}
                         </div>
                       )}
 
                       <div className="min-w-0 flex-1 space-y-1">
-                        <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+                        <div className="flex flex-wrap items-center gap-1.5 text-xs">
                           <span className="font-mono font-bold">#{ref.index}</span>
-                          <span className="border border-zinc-300 px-1 py-0.2 text-[10px] dark:border-zinc-700">
+                          <span className="border border-zinc-300 px-1 py-0.2 text-xs dark:border-zinc-700">
                             {TRACE_SLOT_LABELS[ref.slot] ?? ref.slot}
                           </span>
-                          <span className="bg-zinc-100 px-1 py-0.2 text-[10px] dark:bg-zinc-900">
+                          <span className="bg-zinc-100 px-1 py-0.2 text-xs dark:bg-zinc-900">
                             {sourceLabel}
                           </span>
                           {deliveryLabel && (
-                            <span className="border border-zinc-300 px-1 py-0.2 text-[10px] text-zinc-600 dark:border-zinc-700 dark:text-zinc-400">
+                            <span className="border border-zinc-300 px-1 py-0.2 text-xs text-zinc-600 dark:border-zinc-700 dark:text-zinc-400">
                               {deliveryLabel}
                             </span>
                           )}
@@ -733,12 +756,12 @@ function AdminJobDetailPage() {
                           {ref.label}
                         </div>
                         {(ref.mime || ref.bytes) && (
-                          <div className="font-mono text-[10px] text-zinc-500">
+                          <div className="font-mono text-xs text-zinc-500">
                             {ref.mime || '—'} · {formatTraceBytes(ref.bytes)}
                           </div>
                         )}
                         <div
-                          className="font-mono text-[10px] [overflow-wrap:anywhere] text-zinc-400"
+                          className="font-mono text-xs [overflow-wrap:anywhere] text-zinc-400"
                           title={ref.rawPath}
                         >
                           {ref.rawPath || '—'}
@@ -756,7 +779,7 @@ function AdminJobDetailPage() {
             <div className="text-xs font-bold text-zinc-600 dark:text-zinc-400">
               06. 任务元数据
             </div>
-            <div className="divide-y divide-zinc-200 border border-zinc-200 text-[11px] dark:divide-zinc-800 dark:border-zinc-800">
+            <div className="divide-y divide-zinc-200 border border-zinc-200 text-xs dark:divide-zinc-800 dark:border-zinc-800">
               <div className="flex items-center justify-between gap-2 px-3 py-2">
                 <span className="text-zinc-500">触发用户</span>
                 <span className="font-mono font-bold">@{job.username || '未知'}</span>

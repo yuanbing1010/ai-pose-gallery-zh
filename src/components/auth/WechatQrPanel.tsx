@@ -84,7 +84,7 @@ export function WechatQrPanel({
           <ArrowLeftIcon className="size-3.5" />
           <span>{backLabel}</span>
         </button>
-        <span className="inline-flex items-center gap-1.5 rounded-full bg-[#07C160]/12 px-2.5 py-0.5 text-[11px] font-semibold text-[#059449] dark:text-[#34D399]">
+        <span className="inline-flex items-center gap-1.5 rounded-full bg-[#07C160]/12 px-2.5 py-0.5 text-xs font-semibold text-[#059449] dark:text-[#34D399]">
           <WechatIcon className="size-3.5" />
           <span>微信开放平台安全扫码</span>
         </span>

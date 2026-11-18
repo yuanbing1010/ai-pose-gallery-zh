@@ -1,6 +1,9 @@
 import type {
+  AdminJobsStatsSummary,
   AdminOverviewPayload,
   AdminProviderSlotDTO,
+  AdminR2CleanupReport,
+  AdminR2CleanupResult,
   AdminUserItem,
   AdminWechatConfigDTO,
   BootstrapPayload,
@@ -307,13 +310,47 @@ export async function startGenerationStreamApi(
 // 管理端接口
 // ---------------------------------------------------------------------------
 
-export function fetchAdminBootstrapStatusApi(): Promise<{ needsSetup: boolean }> {
+export function fetchAdminMeApi(): Promise<{
+  user: PublicUser | null
+  frontendUser: PublicUser | null
+}> {
+  return requestJson('/api/admin/me')
+}
+
+export function adminLoginApi(payload: {
+  account: string
+  password: string
+}): Promise<{ user: PublicUser }> {
+  return requestJson('/api/admin/login', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export function adminSessionFromFrontendApi(): Promise<{ user: PublicUser }> {
+  return requestJson('/api/admin/session-from-frontend', {
+    method: 'POST',
+  })
+}
+
+export function adminLogoutApi(): Promise<{ ok: boolean }> {
+  return requestJson('/api/admin/logout', {
+    method: 'POST',
+  })
+}
+
+export function fetchAdminBootstrapStatusApi(): Promise<{
+  needsSetup: boolean
+  requiresSetupToken: boolean
+  remoteBlocked: boolean
+}> {
   return requestJson('/api/admin/bootstrap-status')
 }
 
 export function bootstrapAdminApi(payload: {
   username: string
   password: string
+  setupToken?: string
 }): Promise<{ user: PublicUser }> {
   return requestJson('/api/admin/bootstrap', {
     method: 'POST',
@@ -323,6 +360,16 @@ export function bootstrapAdminApi(payload: {
 
 export function fetchAdminOverviewApi(): Promise<AdminOverviewPayload> {
   return requestJson('/api/admin/overview')
+}
+
+export function fetchAdminR2CleanupApi(): Promise<AdminR2CleanupReport> {
+  return requestJson('/api/admin/r2-cleanup')
+}
+
+export function runAdminR2CleanupApi(): Promise<AdminR2CleanupResult> {
+  return requestJson('/api/admin/r2-cleanup', {
+    method: 'POST',
+  })
 }
 
 export function fetchAdminSuppliersApi(): Promise<{ suppliers: SupplierDTO[] }> {
@@ -581,12 +628,44 @@ export function updateUserStatusApi(
   })
 }
 
-export function fetchAdminLedgerApi(limit = 80): Promise<{ items: CreditLedgerItem[] }> {
-  return requestJson(`/api/admin/ledger?limit=${limit}`)
+export function fetchAdminLedgerApi(params?: {
+  limit?: number
+  offset?: number
+  q?: string
+  type?: string
+}): Promise<{ items: CreditLedgerItem[]; total: number }> {
+  const qs = new URLSearchParams()
+  if (params?.limit !== undefined) qs.set('limit', String(params.limit))
+  if (params?.offset !== undefined) qs.set('offset', String(params.offset))
+  if (params?.q) qs.set('q', params.q)
+  if (params?.type && params.type !== 'all') qs.set('type', params.type)
+  const suffix = qs.toString() ? `?${qs.toString()}` : ''
+  return requestJson(`/api/admin/ledger${suffix}`)
 }
 
-export function fetchAdminRedeemCodesApi(): Promise<{ codes: RedeemCodeItem[] }> {
-  return requestJson('/api/admin/redeem-codes')
+export function fetchAdminRedeemCodesApi(params?: {
+  limit?: number
+  offset?: number
+  filter?: 'all' | 'active' | 'exhausted' | 'disabled' | 'expired'
+  q?: string
+}): Promise<{
+  codes: RedeemCodeItem[]
+  total: number
+  counts: {
+    all: number
+    active: number
+    exhausted: number
+    disabled: number
+    expired: number
+  }
+}> {
+  const qs = new URLSearchParams()
+  if (params?.limit !== undefined) qs.set('limit', String(params.limit))
+  if (params?.offset !== undefined) qs.set('offset', String(params.offset))
+  if (params?.filter && params.filter !== 'all') qs.set('filter', params.filter)
+  if (params?.q) qs.set('q', params.q)
+  const suffix = qs.toString() ? `?${qs.toString()}` : ''
+  return requestJson(`/api/admin/redeem-codes${suffix}`)
 }
 
 export function createAdminRedeemCodesApi(payload: {
@@ -618,13 +697,16 @@ export function fetchAdminGenerationsApi(params?: {
   provider?: string
   q?: string
   limit?: number
-}): Promise<{ items: GenerationHistoryItem[] }> {
+  offset?: number
+}): Promise<{ items: GenerationHistoryItem[]; total: number; stats: AdminJobsStatsSummary }> {
   const qs = new URLSearchParams()
   if (params?.status) qs.set('status', params.status)
   if (params?.provider) qs.set('provider', params.provider)
   if (params?.q) qs.set('q', params.q)
-  if (params?.limit) qs.set('limit', String(params.limit))
-  return requestJson(`/api/admin/generations?${qs.toString()}`)
+  if (params?.limit !== undefined) qs.set('limit', String(params.limit))
+  if (params?.offset !== undefined) qs.set('offset', String(params.offset))
+  const suffix = qs.toString() ? `?${qs.toString()}` : ''
+  return requestJson(`/api/admin/generations${suffix}`)
 }
 
 export function fetchAdminGenerationByIdApi(id: string): Promise<{ job: GenerationHistoryItem }> {

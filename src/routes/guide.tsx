@@ -1,3 +1,4 @@
+import { useQuery } from '@tanstack/react-query'
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { motion } from 'motion/react'
 import {
@@ -10,6 +11,7 @@ import {
   SparklesIcon,
   UserRoundIcon,
 } from 'lucide-react'
+import { costumesQuery, portraitsQuery, posesQuery } from '@/api/gallery'
 import { StyleWheelDeck } from '@/components/guide/StyleWheelDeck'
 import { Button } from '@/components/ui/button'
 import { getVisualStylePresets } from '@/lib/stylePresets'
@@ -76,11 +78,33 @@ const LEGAL_RULES = [
 
 function GuidePage() {
   const { platform } = useStudio()
+  const { data: posesData } = useQuery(posesQuery)
+  const { data: costumes } = useQuery(costumesQuery)
+  const { data: portraits } = useQuery(portraitsQuery)
+
   const styleCount = getVisualStylePresets(platform).length
+  const poseCount = posesData?.items.length ?? 1439
+  const costumeCount = costumes?.length ?? 3224
+  const portraitCount = portraits?.length ?? 1499
+  const giaRealisticCount = costumes
+    ? costumes.filter((c) => !c.source && c.一级分类 !== '二次元').length
+    : 1407
+  const giaAnimeCount = costumes
+    ? costumes.filter((c) => c.source === 'gia-anime' || (!c.source && c.一级分类 === '二次元')).length
+    : 1320
+  const shiseiCount = costumes ? costumes.filter((c) => c.source === 'shisei').length : 57
+  const charadbCount = costumes ? costumes.filter((c) => c.source === 'charadb').length : 440
+
+  const stepCounts: Record<string, string> = {
+    '/poses': `${poseCount.toLocaleString('zh-CN')} 张`,
+    '/costumes': `${costumeCount.toLocaleString('zh-CN')} 套`,
+    '/portraits': `${portraitCount.toLocaleString('zh-CN')} 张`,
+  }
+
   const statMatrix = [
-    { label: '动作姿势', value: '1,439', to: '/poses' as const },
-    { label: '服装穿搭', value: '3,224', to: '/costumes' as const },
-    { label: '人像参考', value: '1,499', to: '/portraits' as const },
+    { label: '动作姿势', value: poseCount.toLocaleString('zh-CN'), to: '/poses' as const },
+    { label: '服装穿搭', value: costumeCount.toLocaleString('zh-CN'), to: '/costumes' as const },
+    { label: '人像参考', value: portraitCount.toLocaleString('zh-CN'), to: '/portraits' as const },
     { label: '成图画风', value: String(styleCount), to: '/studio' as const },
   ] as const
 
@@ -116,7 +140,7 @@ function GuidePage() {
               to={item.to}
               className="px-3.5 py-2.5 text-center transition-colors hover:bg-muted/60 sm:px-5"
             >
-              <div className="text-[11px] whitespace-nowrap text-muted-foreground">{item.label}</div>
+              <div className="text-xs whitespace-nowrap text-muted-foreground">{item.label}</div>
               <div className="mt-0.5 font-mono text-sm font-semibold tabular-nums text-foreground">
                 {item.value}
               </div>
@@ -224,7 +248,9 @@ function GuidePage() {
                     <Icon className="size-3.5" />
                     <span>{step.code}</span>
                   </span>
-                  <span className="font-mono text-xs font-semibold text-muted-foreground">{step.count}</span>
+                  <span className="font-mono text-xs font-semibold text-muted-foreground">
+                    {stepCounts[step.to] ?? step.count}
+                  </span>
                 </div>
                 <h2 className="mt-3 text-base font-extrabold tracking-tight">{step.title}</h2>
                 <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">{step.summary}</p>
@@ -233,7 +259,7 @@ function GuidePage() {
                   {step.chips.map((chip) => (
                     <span
                       key={chip}
-                      className="rounded-md border border-border/80 bg-muted/50 px-2 py-0.5 text-[11px] font-medium text-foreground"
+                      className="rounded-md border border-border/80 bg-muted/50 px-2 py-0.5 text-xs font-medium text-foreground"
                     >
                       {chip}
                     </span>
@@ -286,11 +312,11 @@ function GuidePage() {
           <div className="space-y-2.5 text-xs leading-relaxed text-muted-foreground">
             <p>
               <strong className="mr-1 text-foreground">ギア（@giaaibusi）：</strong>
-              基础人体动态（白模与深度图）、写实服装（1,407）、动漫服装（1,320）与人像参考（1,499）源自原作者公开图集并作中文本地化整理；仅限学习与艺术创作参考，严禁将原始图片打包转售或付费分发。
+              基础人体动态（白模与深度图）、写实服装（{giaRealisticCount.toLocaleString('zh-CN')}）、动漫服装（{giaAnimeCount.toLocaleString('zh-CN')}）与人像参考（{portraitCount.toLocaleString('zh-CN')}）源自原作者公开图集并作中文本地化整理；仅限学习与艺术创作参考，严禁将原始图片打包转售或付费分发。
             </p>
             <p>
               <strong className="mr-1 text-foreground">Shisei &amp; CharaDB：</strong>
-              57 套中国历代多视角服饰源自 Shisei（仅作造型参考，非专业历史复原）；440 套二次元穿搭源自{' '}
+              {shiseiCount} 套中国历代多视角服饰源自 Shisei（仅作造型参考，非专业历史复原）；{charadbCount} 套二次元穿搭源自{' '}
               <a
                 className="font-semibold text-foreground underline hover:opacity-80"
                 href="https://charadb-2fi.pages.dev/"

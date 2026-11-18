@@ -52,8 +52,8 @@ python scripts/import_shisei_costumes.py      # 更新 Shisei 中国历代服装
 | `server/` | Cloudflare Workers 后端（Hono 路由、PBKDF2/AES-GCM 加密、D1 原子积分账本、R2 文件读写、4 家 AI 模型代调） |
 | `migrations/` | Cloudflare D1 SQL 迁移脚本（`0001_init.sql`） |
 | `worker.ts` / `wrangler.jsonc` | Cloudflare Worker 入口与 D1 (`DB`) / R2 (`BUCKET`) / 静态资源 (`ASSETS`) 绑定配置 |
-| `src/routes/` | 页面路由：`index` 总览、`poses`、`costumes`、`portraits`、`studio`、`guide`、`admin.login`、`admin.index`；`__root.tsx` 是整体布局 |
-| `src/api/gallery.ts` | React Query 查询、姿势分组、NSFW 分类判定 |
+| `src/routes/` | 页面路由：`index` 总览、`poses`、`costumes`、`portraits`、`studio`、`guide`、`admin.login`、`admin.index`、`admin.jobs.$jobId`；`__root.tsx` 是整体布局 |
+| `src/api/gallery.ts` | React Query 查询、姿势分组与图库筛选辅助 |
 | `src/lib/apiClient.ts` | 前端 `/api/*` 请求与 SSE 生成流解析客户端 |
 | `src/store/studioStore.tsx` | 登录态、积分余额、平台配置、云端作品历史、草稿配方（IndexedDB 草稿 + localStorage 偏好） |
 | `src/services/aiGenerator.ts` | 浏览器端图片缩放、`stitchRecipeCanvas` 参考拼图与共享提示词导出 |
@@ -83,16 +83,15 @@ python scripts/import_shisei_costumes.py      # 更新 Shisei 中国历代服装
 
 ## 关键行为与安全约束
 
-- **SFW 安全模式默认开启**：状态在 `studioStore.tsx`，NSFW 判定集中在 `src/api/gallery.ts`（`NSFW_POSE_SYSTEMS`、`NSFW_COSTUME_CATEGORIES`、`isNsfwPose*`、`isNsfwCostume*`），并受 D1 `system_settings.platform_config` 中 `defaultSafeMode` / `allowUserNsfwUnlock` 策略约束。新增图库筛选、随机配方、拼图或 ComfyUI 插件选图入口时，必须继续遵守 `safeMode`。
 - **API Key 与会话安全**：厂商 API Key 由管理员在 `/admin` 配置并使用 `APP_ENCRYPTION_KEY` AES-GCM 加密后存于 D1 `provider_configs`，**绝不下发给前端或写入快照**；用户会话采用 HttpOnly Cookie + SHA-256 `sessions` 表。
 - **积分账本与 D1 事务**：Cloudflare D1 不支持交互式 `BEGIN/COMMIT`，所有扣费、退款、卡密核销与手动调积分必须通过 `env.DB.batch([...])` + 表级约束（`CHECK (credit_balance >= 0)`、`idx_credit_ledger_unique_refund`、`UNIQUE (code_id, user_id)`）保证原子性与幂等性。
 - **R2 图片私有访问与 SSRF 防护**：用户上传参考图（`uploads/<userId>/...`）与 AI 成图（`generations/<userId>/...`）保存在私有 R2 桶，通过 `/api/files/*` 校验归属权后读取；外部图链仅允许安全公网 `https://`，禁止内网地址。
-- **浏览器存储**：仅用 IndexedDB（`src/lib/idbStorage.ts`）保存当前草稿配方、用 localStorage 保存轻量 UI 偏好（`pose_atlas_client_prefs_v4` / `pose_atlas_safe_mode_v1`），已生成作品与历史记录统一持久化在 D1 + R2。
+- **浏览器存储**：仅用 IndexedDB（`src/lib/idbStorage.ts`）保存当前草稿配方、用 localStorage 保存轻量 UI 偏好（`pose_atlas_client_prefs_v4`），已生成作品与历史记录统一持久化在 D1 + R2。
 - **通知**：业务代码统一使用 `@/lib/notifications` 的 `toast`，它处理了 Sonner 溢出提示的计时问题；不要在新代码里直接 `import { toast } from 'sonner'`。
 - **路由**：TanStack Router 文件式路由，`src/routeTree.gen.ts` 由 Vite 插件自动生成，**不要手改**。新增页面时创建 `src/routes/<name>.tsx`，在其中 `createFileRoute('/<name>')` 并设置 `staticData.title`，再把导航项加到 `src/components/layout/nav.ts`；运行 dev/build 让路由树重新生成。
 - **静态资源**：`vite.config.ts` 设置了 `publicDir: false`，开发/预览时由自定义插件直接从仓库根目录提供 `/data/`、`/thumbs/`、`/img/`、`/og-cover.jpg`、`/robots.txt`、`/sitemap.xml`，同时将 `/api/*` 代理到本地 `wrangler dev`（`127.0.0.1:8787`）。新增根级静态路径时，要同时更新该插件的 `prefixes` 和 `scripts/build.sh` 的复制清单。
 - **界面与前端技术栈规范**：
-  - **原则**：优先复用成熟库、组件源代码可控、统一设计语言（瑞士纯血极简画廊风 / Swiss Minimalist Gallery：0 圆角直角网格、1px 通栏分割细线、高对比黑白排印、等宽字体编号）、严格限制重复依赖。
+  - **原则**：优先复用成熟库、组件源代码可控、严格限制重复依赖；用户端遵循 `DESIGN.md`（Kinpaku & Tactile Studio Instrument 暖纸箔金微拟物设计，最小字号 `12px` / `text-xs`，禁止蓝紫渐变与彩色外发光）；`/admin` 管理端沿用瑞士极简画廊风（Swiss Minimalist Gallery：0 圆角直角网格、1px 通栏分割细线、高对比黑白排印、等宽字体编号）。
   - **UI 组件**：统一使用 `shadcn/ui Nova`（`components.json` 中 `style: "radix-nova"`，源码位于 `src/components/ui/`）。
   - **图标**：统一使用 `Lucide`（`lucide-react`）。
   - **动画**：统一使用 `Motion`（`motion/react`）。
@@ -100,11 +99,12 @@ python scripts/import_shisei_costumes.py      # 更新 Shisei 中国历代服装
   - **拖拽交互**：统一使用 `dnd-kit`（`@dnd-kit/core`、`@dnd-kit/sortable`、`@dnd-kit/utilities`）。
   - **状态管理**：统一使用 `Zustand`（`zustand`，集中在 `src/store/studioStore.tsx`）。
   - **响应式**：用户可见文案使用简体中文；布局同时考虑桌面与手机（容器查询 `@container` / `@lg/...`）。
+  - **组件头部信息排布**：整站保持行为与视觉逻辑统一——一般情况下，组件/区块的**左上方**放置标题与操作按钮，**右上方**放置所选名称、状态或说明文字。
 - **依赖**：项目没有测试框架，也没有 Oxfmt 脚本；严格限制重复依赖，不要引入功能重叠的同类库。升级/新增依赖后用 pnpm 更新 `pnpm-lock.yaml`。
 
 ## 常见任务提示
 
-- **新增图库页面或筛选**：先看 `src/routes/poses.tsx` 或 `costumes.tsx` 的查询、分页（默认每次 60 条）、灯箱和「加入配方」模式；复用 `PageHeader`、`EmptyState`、`GalleryLightbox` 等通用组件，并确保安全模式过滤。
+- **新增图库页面或筛选**：先看 `src/routes/poses.tsx` 或 `costumes.tsx` 的查询、分页（默认每次 60 条）、灯箱和「加入配方」模式；复用 `EmptyState`、`ShowcaseDialog`、`GalleryHoloCard` 等通用组件。
 - **新增云端生图厂商**：同步修改 `shared/studio.ts`（`PROVIDER_ORDER`、`PROVIDER_META`、`STUDIO_ARTISTS`、`DEFAULT_PROVIDER_PARAMS`）、`migrations/` 中 `provider_configs.provider_id` 约束、`server/aiProviders.ts`、`src/routes/admin.index.tsx` 参数面板。
 - **修改 ComfyUI 插件**：独立 Python 节点在 `comfyui_plugin/nodes.py`、`routes.py`、`web/extension.js` + `style.css`（纯 JS，无构建步骤）。改完用 `python -m compileall __init__.py comfyui_plugin` 做语法检查。
 - **修改图片/数据**：跑 `python scripts/verify.py`；改动生成脚本后重新生成 `*-zh.json` 并抽查首条与边界条目。
@@ -121,7 +121,7 @@ pnpm lint
 涉及后端或 UI 时启动 `pnpm dev:all`，手动检查 `/`、`/poses`、`/costumes`、`/portraits`、`/studio`、`/admin/login`、`/admin`，并验证：
 
 - 管理员初始化/登录、厂商加密配置保存（不泄漏密钥）、用户注册/登录、卡密兑换与手动调积分。
-- 安全模式开启时 NSFW 分类不可见、不可随机到；解锁开关遵循管理端 `allowUserNsfwUnlock`。
+- 管理端独立会话（`/admin/login`、`pose_atlas_admin_sid`）与 10 个管理分区（`overview`/`users`/`redeem`/`suppliers`/`api`/`jobs`/`styles`/`access`/`prompts`/`sanitize`）的权限校验、筛选分页及未保存离开提醒正常。
 - 生图失败自动全额退还积分、R2 文件仅本人/管理员可访问、跨设备云端作品集列表与对比正常。
 - 部署构建用 `bash scripts/build.sh`，确认 `dist/` 包含 `data/thumbs/img`，并留意 Cloudflare 的单文件 25 MiB、文件数 20,000 限制。
 
@@ -134,4 +134,4 @@ pnpm lint
 
 ## 内容与许可边界
 
-前端代码（`src/`）、ComfyUI 插件（`comfyui_plugin/`）和脚本（`scripts/`）以 MIT 协议开源；`img/`、`thumbs/`、`data/` 中的图片与原始数据**不在此协议覆盖范围内**。不要将图库图片打包倒卖或付费分发；CharaDB 图片仅在线引用，并受原作者条款限制。改动涉及 NSFW 内容时保持默认 SFW 与免责声明，不新增绕过安全模式的入口。
+前端代码（`src/`）、ComfyUI 插件（`comfyui_plugin/`）和脚本（`scripts/`）以 MIT 协议开源；`img/`、`thumbs/`、`data/` 中的图片与原始数据**不在此协议覆盖范围内**。不要将图库图片打包倒卖或付费分发；CharaDB 图片仅在线引用，并受原作者条款限制。

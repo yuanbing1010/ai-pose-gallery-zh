@@ -18,7 +18,7 @@ import {
   useSortable,
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { AnimatePresence, motion } from 'motion/react'
+import { motion } from 'motion/react'
 import {
   ArrowRightIcon,
   ArrowUpRightIcon,
@@ -51,7 +51,7 @@ import {
   XIcon,
   ZoomInIcon,
 } from 'lucide-react'
-import { type ChangeEvent, type DragEvent, type PointerEvent as ReactPointerEvent, type ReactNode, useEffect, useEffectEvent, useRef, useState } from 'react'
+import { type ChangeEvent, type DragEvent, type PointerEvent as ReactPointerEvent, type ReactNode, useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from 'react'
 import { toast } from '@/lib/notifications'
 import { costumesQuery, portraitsQuery, posesQuery } from '@/api/gallery'
 import {
@@ -433,6 +433,7 @@ function StudioPage() {
     generatingProfileId,
     generationProgress,
     generationError,
+    setGenerationError,
     refreshBootstrap,
     refreshHistory,
     startGeneration,
@@ -1151,7 +1152,7 @@ function StudioPage() {
     void startGeneration(sceneNote)
   }
 
-  const styleCatalog = getEffectiveStyleCatalog(platform)
+  const styleCatalog = useMemo(() => getEffectiveStyleCatalog(platform), [platform])
   const isKnownStyle = (key: string | null | undefined) =>
     key === 'none' || Boolean(key && styleCatalog.some((s) => s.id === key))
   const activeStyleKey = isKnownStyle(stylePreset) ? stylePreset : 'none'
@@ -1161,11 +1162,11 @@ function StudioPage() {
   const succeededHistory = history.filter((h) => h.status === 'succeeded' && h.imageUrl)
   const recentHistory = succeededHistory.slice(0, 10)
 
-  const openStylePicker = (categoryId = 'all') => {
+  const openStylePicker = useCallback((categoryId = 'all') => {
     setStyleModalInitialCat(categoryId)
     setStyleModalSeed((n) => n + 1)
     setStyleModalOpen(true)
-  }
+  }, [])
 
   const insufficientCredits = Boolean(user && activeProviderReady && user.creditBalance < activeCost)
 
@@ -1242,14 +1243,8 @@ function StudioPage() {
         className="ks-elevation shrink-0 rounded-2xl border border-border bg-card p-2 sm:p-2.5"
       >
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="flex flex-wrap items-baseline gap-2">
+          <div className="flex flex-wrap items-center gap-1.5">
             <h2 className="text-xs font-extrabold tracking-tight sm:text-sm">角色配方</h2>
-            <span className="rounded-md bg-muted px-1.5 py-0.5 font-mono text-xs font-semibold text-muted-foreground">
-              {coreCount}/3
-            </span>
-          </div>
-
-          <div className="flex items-center gap-1.5">
             <Button
               type="button"
               variant="outline"
@@ -1290,6 +1285,19 @@ function StudioPage() {
                   <span>清空</span>
                 </Button>
               </>
+            )}
+          </div>
+
+          <div className="flex items-center gap-1.5 rounded-full border border-border/80 bg-[#FAF8F4] px-2.5 py-0.5 text-xs text-muted-foreground dark:bg-muted/50">
+            <span>核心参考</span>
+            <span className="font-mono font-bold text-foreground">{coreCount}/3</span>
+            {extraImages.length > 0 ? (
+              <>
+                <span className="text-muted-foreground/50">·</span>
+                <span className="font-mono">附图 {extraImages.length}</span>
+              </>
+            ) : (
+              <span className="hidden text-muted-foreground/80 sm:inline">· 姿势 + 服装 + 人像</span>
             )}
           </div>
         </div>
@@ -1351,30 +1359,28 @@ function StudioPage() {
                   className="flex h-[104px] w-[78px] flex-col items-center justify-center gap-1.5 rounded-xl border border-dashed border-border bg-muted/25 text-[#B82914] transition-colors hover:border-[#D9381E] hover:bg-muted/50 @[300px]/slot:h-28 @[300px]/slot:w-[84px] dark:text-[#FF7A59]"
                 >
                   <PersonStandingIcon className="size-5.5" />
-                  <span className="text-[11px] font-semibold">挑选姿势</span>
+                  <span className="text-xs font-semibold">挑选姿势</span>
                 </Link>
               )}
             </div>
 
             <div className="col-start-2 row-start-1 flex min-w-0 flex-col gap-1.5">
               <div className="flex items-center justify-between gap-1.5">
-                <div className="flex min-w-0 items-center gap-1.5">
-                  <span className="inline-flex shrink-0 items-center rounded-md bg-[#D9381E]/10 px-1.5 py-0.5 font-mono text-[11px] font-bold leading-none text-[#B82914] dark:bg-[#D9381E]/20 dark:text-[#FF7A59]">
+                <div className="flex shrink-0 items-center gap-1.5">
+                  <span className="inline-flex shrink-0 items-center rounded-md bg-[#D9381E]/10 px-1.5 py-0.5 font-mono text-xs font-bold leading-none text-[#B82914] dark:bg-[#D9381E]/20 dark:text-[#FF7A59]">
                     姿势
                   </span>
-                  {recipe.pose && (
-                    <span className="truncate text-[11px] text-muted-foreground">
-                      {recipe.pose.分类 || recipe.pose.体系}
-                    </span>
-                  )}
+                  <Link
+                    to="/poses"
+                    className="inline-flex shrink-0 items-center gap-0.5 rounded-md border border-border/70 bg-[#FAF8F4] px-1.5 py-0.5 text-xs font-medium text-muted-foreground transition-colors hover:border-foreground/35 hover:text-foreground dark:bg-muted/45"
+                  >
+                    <span>图库</span>
+                    <ArrowUpRightIcon className="size-3" />
+                  </Link>
                 </div>
-                <Link
-                  to="/poses"
-                  className="inline-flex shrink-0 items-center gap-0.5 text-[11px] font-medium text-muted-foreground transition-colors hover:text-foreground"
-                >
-                  <span>图库</span>
-                  <ArrowUpRightIcon className="size-3" />
-                </Link>
+                <span className="min-w-0 truncate text-right text-xs text-muted-foreground">
+                  {recipe.pose ? recipe.pose.分类 || recipe.pose.体系 : '待选动作'}
+                </span>
               </div>
 
               {recipe.pose ? (
@@ -1418,7 +1424,7 @@ function StudioPage() {
                   }
                   onClick={() => void handleTogglePoseFrontOnly()}
                   className={cn(
-                    'h-6 shrink-0 whitespace-nowrap rounded-md border px-2 text-[11px] leading-none transition-colors',
+                    'h-6 shrink-0 whitespace-nowrap rounded-md border px-2 text-xs leading-none transition-colors',
                     poseFrontOnly
                       ? 'border-[#D9381E] bg-[#D9381E] font-semibold text-white'
                       : 'border-border/80 bg-[#FAF8F4] font-medium text-muted-foreground hover:text-foreground dark:bg-muted/45'
@@ -1438,7 +1444,7 @@ function StudioPage() {
                         setPose({ ...nextPose, useDepth: Boolean(recipe.pose.useDepth) })
                       }
                     }}
-                    className="h-6 max-w-[5.25rem] shrink-0 rounded-md border border-border/80 bg-[#FAF8F4] px-1.5 text-[11px] font-medium text-foreground outline-none transition-colors hover:bg-muted dark:bg-muted/45"
+                    className="h-6 max-w-[5.25rem] shrink-0 rounded-md border border-border/80 bg-[#FAF8F4] px-1.5 text-xs font-medium text-foreground outline-none transition-colors hover:bg-muted dark:bg-muted/45"
                   >
                     {poseAngles.map((p) => (
                       <option key={p.id} value={p.角度}>
@@ -1454,7 +1460,7 @@ function StudioPage() {
                     onClick={toggleRecipePoseDepth}
                     aria-label={`切换白模或深度图，当前为${recipe.pose.useDepth ? '深度图' : '白模'}`}
                     className={cn(
-                      'h-6 shrink-0 whitespace-nowrap rounded-md px-2 text-[11px] leading-none font-semibold transition-colors',
+                      'h-6 shrink-0 whitespace-nowrap rounded-md px-2 text-xs leading-none font-semibold transition-colors',
                       recipe.pose.useDepth
                         ? 'bg-[#116E65] text-white'
                         : 'border border-border/80 bg-[#FAF8F4] text-foreground hover:bg-muted dark:bg-muted/45'
@@ -1528,30 +1534,28 @@ function StudioPage() {
                   className="flex h-[104px] w-[78px] flex-col items-center justify-center gap-1.5 rounded-xl border border-dashed border-border bg-muted/25 text-[#116E65] transition-colors hover:border-[#19857B] hover:bg-muted/50 @[300px]/slot:h-28 @[300px]/slot:w-[84px] dark:text-[#4FD1C5]"
                 >
                   <ShirtIcon className="size-5.5" />
-                  <span className="text-[11px] font-semibold">挑选服装</span>
+                  <span className="text-xs font-semibold">挑选服装</span>
                 </Link>
               )}
             </div>
 
             <div className="col-start-2 row-start-1 flex min-w-0 flex-col gap-1.5">
               <div className="flex items-center justify-between gap-1.5">
-                <div className="flex min-w-0 items-center gap-1.5">
-                  <span className="inline-flex shrink-0 items-center rounded-md bg-[#19857B]/12 px-1.5 py-0.5 font-mono text-[11px] font-bold leading-none text-[#116E65] dark:bg-[#19857B]/20 dark:text-[#4FD1C5]">
+                <div className="flex shrink-0 items-center gap-1.5">
+                  <span className="inline-flex shrink-0 items-center rounded-md bg-[#19857B]/12 px-1.5 py-0.5 font-mono text-xs font-bold leading-none text-[#116E65] dark:bg-[#19857B]/20 dark:text-[#4FD1C5]">
                     服装
                   </span>
-                  {recipe.costume && (
-                    <span className="truncate text-[11px] text-muted-foreground">
-                      {recipe.costume.一级分类 || recipe.costume.分类}
-                    </span>
-                  )}
+                  <Link
+                    to="/costumes"
+                    className="inline-flex shrink-0 items-center gap-0.5 rounded-md border border-border/70 bg-[#FAF8F4] px-1.5 py-0.5 text-xs font-medium text-muted-foreground transition-colors hover:border-foreground/35 hover:text-foreground dark:bg-muted/45"
+                  >
+                    <span>图库</span>
+                    <ArrowUpRightIcon className="size-3" />
+                  </Link>
                 </div>
-                <Link
-                  to="/costumes"
-                  className="inline-flex shrink-0 items-center gap-0.5 text-[11px] font-medium text-muted-foreground transition-colors hover:text-foreground"
-                >
-                  <span>图库</span>
-                  <ArrowUpRightIcon className="size-3" />
-                </Link>
+                <span className="min-w-0 truncate text-right text-xs text-muted-foreground">
+                  {recipe.costume ? recipe.costume.一级分类 || recipe.costume.分类 : '待选穿搭'}
+                </span>
               </div>
 
               {recipe.costume ? (
@@ -1572,7 +1576,7 @@ function StudioPage() {
 
               {recipe.costume && costumeViews.length > 0 && (
                 <div className="flex items-center gap-1.5">
-                  <span className="shrink-0 text-[11px] text-muted-foreground">视角</span>
+                  <span className="shrink-0 text-xs text-muted-foreground">视角</span>
                   <select
                     aria-label="已选服装视角"
                     value={
@@ -1583,7 +1587,7 @@ function StudioPage() {
                     onChange={(e) => {
                       if (recipe.costume) setCostume(selectCostumeView(recipe.costume, e.target.value))
                     }}
-                    className="h-6.5 max-w-[7rem] rounded-md border border-border/80 bg-[#FAF8F4] px-1.5 text-[11px] font-medium text-foreground outline-none transition-colors hover:bg-muted dark:bg-muted/45"
+                    className="h-6.5 max-w-[7rem] rounded-md border border-border/80 bg-[#FAF8F4] px-1.5 text-xs font-medium text-foreground outline-none transition-colors hover:bg-muted dark:bg-muted/45"
                   >
                     {costumeViews.map((v) => (
                       <option key={v.id} value={v.id}>
@@ -1657,30 +1661,28 @@ function StudioPage() {
                   className="flex h-[104px] w-[78px] flex-col items-center justify-center gap-1.5 rounded-xl border border-dashed border-border bg-muted/25 text-[#7A5200] transition-colors hover:border-[#E5A918] hover:bg-muted/50 @[300px]/slot:h-28 @[300px]/slot:w-[84px] dark:text-[#E5A918]"
                 >
                   <UserRoundIcon className="size-5.5" />
-                  <span className="text-[11px] font-semibold">挑选人像</span>
+                  <span className="text-xs font-semibold">挑选人像</span>
                 </Link>
               )}
             </div>
 
             <div className="col-start-2 row-start-1 flex min-w-0 flex-col gap-1">
               <div className="flex items-center justify-between gap-1.5">
-                <div className="flex min-w-0 items-center gap-1.5">
-                  <span className="inline-flex shrink-0 items-center rounded-md bg-[#E5A918]/14 px-1.5 py-0.5 font-mono text-[11px] font-bold leading-none text-[#7A5200] dark:bg-[#E5A918]/20 dark:text-[#F5C443]">
+                <div className="flex shrink-0 items-center gap-1.5">
+                  <span className="inline-flex shrink-0 items-center rounded-md bg-[#E5A918]/14 px-1.5 py-0.5 font-mono text-xs font-bold leading-none text-[#7A5200] dark:bg-[#E5A918]/20 dark:text-[#F5C443]">
                     人像
                   </span>
-                  {recipe.portrait && (
-                    <span className="truncate text-[11px] text-muted-foreground">
-                      {recipe.portrait.分区} · {recipe.portrait.发长}
-                    </span>
-                  )}
+                  <Link
+                    to="/portraits"
+                    className="inline-flex shrink-0 items-center gap-0.5 rounded-md border border-border/70 bg-[#FAF8F4] px-1.5 py-0.5 text-xs font-medium text-muted-foreground transition-colors hover:border-foreground/35 hover:text-foreground dark:bg-muted/45"
+                  >
+                    <span>图库</span>
+                    <ArrowUpRightIcon className="size-3" />
+                  </Link>
                 </div>
-                <Link
-                  to="/portraits"
-                  className="inline-flex shrink-0 items-center gap-0.5 text-[11px] font-medium text-muted-foreground transition-colors hover:text-foreground"
-                >
-                  <span>图库</span>
-                  <ArrowUpRightIcon className="size-3" />
-                </Link>
+                <span className="min-w-0 truncate text-right text-xs text-muted-foreground">
+                  {recipe.portrait ? `${recipe.portrait.分区} · ${recipe.portrait.发长}` : '待选人像'}
+                </span>
               </div>
 
               {recipe.portrait ? (
@@ -1733,61 +1735,73 @@ function StudioPage() {
                 : 'border-border/80 bg-[#FAF8F4]/70 dark:bg-muted/20'
           )}
         >
-          {extraImages.length > 0 ? (
-            <DndContext sensors={dndSensors} collisionDetection={closestCenter} onDragEnd={handleExtraDragEnd}>
-              <SortableContext
-                items={extraImages.map((x) => x.id)}
-                strategy={horizontalListSortingStrategy}
-              >
-                <div className="no-scrollbar flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto">
-                  {extraImages.map((img, idx) => (
-                    <SortableExtraPill
-                      key={img.id}
-                      img={img}
-                      idx={idx}
-                      onUpdateName={updateExtraImageName}
-                      onRemove={removeExtraImage}
-                      onPreview={setZoomImageUrl}
-                    />
-                  ))}
-                </div>
-              </SortableContext>
-            </DndContext>
-          ) : (
-            <div className="flex min-w-0 items-center gap-1.5 truncate text-xs">
-              <ImagePlusIcon className="size-3.5 shrink-0" />
-              <span className="truncate">
-                {isDragging ? '松开添加参考图' : '附加参考图'}
-              </span>
-            </div>
-          )}
-
-          <div className="flex shrink-0 items-center gap-1.5">
-            {extraImages.length > 0 && (
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  fileInputRef.current?.click()
-                }}
-                className="inline-flex h-6 items-center gap-1 rounded-md border border-border bg-card px-2 text-xs font-medium text-foreground hover:bg-muted"
-              >
-                <ImagePlusIcon className="size-3" />
-                <span>+ 图</span>
-              </button>
+          <div className="flex min-w-0 flex-1 items-center gap-1.5">
+            {extraImages.length === 0 && (
+              <span className="shrink-0 text-xs font-medium text-foreground">附加参考图</span>
             )}
+
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation()
+                fileInputRef.current?.click()
+              }}
+              className="inline-flex h-6 shrink-0 items-center gap-1 rounded-md border border-border bg-card px-2 text-xs font-medium text-foreground hover:bg-muted"
+            >
+              <ImagePlusIcon className="size-3" />
+              <span>+ 图</span>
+            </button>
+
             <button
               type="button"
               onClick={(e) => {
                 e.stopPropagation()
                 setUrlModalOpen(true)
               }}
-              className="inline-flex h-6 items-center gap-1 rounded-md border border-border bg-card px-2 text-xs font-medium text-foreground hover:bg-muted"
+              className="inline-flex h-6 shrink-0 items-center gap-1 rounded-md border border-border bg-card px-2 text-xs font-medium text-foreground hover:bg-muted"
             >
               <LinkIcon className="size-3" />
               <span>URL</span>
             </button>
+
+            {extraImages.length > 0 && (
+              <DndContext sensors={dndSensors} collisionDetection={closestCenter} onDragEnd={handleExtraDragEnd}>
+                <SortableContext
+                  items={extraImages.map((x) => x.id)}
+                  strategy={horizontalListSortingStrategy}
+                >
+                  <div className="no-scrollbar flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto pl-1">
+                    {extraImages.map((img, idx) => (
+                      <SortableExtraPill
+                        key={img.id}
+                        img={img}
+                        idx={idx}
+                        onUpdateName={updateExtraImageName}
+                        onRemove={removeExtraImage}
+                        onPreview={setZoomImageUrl}
+                      />
+                    ))}
+                  </div>
+                </SortableContext>
+              </DndContext>
+            )}
           </div>
+
+          <span className="shrink-0 truncate text-right text-xs text-muted-foreground">
+            {extraImages.length > 0 ? (
+              <>
+                <span className="hidden sm:inline">已加 {extraImages.length} 张 · 可拖拽排序</span>
+                <span className="font-mono sm:hidden">{extraImages.length} 张</span>
+              </>
+            ) : isDragging ? (
+              '松开添加参考图'
+            ) : (
+              <>
+                <span className="hidden sm:inline">支持点击、拖拽或 Ctrl+V 粘贴</span>
+                <span className="sm:hidden">可拖拽/粘贴</span>
+              </>
+            )}
+          </span>
         </div>
       </section>
 
@@ -1804,33 +1818,69 @@ function StudioPage() {
               <div className="min-h-0 flex-1 space-y-2 overflow-x-hidden overflow-y-auto px-2.5 py-1.5">
               {/* 选择 AI小画家 与实体画笔 */}
               <div className="space-y-1">
-                <div className="flex min-h-[20px] items-center justify-between gap-2">
+                <div className="flex min-h-[20px] flex-wrap items-center justify-between gap-2">
                   <span className="shrink-0 text-xs font-extrabold tracking-tight text-foreground sm:text-sm">
                     AI小画家
                   </span>
-                  <AnimatePresence mode="wait">
-                    {hoveredBrushInfo && (
-                      <motion.span
-                        key={hoveredBrushInfo.profile.profileId}
-                        data-hovered-brush-badge="true"
-                        initial={{ opacity: 0, x: 6, scale: 0.94 }}
-                        animate={{ opacity: 1, x: 0, scale: 1 }}
-                        exit={{ opacity: 0, x: 4, scale: 0.96 }}
-                        transition={{ duration: 0.14, ease: [0.22, 1, 0.36, 1] }}
-                        className="inline-flex h-5 max-w-[240px] shrink-0 items-center gap-1.5 truncate rounded-full border border-border/80 bg-muted/70 px-2 text-[11px] font-semibold leading-none text-foreground shadow-xs"
-                      >
-                        <span
-                          aria-hidden="true"
-                          className="size-2 shrink-0 rounded-full"
-                          style={{
-                            backgroundColor: hoveredBrushInfo.colorHex,
-                            boxShadow: `0 0 6px ${hoveredBrushInfo.glowHex}`,
-                          }}
-                        />
-                        <span className="truncate">{hoveredBrushInfo.profile.displayName}</span>
-                      </motion.span>
-                    )}
-                  </AnimatePresence>
+                  {hoveredBrushInfo ? (
+                    <motion.span
+                      key={hoveredBrushInfo.profile.profileId}
+                      data-hovered-brush-badge="true"
+                      initial={{ opacity: 0, y: 2 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ duration: 0.14, ease: [0.22, 1, 0.36, 1] }}
+                      title={
+                        hoveredBrushInfo.profile.tagline
+                          ? `${hoveredBrushInfo.profile.displayName} · ${hoveredBrushInfo.profile.tagline}`
+                          : hoveredBrushInfo.profile.displayName
+                      }
+                      className="inline-flex h-5 max-w-[260px] shrink-0 items-center gap-1.5 truncate rounded-full border border-border/80 bg-[#FAF8F4] px-2 text-xs font-semibold leading-none text-foreground shadow-xs dark:bg-muted/70"
+                    >
+                      <span
+                        aria-hidden="true"
+                        className="size-2 shrink-0 rounded-full"
+                        style={{
+                          backgroundColor: hoveredBrushInfo.colorHex,
+                          boxShadow: `0 0 6px ${hoveredBrushInfo.glowHex}`,
+                        }}
+                      />
+                      <span className="truncate">{hoveredBrushInfo.profile.displayName}</span>
+                      {hoveredBrushInfo.profile.badge && (
+                        <>
+                          <span className="text-muted-foreground/50">·</span>
+                          <span className="shrink-0 font-medium text-muted-foreground">
+                            {hoveredBrushInfo.profile.badge}
+                          </span>
+                        </>
+                      )}
+                    </motion.span>
+                  ) : activeProfile && activeBrushPalette ? (
+                    <span
+                      title={
+                        activeProfile.tagline
+                          ? `${activeProfile.displayName} · ${activeProfile.tagline}`
+                          : activeProfile.displayName
+                      }
+                      className="inline-flex h-5 max-w-[260px] shrink-0 items-center gap-1.5 truncate rounded-full border border-border/80 bg-[#FAF8F4] px-2 text-xs font-semibold leading-none text-foreground shadow-xs dark:bg-muted/70"
+                    >
+                      <span
+                        aria-hidden="true"
+                        className="size-2 shrink-0 rounded-full"
+                        style={{
+                          backgroundColor: activeBrushPalette.hex,
+                        }}
+                      />
+                      <span className="truncate">{activeProfile.displayName}</span>
+                      {activeProfile.badge && (
+                        <>
+                          <span className="text-muted-foreground/50">·</span>
+                          <span className="shrink-0 font-medium text-muted-foreground">
+                            {activeProfile.badge}
+                          </span>
+                        </>
+                      )}
+                    </span>
+                  ) : null}
                 </div>
 
                 <ArtistStageSelector
@@ -1838,6 +1888,7 @@ function StudioPage() {
                   providers={providers}
                   providersLoaded={providersLoaded}
                   selectedProvider={selectedProvider}
+                  selectedProfileId={activeProfile?.profileId ?? null}
                   equippedBrushId={activeEquippedBrushId}
                   hasActiveBrush={Boolean(activeEquippedBrushId && activeBrushPalette)}
                   hideHeldBrush={isBrushFlying}
@@ -1851,7 +1902,9 @@ function StudioPage() {
                     if (isAutoGrabbing) return
                     setIsBrushFlying(false)
                     setHoveredBrushInfo(null)
-                    setEquippedBrushByProvider({})
+                    setEquippedBrushByProvider((prev) =>
+                      Object.keys(prev).length === 0 ? prev : {}
+                    )
                     setSelectedProvider(providerId)
                   }}
                   onSelectProfile={(providerId, profileId) => {
@@ -1900,7 +1953,7 @@ function StudioPage() {
                       initial={{ opacity: 0, y: 2 }}
                       animate={{ opacity: 1, y: 0 }}
                       transition={{ duration: 0.14 }}
-                      className="flex min-w-0 max-w-full items-center gap-1 rounded-full border border-border/80 bg-[#FAF8F4] px-2 py-0.5 text-[11px] dark:bg-muted/50"
+                      className="flex min-w-0 max-w-full items-center gap-1 rounded-full border border-border/80 bg-[#FAF8F4] px-2 py-0.5 text-xs dark:bg-muted/50"
                     >
                       <AspectRatioLogo ratio={displayRatio.id} compact className="text-foreground" />
                       <span className="shrink-0 font-mono font-bold text-foreground">{displayRatio.label}</span>
@@ -1927,23 +1980,18 @@ function StudioPage() {
                           onFocus={() => setHoveredRatio(opt.id)}
                           onBlur={() => setHoveredRatio(null)}
                           className={cn(
-                            'relative flex h-7 min-w-0 items-center justify-center gap-1 rounded-lg px-1 transition-colors',
-                            selected ? 'text-background' : 'text-muted-foreground hover:text-foreground'
+                            'relative flex h-7 min-w-0 cursor-pointer items-center justify-center gap-1 rounded-lg px-1 transition-colors',
+                            selected
+                              ? 'bg-foreground text-background shadow-2xs'
+                              : 'text-muted-foreground hover:text-foreground'
                           )}
                         >
-                          {selected && (
-                            <motion.span
-                              layoutId="studio-ratio-pill"
-                              transition={{ type: 'spring', stiffness: 460, damping: 34 }}
-                              className="absolute inset-0 rounded-lg bg-foreground shadow-2xs"
-                            />
-                          )}
                           <AspectRatioLogo
                             ratio={opt.id}
                             selected={selected}
                             className="relative z-10 size-3.5 shrink-0"
                           />
-                          <span className="relative z-10 font-mono text-[11px] font-bold leading-none">{opt.label}</span>
+                          <span className="relative z-10 font-mono text-xs font-bold leading-none">{opt.label}</span>
                         </button>
                       )
                     })}
@@ -1984,23 +2032,18 @@ function StudioPage() {
                               )
                             }
                             className={cn(
-                              'relative flex h-7 min-w-0 items-center justify-center gap-1 rounded-lg px-2 transition-colors',
-                              selected ? 'text-background' : 'text-muted-foreground hover:text-foreground'
+                              'relative flex h-7 min-w-0 cursor-pointer items-center justify-center gap-1 rounded-lg px-2 transition-colors',
+                              selected
+                                ? 'bg-foreground text-background shadow-2xs'
+                                : 'text-muted-foreground hover:text-foreground'
                             )}
                           >
-                            {selected && (
-                              <motion.span
-                                layoutId="studio-resolution-pill"
-                                transition={{ type: 'spring', stiffness: 460, damping: 34 }}
-                                className="absolute inset-0 rounded-lg bg-foreground shadow-2xs"
-                              />
-                            )}
                             <span className="relative z-10 font-mono text-xs font-bold leading-none">
                               {resOpt.resolution}
                             </span>
                             <span
                               className={cn(
-                                'relative z-10 shrink-0 whitespace-nowrap text-[10px] font-medium leading-none',
+                                'relative z-10 shrink-0 whitespace-nowrap text-xs font-medium leading-none',
                                 selected ? 'text-background/80' : 'text-muted-foreground'
                               )}
                             >
@@ -2118,73 +2161,76 @@ function StudioPage() {
               className="ks-elevation flex min-h-[380px] flex-1 flex-col overflow-hidden rounded-2xl border border-border bg-card p-2.5 md:min-h-0 md:p-3"
             >
               <div className="mb-2 flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-border/70 pb-1.5">
-                <div className="flex items-center gap-2">
-                  <MonitorIcon className="size-4 text-[#D9381E]" />
-                  <h2 className="text-xs font-extrabold tracking-tight sm:text-sm">生成监视器</h2>
-                  <span
-                    className={cn(
-                      'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium',
-                      showGeneratingState
-                        ? 'bg-[#E5A918]/15 text-[#7A5200] dark:text-[#E5A918]'
-                        : generationError
-                          ? 'bg-destructive/15 text-destructive'
-                          : previewUrl
-                            ? 'bg-[#116E65]/12 text-[#116E65] dark:text-[#4FD1C5]'
-                            : 'bg-muted text-muted-foreground'
-                    )}
-                  >
-                    <span
-                      className={cn(
-                        'size-1.5 rounded-full',
-                        showGeneratingState
-                          ? 'animate-pulse bg-[#E5A918]'
-                          : generationError
-                            ? 'bg-destructive'
-                            : previewUrl
-                              ? 'bg-[#116E65] dark:bg-[#4FD1C5]'
-                              : 'bg-muted-foreground/50'
-                      )}
-                    />
-                    {showGeneratingState
-                      ? '进行中'
-                      : generationError
-                        ? '生成失败'
-                        : previewUrl
-                          ? `${previewResult?.resolution ? `${previewResult.resolution} · ` : ''}已成图`
-                          : '待命'}
-                  </span>
-                </div>
-
-                {previewUrl && !showGeneratingState && (
+                <div className="flex flex-wrap items-center gap-2">
                   <div className="flex items-center gap-1.5">
-                    {previewResult && (
+                    <MonitorIcon className="size-4 text-[#D9381E]" />
+                    <h2 className="text-xs font-extrabold tracking-tight sm:text-sm">生成监视器</h2>
+                  </div>
+
+                  {previewUrl && !showGeneratingState && (
+                    <div className="flex items-center gap-1.5">
+                      {previewResult && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-7 rounded-lg px-2 text-xs"
+                          onClick={() => setComparisonResult(previewResult)}
+                        >
+                          <EyeIcon className="size-3.5" />
+                          <span>对比</span>
+                        </Button>
+                      )}
                       <Button
                         variant="outline"
                         size="sm"
                         className="h-7 rounded-lg px-2 text-xs"
-                        onClick={() => setComparisonResult(previewResult)}
+                        onClick={() => setZoomImageUrl(previewUrl)}
                       >
-                        <EyeIcon className="size-3.5" />
-                        <span>对比</span>
+                        <ZoomInIcon className="size-3.5" />
+                        <span>大图</span>
                       </Button>
+                      <Button variant="outline" size="sm" className="h-7 rounded-lg px-2 text-xs" asChild>
+                        <a href={previewUrl} download="character.png">
+                          <DownloadIcon className="size-3.5" />
+                          <span>下载</span>
+                        </a>
+                      </Button>
+                    </div>
+                  )}
+                </div>
+
+                <span
+                  className={cn(
+                    'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium',
+                    showGeneratingState
+                      ? 'bg-[#E5A918]/15 text-[#7A5200] dark:text-[#E5A918]'
+                      : generationError
+                        ? 'bg-destructive/15 text-destructive'
+                        : previewUrl
+                          ? 'bg-[#116E65]/12 text-[#116E65] dark:text-[#4FD1C5]'
+                          : 'bg-muted text-muted-foreground'
+                  )}
+                >
+                  <span
+                    className={cn(
+                      'size-1.5 rounded-full',
+                      showGeneratingState
+                        ? 'animate-pulse bg-[#E5A918]'
+                        : generationError
+                          ? 'bg-destructive'
+                          : previewUrl
+                            ? 'bg-[#116E65] dark:bg-[#4FD1C5]'
+                            : 'bg-muted-foreground/50'
                     )}
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="h-7 rounded-lg px-2 text-xs"
-                      onClick={() => setZoomImageUrl(previewUrl)}
-                    >
-                      <ZoomInIcon className="size-3.5" />
-                      <span>大图</span>
-                    </Button>
-                    <Button variant="outline" size="sm" className="h-7 rounded-lg px-2 text-xs" asChild>
-                      <a href={previewUrl} download="character.png">
-                        <DownloadIcon className="size-3.5" />
-                        <span>下载</span>
-                      </a>
-                    </Button>
-                  </div>
-                )}
+                  />
+                  {showGeneratingState
+                    ? '进行中'
+                    : generationError
+                      ? '生成失败'
+                      : previewUrl
+                        ? `${previewResult?.resolution ? `${previewResult.resolution} · ` : ''}已成图`
+                        : '待命'}
+                </span>
               </div>
 
               {/* 主取景视窗（高度始终跟随分栏空间自适应，不被生成图片原始尺寸撑大） */}
@@ -2232,7 +2278,7 @@ function StudioPage() {
                               />
                             )}
                           </div>
-                          <div className="flex items-center justify-between font-mono text-[11px] text-muted-foreground">
+                          <div className="flex items-center justify-between font-mono text-xs text-muted-foreground">
                             <span>
                               {liveStageOrder === 0
                                 ? '准备素材中…'
@@ -2266,7 +2312,7 @@ function StudioPage() {
                         onClick={handleGenerate}
                       >
                         <RotateCcwIcon className="size-3.5" />
-                        重试生成（{activeCost} 积分/次）
+                        重试生成
                       </Button>
                       {previewUrl && (
                         <Button
@@ -2370,7 +2416,7 @@ function StudioPage() {
                         ) : (
                           <div className="flex h-full w-full flex-col items-center justify-center gap-1.5 border border-dashed border-border/80 bg-muted/20 p-2 text-center">
                             <WandSparklesIcon className="size-5 text-[#D9381E] sm:size-6" />
-                            <span className="text-[11px] font-bold text-foreground sm:text-xs">{styleVisual.shortLabel}</span>
+                            <span className="text-xs font-bold text-foreground">{styleVisual.shortLabel}</span>
                           </div>
                         )}
                       </button>
@@ -2432,6 +2478,7 @@ function StudioPage() {
                             setDeliveryState(null)
                             setHomeworkThrowTask(null)
                             setSkipResultIntro(false)
+                            setGenerationError('')
                             setPreviewUrl(h.imageUrl)
                           }}
                           className={cn(
@@ -2509,11 +2556,11 @@ function StudioPage() {
                         <div className="flex h-full flex-col items-center justify-center gap-1.5 p-3 text-center">
                           <CircleAlertIcon className="size-5 text-destructive" />
                           <span className="text-xs font-semibold text-destructive">生成失败</span>
-                          <span className="line-clamp-3 text-[11px] leading-relaxed text-muted-foreground">
+                          <span className="line-clamp-3 text-xs leading-relaxed text-muted-foreground">
                             {h.errorMessage || '生成未成功，请重试'}
                           </span>
                           {h.creditsRefunded > 0 && (
-                            <span className="rounded-full bg-[#116E65]/15 px-2 py-0.5 text-[11px] font-semibold text-[#116E65] dark:text-[#4FD1C5]">
+                            <span className="rounded-full bg-[#116E65]/15 px-2 py-0.5 text-xs font-semibold text-[#116E65] dark:text-[#4FD1C5]">
                               已退 {h.creditsRefunded} 积分
                             </span>
                           )}

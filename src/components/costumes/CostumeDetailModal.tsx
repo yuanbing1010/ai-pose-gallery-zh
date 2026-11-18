@@ -135,7 +135,7 @@ export function CostumeDetailModal({
             <ZoomViewport
               imageUrl={referenceImageUrl(item.预览图 || item.原图)}
               alt={item.服装名称}
-              className="min-h-0 h-[56dvh] rounded-2xl border border-white/12 bg-[#161620] p-3"
+              className="min-h-0 h-[56dvh] rounded-2xl border border-border bg-card dark:border-white/12 dark:bg-[#161620] p-3"
             />
           </div>
         ) : effectiveStageMode === 'stack' && hasMultiViews ? (
@@ -172,7 +172,7 @@ export function CostumeDetailModal({
                     <span className="rounded-full bg-black/75 px-2.5 py-0.5 text-xs font-medium text-white ring-1 ring-white/15 backdrop-blur-md">
                       {v.label}
                     </span>
-                    <span className="rounded-full bg-black/60 px-2 py-0.5 font-mono text-xs text-zinc-200 backdrop-blur-md">
+                    <span className="rounded-full bg-black/60 px-2 py-0.5 font-mono text-xs text-foreground backdrop-blur-md">
                       {vIdx + 1}/{views.length}
                     </span>
                   </div>
@@ -193,7 +193,7 @@ export function CostumeDetailModal({
                   type="button"
                   aria-label="上一套服装"
                   onClick={onPrev}
-                  className="absolute top-1/2 left-4 z-20 flex size-9 -translate-y-1/2 items-center justify-center rounded-full bg-black/55 text-zinc-200 ring-1 ring-white/15 backdrop-blur-md transition-all hover:bg-white hover:text-black active:scale-95"
+                  className="absolute top-1/2 left-4 z-20 flex size-9 -translate-y-1/2 items-center justify-center rounded-full border border-border bg-background/85 text-foreground backdrop-blur-md transition-all hover:bg-primary hover:text-primary-foreground active:scale-95"
                 >
                   <ChevronLeftIcon className="size-4" />
                 </button>
@@ -201,7 +201,7 @@ export function CostumeDetailModal({
                   type="button"
                   aria-label="下一套服装"
                   onClick={onNext}
-                  className="absolute top-1/2 right-4 z-20 flex size-9 -translate-y-1/2 items-center justify-center rounded-full bg-black/55 text-zinc-200 ring-1 ring-white/15 backdrop-blur-md transition-all hover:bg-white hover:text-black active:scale-95"
+                  className="absolute top-1/2 right-4 z-20 flex size-9 -translate-y-1/2 items-center justify-center rounded-full border border-border bg-background/85 text-foreground backdrop-blur-md transition-all hover:bg-primary hover:text-primary-foreground active:scale-95"
                 >
                   <ChevronRightIcon className="size-4" />
                 </button>
@@ -219,11 +219,11 @@ export function CostumeDetailModal({
         effectiveStageMode !== 'zoom' ? (
           <>
             {totalCount > 1 && (
-              <span className="rounded-full bg-black/55 px-3 py-1 font-mono text-xs font-medium tabular-nums text-zinc-300 ring-1 ring-white/12 backdrop-blur-md">
+              <span className="rounded-full border border-border bg-background/85 px-3 py-1 font-mono text-xs font-medium tabular-nums text-foreground backdrop-blur-md">
                 {currentIndex + 1} / {totalCount}
               </span>
             )}
-            <p className="text-xs text-zinc-400">
+            <p className="text-xs text-muted-foreground">
               {effectiveStageMode === 'stack'
                 ? '点击或拖拽牌面丝滑切换多视角'
                 : '悬停倾斜 · 按住拖拽旋转 · 左右箭头切牌'}
@@ -236,8 +236,8 @@ export function CostumeDetailModal({
           {hasMultiViews && (
             <div className="space-y-2.5">
               <div className="flex items-center justify-between text-xs">
-                <span className="font-medium tracking-wide text-zinc-400">服装视角</span>
-                <span className="font-mono text-zinc-500">{views.length} 视角</span>
+                <span className="font-medium tracking-wide text-muted-foreground">服装视角</span>
+                <span className="font-mono text-muted-foreground">{views.length} 视角</span>
               </div>
               <div className="grid grid-cols-4 gap-1.5" aria-label="服装视角">
                 {views.map((entry) => {
@@ -251,8 +251,8 @@ export function CostumeDetailModal({
                       className={cn(
                         'rounded-xl py-2 text-xs font-medium transition-all',
                         active
-                          ? 'bg-white text-black shadow-sm'
-                          : 'bg-white/[0.05] text-zinc-300 ring-1 ring-white/[0.09] hover:bg-white/[0.12] hover:text-white'
+                          ? 'bg-primary text-primary-foreground shadow-sm'
+                          : 'border border-border bg-muted/40 text-muted-foreground hover:bg-muted hover:text-foreground'
                       )}
                     >
                       {entry.label}
@@ -266,8 +266,8 @@ export function CostumeDetailModal({
           {(item.标签 || []).length > 0 && (
             <div className="space-y-2.5">
               <div className="flex items-center justify-between text-xs">
-                <span className="font-medium tracking-wide text-zinc-400">单品与色彩标签</span>
-                <span className="text-[11px] text-zinc-500">点击筛选同款</span>
+                <span className="font-medium tracking-wide text-muted-foreground">单品与色彩标签</span>
+                <span className="text-xs text-muted-foreground">点击筛选同款</span>
               </div>
               <div className="flex flex-wrap gap-1.5">
                 {(item.标签 || []).map((t) => (
@@ -278,7 +278,7 @@ export function CostumeDetailModal({
                       onSelectTag(t)
                       onOpenChange(false)
                     }}
-                    className="rounded-full bg-white/[0.07] px-2.5 py-1 text-xs font-medium text-zinc-200 ring-1 ring-white/[0.08] transition-colors hover:bg-white hover:text-black"
+                    className="rounded-full bg-muted/65 px-2.5 py-1 text-xs font-medium text-foreground border border-border transition-colors hover:bg-primary hover:text-primary-foreground"
                   >
                     #{t}
                   </button>
@@ -288,37 +288,37 @@ export function CostumeDetailModal({
           )}
 
           <div className="space-y-2.5">
-            <div className="text-xs font-medium tracking-wide text-zinc-400">服装档案</div>
-            <dl className="grid grid-cols-[64px_1fr] gap-y-2 rounded-2xl bg-white/[0.04] p-3.5 text-xs ring-1 ring-white/[0.06]">
-              <dt className="text-zinc-500">编号</dt>
-              <dd className="font-mono text-zinc-200">{item.id}</dd>
-              <dt className="text-zinc-500">风格</dt>
-              <dd className="text-zinc-200">{styleKind}</dd>
-              <dt className="text-zinc-500">分类</dt>
-              <dd className="text-zinc-200">{item.分类}</dd>
-              <dt className="text-zinc-500">来源</dt>
-              <dd className="truncate text-zinc-200">{sourceLabel}</dd>
+            <div className="text-xs font-medium tracking-wide text-muted-foreground">服装档案</div>
+            <dl className="grid grid-cols-[64px_1fr] gap-y-2 rounded-2xl bg-muted/45 p-3.5 text-xs border border-border">
+              <dt className="text-muted-foreground">编号</dt>
+              <dd className="font-mono text-foreground">{item.id}</dd>
+              <dt className="text-muted-foreground">风格</dt>
+              <dd className="text-foreground">{styleKind}</dd>
+              <dt className="text-muted-foreground">分类</dt>
+              <dd className="text-foreground">{item.分类}</dd>
+              <dt className="text-muted-foreground">来源</dt>
+              <dd className="truncate text-foreground">{sourceLabel}</dd>
             </dl>
           </div>
 
           {item.source === 'shisei' && (
-            <div className="space-y-1 text-xs text-zinc-400">
+            <div className="space-y-1 text-xs text-muted-foreground">
               <p>Shisei / wquguru · 历代服饰参考，并非专业历史复原。</p>
               <div className="flex flex-wrap gap-x-3 gap-y-1" aria-label="Shisei 来源与许可">
-                <a className="underline hover:text-zinc-200" href={SHISEI_SOURCE_URLS.repository} target="_blank" rel="noopener noreferrer">
+                <a className="underline hover:text-foreground" href={SHISEI_SOURCE_URLS.repository} target="_blank" rel="noopener noreferrer">
                   原仓库
                 </a>
-                <a className="underline hover:text-zinc-200" href={SHISEI_SOURCE_URLS.catalog} target="_blank" rel="noopener noreferrer">
+                <a className="underline hover:text-foreground" href={SHISEI_SOURCE_URLS.catalog} target="_blank" rel="noopener noreferrer">
                   条目目录
                 </a>
-                <a className="underline hover:text-zinc-200" href={SHISEI_SOURCE_URLS.license} target="_blank" rel="noopener noreferrer">
+                <a className="underline hover:text-foreground" href={SHISEI_SOURCE_URLS.license} target="_blank" rel="noopener noreferrer">
                   来源许可
                 </a>
               </div>
             </div>
           )}
           {item.source === 'charadb' && (
-            <a className="block text-xs text-zinc-400 underline hover:text-zinc-200" href={CHARADB_NOTICE_URL} target="_blank" rel="noopener noreferrer">
+            <a className="block text-xs text-muted-foreground underline hover:text-foreground" href={CHARADB_NOTICE_URL} target="_blank" rel="noopener noreferrer">
               图片仅作参考，禁止真人、未成年人及再分发；查看原作者条件
             </a>
           )}

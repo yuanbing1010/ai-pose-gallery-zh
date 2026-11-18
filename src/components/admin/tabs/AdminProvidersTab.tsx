@@ -20,11 +20,9 @@ import {
   deleteAdminChannelApi,
   deleteAdminProfileApi,
   fetchAdminProvidersApi,
-  fetchAdminSettingsApi,
   updateAdminChannelApi,
   updateAdminProfileApi,
   updateAdminProviderSlotApi,
-  updateAdminSettingsApi,
 } from '@/lib/apiClient'
 import { toast } from '@/lib/notifications'
 import type {
@@ -32,10 +30,8 @@ import type {
   GeminiParams,
   GptParams,
   GrokParams,
-  ImagePassMode,
   ImageProviderId,
   ModelProfileDTO,
-  PlatformConfig,
   ProfileResolutionOption,
   ProviderChannelDTO,
   StudioResolution,
@@ -92,6 +88,7 @@ interface ChannelFormState {
 
 interface AdminProvidersTabProps {
   reloadTick: number
+  initialProvider?: ImageProviderId | null
   onLoadingChange: (loading: boolean) => void
   onConfirm: (action: AdminConfirmAction) => void
   onSelectTab: (tab: AdminTab) => void
@@ -115,6 +112,7 @@ function formatSlotCostSummary(profiles: ModelProfileDTO[]): string {
 
 export function AdminProvidersTab({
   reloadTick,
+  initialProvider,
   onLoadingChange,
   onConfirm,
   onSelectTab,
@@ -122,8 +120,7 @@ export function AdminProvidersTab({
 }: AdminProvidersTabProps) {
   const [slots, setSlots] = useState<AdminProviderSlotDTO[]>([])
   const [suppliers, setSuppliers] = useState<SupplierDTO[]>([])
-  const [platformCfg, setPlatformCfg] = useState<PlatformConfig | null>(null)
-  const [activePid, setActivePid] = useState<ImageProviderId>('gpt')
+  const [activePid, setActivePid] = useState<ImageProviderId>(initialProvider || 'gpt')
   const [selectedProfileByPid, setSelectedProfileByPid] = useState<
     Partial<Record<ImageProviderId, string>>
   >({})
@@ -137,28 +134,31 @@ export function AdminProvidersTab({
   const [channelDialogOpen, setChannelDialogOpen] = useState(false)
   const [channelForm, setChannelForm] = useState<ChannelFormState | null>(null)
   const [savingChannel, setSavingChannel] = useState(false)
+  const [prevInitialProvider, setPrevInitialProvider] = useState(initialProvider)
+
+  if (initialProvider !== prevInitialProvider) {
+    setPrevInitialProvider(initialProvider)
+    if (initialProvider) {
+      setActivePid(initialProvider)
+    }
+  }
 
   const loadData = useCallback(async () => {
     onLoadingChange(true)
     try {
-      const [pRes, sRes] = await Promise.all([
-        fetchAdminProvidersApi(),
-        fetchAdminSettingsApi(),
-      ])
+      const pRes = await fetchAdminProvidersApi()
       setSlots(pRes.slots)
       setSuppliers(pRes.suppliers)
-      setPlatformCfg(sRes.platform)
       setSavedSlotMetaKey(
-        JSON.stringify({
-          slots: pRes.slots.map((sl) => ({
+        JSON.stringify(
+          pRes.slots.map((sl) => ({
             id: sl.providerId,
             enabled: sl.enabled,
-          })),
-          imagePassMode: sRes.platform.imagePassMode,
-        })
+          }))
+        )
       )
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : '加载模型渠道配置失败')
+      toast.error(err instanceof Error ? err.message : '加载画笔档位与路由配置失败')
     } finally {
       onLoadingChange(false)
     }
@@ -181,44 +181,36 @@ export function AdminProvidersTab({
     activeProfiles[0] ??
     null
 
-  const currentSlotMetaKey = JSON.stringify({
-    slots: slots.map((sl) => ({
+  const currentSlotMetaKey = JSON.stringify(
+    slots.map((sl) => ({
       id: sl.providerId,
       enabled: sl.enabled,
-    })),
-    imagePassMode: platformCfg?.imagePassMode,
-  })
+    }))
+  )
   const slotDirty = Boolean(savedSlotMetaKey && currentSlotMetaKey !== savedSlotMetaKey)
 
   const updateLocalSlot = (patch: Partial<AdminProviderSlotDTO>) => {
     setSlots((prev) => prev.map((s) => (s.providerId === activePid ? { ...s, ...patch } : s)))
   }
 
-  const handleSaveSlotAndPassMode = async () => {
+  const handleSaveSlot = async () => {
     if (!activeSlot) return
     setSavingSlot(true)
     try {
-      const [slotRes, settingsRes] = await Promise.all([
-        updateAdminProviderSlotApi(activePid, {
-          enabled: activeSlot.enabled,
-        }),
-        platformCfg
-          ? updateAdminSettingsApi({ imagePassMode: platformCfg.imagePassMode })
-          : Promise.resolve(null),
-      ])
+      const slotRes = await updateAdminProviderSlotApi(activePid, {
+        enabled: activeSlot.enabled,
+      })
       setSlots(slotRes.slots)
-      if (settingsRes) setPlatformCfg(settingsRes.platform)
       setSavedSlotMetaKey(
-        JSON.stringify({
-          slots: slotRes.slots.map((sl) => ({
+        JSON.stringify(
+          slotRes.slots.map((sl) => ({
             id: sl.providerId,
             enabled: sl.enabled,
-          })),
-          imagePassMode: settingsRes?.platform.imagePassMode ?? platformCfg?.imagePassMode,
-        })
+          }))
+        )
       )
       await onRefreshBootstrap()
-      toast.success(`已保存「${getStudioArtist(activePid).name}」开放状态与全局传参模式`)
+      toast.success(`已保存「${getStudioArtist(activePid).name}」开放状态`)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : '保存失败')
     } finally {
@@ -302,9 +294,9 @@ export function AdminProvidersTab({
       }
       setProfileDialogOpen(false)
       await onRefreshBootstrap()
-      toast.success(profileForm.id ? '模型档位已更新' : '新模型档位已创建')
+      toast.success(profileForm.id ? '画笔档位已更新' : '新画笔档位已创建')
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : '保存模型档位失败')
+      toast.error(err instanceof Error ? err.message : '保存画笔档位失败')
     } finally {
       setSavingProfile(false)
     }
@@ -315,7 +307,7 @@ export function AdminProvidersTab({
       const res = await updateAdminProfileApi(prof.id, { enabled: !prof.enabled })
       setSlots(res.slots)
       await onRefreshBootstrap()
-      toast.success(!prof.enabled ? `已开放档位「${prof.displayName}」` : `已停用档位「${prof.displayName}」`)
+      toast.success(!prof.enabled ? `已开放画笔「${prof.displayName}」` : `已停用画笔「${prof.displayName}」`)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : '操作失败')
     }
@@ -327,7 +319,7 @@ export function AdminProvidersTab({
       const res = await updateAdminProfileApi(prof.id, { isDefault: true })
       setSlots(res.slots)
       await onRefreshBootstrap()
-      toast.success(`已将「${prof.displayName}」设为默认档位`)
+      toast.success(`已将「${prof.displayName}」设为默认画笔`)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : '操作失败')
     }
@@ -335,7 +327,7 @@ export function AdminProvidersTab({
 
   const handleDeleteProfile = (prof: ModelProfileDTO) => {
     onConfirm({
-      title: `删除模型档位「${prof.displayName}」`,
+      title: `删除画笔档位「${prof.displayName}」`,
       description: `删除后该档位下绑定的 ${prof.channels.length} 条路由渠道也将一并移除，已生成的历史作品不受影响。`,
       confirmLabel: '确认删除',
       destructive: true,
@@ -343,7 +335,7 @@ export function AdminProvidersTab({
         const res = await deleteAdminProfileApi(prof.id)
         setSlots(res.slots)
         await onRefreshBootstrap()
-        toast.success(`已删除档位「${prof.displayName}」`)
+        toast.success(`已删除画笔「${prof.displayName}」`)
       },
     })
   }
@@ -355,16 +347,16 @@ export function AdminProvidersTab({
       return
     }
     if (!activeProfile) {
-      toast.info('请先新建一个模型档位')
+      toast.info('请先新建一个画笔档位')
       return
     }
-    const defaultSup = suppliers[0]
+    const defaultSup = suppliers.find((s) => s.enabled && s.hasApiKey) || suppliers[0]
     setChannelForm({
       providerId: activePid,
       profileId: activeProfile.id,
       supplierId: defaultSup.id,
       name: defaultSup.name,
-      enabled: true,
+      enabled: defaultSup.enabled && defaultSup.hasApiKey,
       model: meta.models[0].value,
       customModel: '',
       priority: 100,
@@ -396,6 +388,10 @@ export function AdminProvidersTab({
       return
     }
     const selectedSup = suppliers.find((s) => s.id === channelForm.supplierId)
+    if (channelForm.enabled && selectedSup && (!selectedSup.enabled || !selectedSup.hasApiKey)) {
+      toast.error('所选供应商已停用或未配置访问密钥，无法启用该路由渠道')
+      return
+    }
     const effectiveName = channelForm.name.trim() || selectedSup?.name.trim() || ''
     if (!effectiveName) {
       toast.error('请填写渠道名称')
@@ -457,7 +453,7 @@ export function AdminProvidersTab({
   const handleDeleteChannel = (ch: ProviderChannelDTO) => {
     onConfirm({
       title: `删除路由渠道「${ch.name}」`,
-      description: '删除后该渠道不再参与当前模型档位的容灾与负载均衡调度。',
+      description: '删除后该渠道不再参与当前画笔档位的容灾与负载均衡调度。',
       confirmLabel: '确认删除',
       destructive: true,
       run: async () => {
@@ -473,8 +469,8 @@ export function AdminProvidersTab({
     return (
       <div className="space-y-6">
         <AdminPageHeader
-          title="模型档位、分辨率定价与路由调度"
-          description="正在同步模型档位与渠道路由信息…"
+          title="画笔档位、分辨率定价与路由调度"
+          description="正在同步画笔档位与渠道路由信息…"
         />
       </div>
     )
@@ -522,23 +518,30 @@ export function AdminProvidersTab({
               <span className="mt-0.5 text-sm font-bold">{pMeta.name}</span>
               <span className={`mt-1 font-mono text-xs ${isActive ? 'opacity-85' : 'text-zinc-500'}`}>
                 {s.enabled ? formatSlotCostSummary(s.profiles) : '[已停用]'} · {enabledProfiles.length} 档位 ·{' '}
-                {readyChannels} 渠道可用
+                {readyChannels} 渠道{s.usesEnvFallback ? ' (+Env兜底)' : ''}
               </span>
             </button>
           )
         })}
       </div>
 
-      {/* 画师总开关与全局传参 */}
+      {/* 画师总开关与兜底状态 */}
       <AdminPanel
         title={`${meta.name} · 对应画师「${getStudioArtist(activePid).name}」总控`}
         headerRight={
-          <Button variant="ghost" size="sm" className={ADMIN_BTN_SM_CLS} asChild>
-            <a href={meta.docUrl} target="_blank" rel="noreferrer">
-              <ExternalLinkIcon className="size-3.5" />
-              官方文档
-            </a>
-          </Button>
+          <div className="flex flex-wrap items-center gap-2">
+            {activeSlot.hasEnvKey ? (
+              <AdminBadge tone={activeSlot.usesEnvFallback ? 'warning' : 'success'}>
+                {activeSlot.usesEnvFallback ? '当前走 Env Secret 兜底运行' : '已配 Env Secret 备用'}
+              </AdminBadge>
+            ) : null}
+            <Button variant="ghost" size="sm" className={ADMIN_BTN_SM_CLS} asChild>
+              <a href={meta.docUrl} target="_blank" rel="noreferrer">
+                <ExternalLinkIcon className="size-3.5" />
+                官方文档
+              </a>
+            </Button>
+          </div>
         }
       >
         <div className="grid gap-4 sm:grid-cols-2">
@@ -554,42 +557,34 @@ export function AdminProvidersTab({
             </div>
           </AdminField>
 
-          {platformCfg && (
-            <AdminField label="全局参考图传参方式（全站共用）">
-              <Select
-                value={platformCfg.imagePassMode}
-                onValueChange={(v) =>
-                  setPlatformCfg((prev) =>
-                    prev ? { ...prev, imagePassMode: v as ImagePassMode } : prev
-                  )
-                }
+          <AdminField label="参考图传输协议设置">
+            <div className="flex h-8 items-center justify-between border border-zinc-200 px-3 dark:border-zinc-800">
+              <span className="text-xs text-zinc-500">URL / Base64 与拼图开关已统一至全局配置</span>
+              <button
+                type="button"
+                onClick={() => onSelectTab('access')}
+                className="font-mono text-xs font-bold underline underline-offset-2 hover:text-zinc-950 dark:hover:text-white"
               >
-                <SelectTrigger className={`w-full ${ADMIN_SELECT_CLS}`}>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="url">优先 HTTPS URL（私有图自动转 Base64）</SelectItem>
-                  <SelectItem value="base64">统一转 Base64 编码发送</SelectItem>
-                </SelectContent>
-              </Select>
-            </AdminField>
-          )}
+                前往调整
+              </button>
+            </div>
+          </AdminField>
         </div>
 
         <div className="mt-4 flex flex-wrap items-center justify-end gap-3 border-t border-zinc-200 pt-3 dark:border-zinc-800">
-          {slotDirty && <AdminBadge tone="warning">有未保存的总控 / 传参改动</AdminBadge>}
+          {slotDirty && <AdminBadge tone="warning">有未保存的总控状态改动</AdminBadge>}
           <Button
             size="sm"
             className={ADMIN_BTN_CLS}
             disabled={savingSlot}
-            onClick={() => void handleSaveSlotAndPassMode()}
+            onClick={() => void handleSaveSlot()}
           >
             {savingSlot ? (
               <LoaderCircleIcon className="size-3.5 animate-spin" />
             ) : (
               <CheckIcon className="size-3.5" />
             )}
-            保存总控配置
+            保存画师开放状态
           </Button>
         </div>
       </AdminPanel>
@@ -634,10 +629,25 @@ export function AdminProvidersTab({
                   return (
                     <tr
                       key={prof.id}
+                      tabIndex={0}
+                      aria-label={`选择画笔档位 ${prof.displayName}`}
+                      aria-selected={selected}
                       onClick={() =>
                         setSelectedProfileByPid((prev) => ({ ...prev, [activePid]: prof.id }))
                       }
-                      className={`cursor-pointer transition-colors ${
+                      onKeyDown={(e) => {
+                        if (
+                          e.target !== e.currentTarget &&
+                          (e.target as HTMLElement).closest('button,a,input,select,[role="switch"]')
+                        ) {
+                          return
+                        }
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault()
+                          setSelectedProfileByPid((prev) => ({ ...prev, [activePid]: prof.id }))
+                        }
+                      }}
+                      className={`cursor-pointer transition-colors focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-zinc-950 dark:focus-visible:outline-zinc-100 ${
                         selected
                           ? 'bg-zinc-100/90 dark:bg-zinc-900'
                           : 'hover:bg-zinc-50/70 dark:hover:bg-zinc-900/40'
@@ -655,7 +665,7 @@ export function AdminProvidersTab({
                           {prof.isDefault && <AdminBadge tone="dark">默认</AdminBadge>}
                         </div>
                         {prof.tagline && (
-                          <div className="mt-1 text-[11px] text-zinc-500">{prof.tagline}</div>
+                          <div className="mt-1 text-xs text-zinc-500">{prof.tagline}</div>
                         )}
                       </td>
                       <td className="px-4 py-3 font-mono">
@@ -664,7 +674,7 @@ export function AdminProvidersTab({
                             {enabledRes.map((r) => (
                               <span
                                 key={r.resolution}
-                                className={`border px-1.5 py-0.5 text-[11px] ${
+                                className={`border px-1.5 py-0.5 text-xs ${
                                   r.resolution === prof.defaultResolution
                                     ? 'border-zinc-950 bg-zinc-950/5 font-bold dark:border-zinc-200 dark:bg-zinc-100/10'
                                     : 'border-zinc-300 text-zinc-600 dark:border-zinc-700 dark:text-zinc-400'
@@ -762,7 +772,7 @@ export function AdminProvidersTab({
             ? `「${activeProfile.displayName}」专属路由渠道 (${activeProfileChannels.length})`
             : '路由渠道列表'
         }
-        subtitle="仅在当前选中的模型档位内部按优先级调度与故障转移；可混配官方与多家中转站的不同模型别名。"
+        subtitle="仅在当前选中的画笔档位内部按优先级调度与故障转移；可混配官方与多家中转站的不同模型别名。"
         headerRight={
           <Button size="sm" className={ADMIN_BTN_CLS} onClick={openNewChannel} disabled={!activeProfile}>
             <PlusIcon className="size-3.5" />
@@ -809,13 +819,13 @@ export function AdminProvidersTab({
                       </td>
                       <td className="px-4 py-3">
                         <div className="font-sans font-semibold">{ch.supplierName}</div>
-                        <div className="max-w-[200px] truncate text-[11px] text-zinc-500">
+                        <div className="max-w-[200px] truncate text-xs text-zinc-500">
                           {ch.supplierBaseUrl}
                         </div>
                       </td>
                       <td className="px-4 py-3">
                         <div className="font-bold">{effectiveModel}</div>
-                        <div className="text-[11px] text-zinc-500">
+                        <div className="text-xs text-zinc-500">
                           {(ch.params as { endpointMode?: string }).endpointMode}
                         </div>
                       </td>
@@ -892,7 +902,7 @@ export function AdminProvidersTab({
                           key={preset}
                           type="button"
                           onClick={() => setProfileForm({ ...profileForm, badge: preset })}
-                          className={`border px-1.5 py-0.5 text-[11px] transition-colors ${
+                          className={`border px-1.5 py-0.5 text-xs transition-colors ${
                             profileForm.badge === preset
                               ? 'border-zinc-950 bg-zinc-950 text-white dark:border-zinc-100 dark:bg-zinc-100 dark:text-zinc-950'
                               : 'border-zinc-200 bg-zinc-50 text-zinc-600 hover:border-zinc-400 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400'
@@ -955,7 +965,7 @@ export function AdminProvidersTab({
                       <span className="font-bold text-zinc-700 dark:text-zinc-200">
                         前端可选分辨率与分档积分定价
                       </span>
-                      <span className="text-[11px] text-zinc-500">
+                      <span className="text-xs text-zinc-500">
                         开启 2 个及以上分辨率时，工作台前端将展示分辨率切换按钮
                       </span>
                     </div>
@@ -1001,7 +1011,7 @@ export function AdminProvidersTab({
                                     · {resMeta.hint}
                                   </span>
                                 </div>
-                                <div className="text-[11px] text-zinc-500">{resMeta.description}</div>
+                                <div className="text-xs text-zinc-500">{resMeta.description}</div>
                               </div>
                             </div>
 
@@ -1069,7 +1079,7 @@ export function AdminProvidersTab({
                         className={ADMIN_INPUT_CLS}
                       />
                     </AdminField>
-                    <div className="flex items-end pb-1 text-[11px] text-zinc-500">
+                    <div className="flex items-end pb-1 text-xs text-zinc-500">
                       OpenAI GPT Image 尺寸按画幅比例固定映射，画质由下方路由渠道的 quality 参数控制。
                     </div>
                   </div>
@@ -1096,7 +1106,7 @@ export function AdminProvidersTab({
                   ) : (
                     <CheckIcon className="size-3.5" />
                   )}
-                  保存模型档位
+                  保存画笔档位
                 </Button>
               </div>
             </div>
@@ -1109,13 +1119,13 @@ export function AdminProvidersTab({
         <DialogContent className={`max-h-[90dvh] w-[95vw] max-w-2xl overflow-y-auto sm:max-w-2xl ${ADMIN_DIALOG_CLS}`}>
           <DialogHeader>
             <DialogTitle className="text-sm font-bold">
-              {channelForm?.id ? '编辑模型渠道' : '添加模型渠道'}
+              {channelForm?.id ? '编辑路由渠道' : '添加路由渠道'}
             </DialogTitle>
           </DialogHeader>
           {channelForm && (
             <div className="space-y-4 pt-2 text-xs">
               <div className="grid gap-3 sm:grid-cols-2">
-                <AdminField label="所属前端模型档位（支持迁移渠道归属）" className="sm:col-span-2">
+                <AdminField label="所属前端画笔档位（支持迁移渠道归属）" className="sm:col-span-2">
                   <Select
                     value={channelForm.profileId}
                     onValueChange={(v) => setChannelForm({ ...channelForm, profileId: v })}
@@ -1145,10 +1155,12 @@ export function AdminProvidersTab({
                       const currentName = channelForm.name.trim()
                       const shouldSyncName =
                         !currentName || (prevSup && currentName === prevSup.name.trim())
+                      const supUsable = Boolean(nextSup?.enabled && nextSup?.hasApiKey)
                       setChannelForm({
                         ...channelForm,
                         supplierId: v,
                         name: shouldSyncName && nextSup ? nextSup.name : channelForm.name,
+                        enabled: supUsable ? channelForm.enabled : false,
                       })
                     }}
                   >
@@ -1158,7 +1170,7 @@ export function AdminProvidersTab({
                     <SelectContent>
                       {suppliers.map((s) => (
                         <SelectItem key={s.id} value={s.id} className="text-xs">
-                          {s.name} ({s.baseUrl}) {s.hasApiKey ? '' : '[未配Key]'}
+                          {s.name} ({s.baseUrl}) {!s.enabled ? '[已停用]' : !s.hasApiKey ? '[未配Key]' : ''}
                         </SelectItem>
                       ))}
                     </SelectContent>

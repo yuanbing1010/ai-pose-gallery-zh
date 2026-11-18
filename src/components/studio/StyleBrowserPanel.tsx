@@ -194,7 +194,7 @@ export function StyleBrowserPanel({
           ) : (
             <div className="flex h-full w-full flex-col items-center justify-center gap-1 border-b border-dashed border-border/70 bg-muted/25 text-muted-foreground">
               <SparklesIcon className="size-5 opacity-70" />
-              <span className="text-[11px] font-medium">{item.shortLabel}</span>
+              <span className="text-xs font-medium">{item.shortLabel}</span>
             </div>
           )}
 
@@ -203,7 +203,7 @@ export function StyleBrowserPanel({
             className="pointer-events-none absolute inset-x-0 top-0 h-10 bg-gradient-to-b from-black/55 to-transparent"
           />
 
-          <span className="pointer-events-none absolute top-1.5 left-1.5 max-w-[calc(100%-34px)] truncate rounded-md bg-black/75 px-1.5 py-0.5 text-[11px] font-medium text-white">
+          <span className="pointer-events-none absolute top-1.5 left-1.5 max-w-[calc(100%-34px)] truncate rounded-md bg-black/75 px-1.5 py-0.5 text-xs font-medium text-white">
             {badgeText}
           </span>
 
@@ -256,22 +256,6 @@ export function StyleBrowserPanel({
 
           <button
             type="button"
-            onClick={() => selectStyle('none')}
-            aria-pressed={value === 'none'}
-            className={cn(
-              'inline-flex h-8 shrink-0 items-center gap-1.5 rounded-xl border px-2.5 text-xs font-semibold transition-colors active:scale-95',
-              value === 'none'
-                ? 'border-[#D9381E] bg-[#D9381E]/10 text-[#C23018] dark:text-[#FF7A59]'
-                : 'border-border/80 bg-[#FAF8F4] text-muted-foreground hover:border-foreground/40 hover:text-foreground dark:bg-muted/35'
-            )}
-            title={NONE_STYLE_PRESET.label}
-          >
-            <WandSparklesIcon className="size-3.5" />
-            <span>清除画风</span>
-          </button>
-
-          <button
-            type="button"
             onClick={pickRandomFiltered}
             disabled={visualStyles.length === 0}
             className="inline-flex h-8 shrink-0 items-center gap-1 rounded-xl border border-border/80 bg-[#FAF8F4] px-2.5 text-xs font-semibold text-foreground transition-colors hover:border-[#E5A918]/70 active:scale-95 disabled:opacity-40 dark:bg-muted/35"
@@ -287,12 +271,28 @@ export function StyleBrowserPanel({
             </motion.span>
             <span>{hasActiveFilter ? '筛选内盲选' : '盲选'}</span>
           </button>
+
+          <button
+            type="button"
+            onClick={() => selectStyle('none')}
+            aria-pressed={value === 'none'}
+            className={cn(
+              'inline-flex h-8 shrink-0 items-center gap-1.5 rounded-xl border px-2.5 text-xs font-semibold transition-colors active:scale-95',
+              value === 'none'
+                ? 'border-[#D9381E] bg-[#D9381E]/10 text-[#C23018] dark:text-[#FF7A59]'
+                : 'border-border/80 bg-[#FAF8F4] text-muted-foreground hover:border-foreground/40 hover:text-foreground dark:bg-muted/35'
+            )}
+            title={NONE_STYLE_PRESET.label}
+          >
+            <WandSparklesIcon className="size-3.5" />
+            <span>清除画风</span>
+          </button>
         </div>
 
         {/* 一级大类筛选轨 */}
         <div className="space-y-1.5">
           <div className="flex items-center gap-1.5">
-            <span className="w-7 shrink-0 font-mono text-[11px] font-bold tracking-wider text-muted-foreground uppercase">
+            <span className="w-7 shrink-0 font-mono text-xs font-bold tracking-wider text-muted-foreground uppercase">
               大类
             </span>
             <div
@@ -316,7 +316,7 @@ export function StyleBrowserPanel({
                 )}
               >
                 <span>全部</span>
-                <span className="font-mono text-[11px] opacity-80">{visualStyles.length}</span>
+                <span className="font-mono text-xs opacity-80">{visualStyles.length}</span>
               </button>
 
               {taxonomy.map((cat) => {
@@ -339,7 +339,7 @@ export function StyleBrowserPanel({
                     )}
                   >
                     <span>{cat.label}</span>
-                    <span className="font-mono text-[11px] opacity-80">{cat.count}</span>
+                    <span className="font-mono text-xs opacity-80">{cat.count}</span>
                   </button>
                 )
               })}
@@ -349,7 +349,7 @@ export function StyleBrowserPanel({
           {/* 二级小类筛选轨 */}
           {visibleSubcategories.length > 0 && (
             <div className="flex items-center gap-1.5">
-              <span className="w-7 shrink-0 font-mono text-[11px] font-bold tracking-wider text-muted-foreground uppercase">
+              <span className="w-7 shrink-0 font-mono text-xs font-bold tracking-wider text-muted-foreground uppercase">
                 小类
               </span>
               <div
@@ -363,7 +363,7 @@ export function StyleBrowserPanel({
                   aria-selected={effectiveSubcategoryId === 'all'}
                   onClick={() => setSubcategoryFilter('all')}
                   className={cn(
-                    'inline-flex h-6 shrink-0 items-center gap-1 rounded-lg border px-2 text-[11px] font-medium transition-colors',
+                    'inline-flex h-6 shrink-0 items-center gap-1 rounded-lg border px-2 text-xs font-medium transition-colors',
                     effectiveSubcategoryId === 'all'
                       ? 'border-[#D9381E] bg-[#D9381E]/10 font-semibold text-[#C23018] dark:text-[#FF7A59]'
                       : 'border-border/70 bg-card text-muted-foreground hover:border-foreground/40 hover:text-foreground'
@@ -390,7 +390,7 @@ export function StyleBrowserPanel({
                         setSubcategoryFilter(sub.id)
                       }}
                       className={cn(
-                        'inline-flex h-6 shrink-0 items-center gap-1 rounded-lg border px-2 text-[11px] font-medium transition-colors',
+                        'inline-flex h-6 shrink-0 items-center gap-1 rounded-lg border px-2 text-xs font-medium transition-colors',
                         active
                           ? 'border-[#D9381E] bg-[#D9381E]/10 font-semibold text-[#C23018] dark:text-[#FF7A59]'
                           : sub.count === 0
@@ -399,7 +399,7 @@ export function StyleBrowserPanel({
                       )}
                     >
                       <span>{sub.label}</span>
-                      <span className="font-mono text-[11px] opacity-80">{sub.count}</span>
+                      <span className="font-mono text-xs opacity-80">{sub.count}</span>
                     </button>
                   )
                 })}
@@ -410,8 +410,16 @@ export function StyleBrowserPanel({
 
         {/* 筛选结果统计条 */}
         {hasActiveFilter && (
-          <div className="flex flex-wrap items-center justify-between gap-2 pt-0.5 text-[11px] text-muted-foreground">
-            <span className="truncate">
+          <div className="flex flex-wrap items-center justify-between gap-2 pt-0.5 text-xs text-muted-foreground">
+            <button
+              type="button"
+              onClick={resetFilters}
+              className="inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 font-medium text-[#D9381E] hover:bg-[#D9381E]/10"
+            >
+              <FilterXIcon className="size-3" />
+              <span>重置筛选</span>
+            </button>
+            <span className="min-w-0 truncate text-right">
               当前筛选：
               {activeCategoryLabel ? (
                 <strong className="text-foreground"> {activeCategoryLabel}</strong>
@@ -427,14 +435,6 @@ export function StyleBrowserPanel({
               {normalizedQuery ? ` · 关键词「${searchQuery.trim()}」` : ''}
               {' · '}共 <strong className="font-mono text-foreground">{filteredStyles.length}</strong> 种
             </span>
-            <button
-              type="button"
-              onClick={resetFilters}
-              className="inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 font-medium text-[#D9381E] hover:bg-[#D9381E]/10"
-            >
-              <FilterXIcon className="size-3" />
-              <span>重置筛选</span>
-            </button>
           </div>
         )}
       </div>
@@ -450,7 +450,7 @@ export function StyleBrowserPanel({
             <FolderOpenIcon className="size-7 text-muted-foreground/60" />
             <div className="space-y-1">
               <div className="text-xs font-bold text-foreground">暂无预设画风</div>
-              <p className="text-[11px] text-muted-foreground">
+              <p className="text-xs text-muted-foreground">
                 当前暂未配置画风预设，可保持无预设画风直接出图。
               </p>
             </div>
@@ -466,7 +466,7 @@ export function StyleBrowserPanel({
                     ? `「${activeCategoryLabel}」下暂无画风预设`
                     : '未找到匹配的画风'}
               </div>
-              <p className="text-[11px] text-muted-foreground">
+              <p className="text-xs text-muted-foreground">
                 试试切换其他大类、小类，或清空搜索关键词查看全部画风。
               </p>
             </div>
@@ -495,28 +495,28 @@ export function StyleBrowserPanel({
               <section key={section.category.id} className="space-y-2">
                 <div className="flex items-center justify-between gap-2 px-0.5">
                   <div className="flex items-center gap-1.5">
-                    <span className="font-mono text-[11px] font-bold text-muted-foreground">
+                    <span className="font-mono text-xs font-bold text-muted-foreground">
                       {String(idx + 1).padStart(2, '0')}
                     </span>
                     <h3 className="text-xs font-extrabold tracking-tight text-foreground">
                       {section.category.label}
                     </h3>
-                    <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-[11px] font-semibold text-muted-foreground">
-                      {section.items.length}
-                    </span>
+                    {section.category.id !== '__other__' && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCategoryFilter(section.category.id)
+                          setSubcategoryFilter('all')
+                        }}
+                        className="rounded-full border border-border/80 bg-[#FAF8F4] px-2 py-0.5 text-xs font-medium text-muted-foreground transition-colors hover:border-foreground/40 hover:text-foreground dark:bg-muted/35"
+                      >
+                        仅看此类 →
+                      </button>
+                    )}
                   </div>
-                  {section.category.id !== '__other__' && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setCategoryFilter(section.category.id)
-                        setSubcategoryFilter('all')
-                      }}
-                      className="text-[11px] font-medium text-muted-foreground transition-colors hover:text-foreground"
-                    >
-                      仅看此类 →
-                    </button>
-                  )}
+                  <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs font-semibold text-muted-foreground">
+                    共 {section.items.length} 种
+                  </span>
                 </div>
                 <div className={cn('grid gap-2', gridColsClassName)}>
                   {section.items.map((item) => renderStyleCard(item, false))}

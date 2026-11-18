@@ -181,13 +181,11 @@
 .sk-grid-bg {
     background-color: #efece5;
     background-image: radial-gradient(120% 95% at 50% 38%, #faf9f6 0%, #efece5 62%, #e6e1d6 100%);
-    background-attachment: fixed;
 }
 
 .dark .sk-grid-bg {
     background-color: #101015;
     background-image: radial-gradient(120% 95% at 50% 38%, #1d1d24 0%, #101015 62%, #08080b 100%);
-    background-attachment: fixed;
 }
 
 /* Marked + StyleKit 协同：主题自适应画廊卡与磨砂胶囊 */

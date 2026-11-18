@@ -22,10 +22,10 @@ import { useStudio } from '@/store/studioStore'
 
 const SHOWCASE_NAV_ITEMS = [
   { title: '盲盒抽卡', to: '/' as const, icon: LayoutDashboardIcon },
-  { title: '人像卡', to: '/portraits' as const, icon: UserRoundIcon, count: '1.5K' },
-  { title: '服装卡', to: '/costumes' as const, icon: ShirtIcon, count: '3.2K' },
-  { title: '姿势卡', to: '/poses' as const, icon: PersonStandingIcon, count: '1.4K' },
-  { title: '指南', to: '/guide' as const, icon: BookOpenIcon },
+  { title: '动作姿势', to: '/poses' as const, icon: PersonStandingIcon },
+  { title: '服装穿搭', to: '/costumes' as const, icon: ShirtIcon },
+  { title: '人像颜值', to: '/portraits' as const, icon: UserRoundIcon },
+  { title: '使用指南', to: '/guide' as const, icon: BookOpenIcon },
 ]
 
 export function ShowcaseNavbar() {
@@ -74,7 +74,7 @@ export function ShowcaseNavbar() {
                     <BrandMark />
                     <span className="flex flex-col gap-0.5 leading-none">
                       <span className="font-mono text-sm font-bold tracking-tight">CASTDECK</span>
-                      <span className="text-[11px] font-medium text-muted-foreground">
+                      <span className="text-xs font-medium text-muted-foreground">
                         姿势 × 服装 × 人像参考工作台
                       </span>
                     </span>
@@ -98,11 +98,6 @@ export function ShowcaseNavbar() {
                           <item.icon className="size-4" />
                           {item.title}
                         </span>
-                        {'count' in item && item.count && (
-                          <span className="font-mono text-xs text-muted-foreground">
-                            {item.count}
-                          </span>
-                        )}
                         {item.to === '/studio' && selectedCount > 0 && (
                           <span className="rounded-full bg-primary px-2 py-0.5 font-mono text-xs font-semibold text-primary-foreground">
                             {selectedCount}/3
@@ -162,7 +157,7 @@ export function ShowcaseNavbar() {
             <Link to="/" className="group flex shrink-0 items-center gap-2 sm:gap-2.5">
               <BrandMark className="transition-transform duration-200 group-hover:scale-105 group-active:scale-95" />
               <span className="font-mono text-[13px] font-bold tracking-tight whitespace-nowrap text-foreground sm:text-sm">
-                CAST.DECK
+                CASTDECK
               </span>
             </Link>
           </div>
@@ -181,11 +176,6 @@ export function ShowcaseNavbar() {
                   }`}
                 >
                   <span>{item.title}</span>
-                  {item.count && (
-                    <span className="font-mono text-[11px] text-muted-foreground">
-                      {item.count}
-                    </span>
-                  )}
                 </Link>
               )
             })}

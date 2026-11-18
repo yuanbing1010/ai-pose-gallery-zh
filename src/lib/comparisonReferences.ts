@@ -23,7 +23,7 @@ export function comparisonReferences(result: GenerationHistoryItem): ComparisonR
     add(
       'costume',
       `服装 · ${recipe.costume.服装名称}`,
-      recipe.costume.原图 || recipe.costume.预览图 || recipe.costume.缩略图
+      recipe.costume.预览图 || recipe.costume.原图 || recipe.costume.缩略图
     )
   }
   if (recipe.pose) {

@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { AnimatePresence, motion } from 'motion/react'
-import { CheckIcon, DicesIcon, SparklesIcon, Volume2Icon, VolumeXIcon, XIcon } from 'lucide-react'
+import { Link } from '@tanstack/react-router'
+import { ArrowRightIcon, CheckIcon, DicesIcon, SparklesIcon, Volume2Icon, VolumeXIcon, XIcon } from 'lucide-react'
 import { toast } from '@/lib/notifications'
 import { poseThumbPath, referenceImageUrl } from '@/lib/recipeImages'
 import { cn } from '@/lib/utils'
@@ -466,7 +467,11 @@ export function PackStage({
             const fullChime = window.setTimeout(() => sfxRef.current?.dockFull(), 80)
             const doneAt = window.setTimeout(() => {
               setFlyingClones([])
-              onRedrawRef.current()
+              setLockedSlots({ portrait: true, costume: true, pose: true })
+              sceneRef.current?.querySelectorAll<HTMLElement>('.hp-card').forEach((node) => {
+                node.style.opacity = '1'
+              })
+              setPhase('opened')
             }, 380)
             flyTimersRef.current.push(fullChime, doneAt)
           }
@@ -908,15 +913,21 @@ export function PackStage({
         const slot = i
         const el = document.createElement('div')
         el.className = 'hp-card'
-        el.innerHTML = `
-          <i class="hp-bevel"></i>
-          <div class="hp-face">
-            <div class="hp-win">
-              <img src="${spec.img}" alt="${spec.title}" draggable="false" />
-            </div>
-            <i class="hp-holo"></i>
-          </div>
-        `
+        const bevel = document.createElement('i')
+        bevel.className = 'hp-bevel'
+        const face = document.createElement('div')
+        face.className = 'hp-face'
+        const win = document.createElement('div')
+        win.className = 'hp-win'
+        const img = document.createElement('img')
+        img.src = spec.img
+        img.alt = spec.title
+        img.draggable = false
+        win.appendChild(img)
+        const holo = document.createElement('i')
+        holo.className = 'hp-holo'
+        face.append(win, holo)
+        el.append(bevel, face)
         el.style.zIndex = String(3 - i)
         scene.append(el)
         const f = fan(slot)
@@ -1347,7 +1358,10 @@ export function PackStage({
     ro.observe(stage)
 
     let raf = 0
+    let inView = true
     const frame = (now: number) => {
+      raf = 0
+      if (!inView || document.visibilityState === 'hidden') return
       raf = requestAnimationFrame(frame)
       const dt = Math.min(0.05, (now - last) / 1000)
       last = now
@@ -1577,6 +1591,28 @@ export function PackStage({
       })
     }
 
+    const visObs = new IntersectionObserver((entries) => {
+      inView = entries.some((e) => e.isIntersecting)
+      if (inView && !raf && document.visibilityState === 'visible') {
+        last = performance.now()
+        raf = requestAnimationFrame(frame)
+      } else if (!inView && raf) {
+        cancelAnimationFrame(raf)
+        raf = 0
+      }
+    })
+    visObs.observe(stage)
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible' && inView && !raf) {
+        last = performance.now()
+        raf = requestAnimationFrame(frame)
+      } else if (document.visibilityState === 'hidden' && raf) {
+        cancelAnimationFrame(raf)
+        raf = 0
+      }
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+
     raf = requestAnimationFrame(frame)
 
     return () => {
@@ -1584,6 +1620,8 @@ export function PackStage({
       window.clearTimeout(settleTimer)
       window.clearTimeout(wasDragResetTimer)
       cancelAnimationFrame(raf)
+      visObs.disconnect()
+      document.removeEventListener('visibilitychange', onVisibility)
       ro.disconnect()
       hit.removeEventListener('pointerdown', onHitDown)
       hit.removeEventListener('pointermove', onHitMove)
@@ -1630,7 +1668,7 @@ export function PackStage({
               transition={{ duration: 0.18 }}
               className="flex flex-col items-center gap-1.5"
             >
-              <span className="inline-flex items-center gap-1.5 rounded-full border border-black/10 bg-white/75 px-3 py-0.5 font-mono text-[11px] font-semibold whitespace-nowrap text-foreground/85 backdrop-blur-md sm:text-xs dark:border-white/15 dark:bg-white/10">
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-black/10 bg-white/75 px-3 py-0.5 font-mono text-xs font-semibold whitespace-nowrap text-foreground/85 backdrop-blur-md sm:text-xs dark:border-white/15 dark:bg-white/10">
                 <span className="size-1.5 shrink-0 rounded-full bg-[#D9381E]" />
                 <span className="sm:hidden">3-IN-1 配方盲盒 · 6,162+ 参考卡</span>
                 <span className="hidden sm:inline">3-IN-1 角色配方盲盒 · 6,162+ 中文参考卡</span>
@@ -1687,7 +1725,7 @@ export function PackStage({
                   )
                 })}
               </div>
-              <p className="text-[11px] text-muted-foreground">
+              <p className="text-xs text-muted-foreground">
                 轻点单张卡牌或上方标签可单独锁入槽位 · 点击「立即合成」整包入坞
               </p>
             </motion.div>
@@ -1792,14 +1830,24 @@ export function PackStage({
                 <span>再抽一包</span>
               </button>
 
-              <button
-                type="button"
-                onClick={handleSynthesizeClick}
-                className="ks-keycap inline-flex h-10 items-center gap-2 rounded-full bg-[#D9381E] px-6 text-xs font-semibold text-white shadow-md transition-all hover:-translate-y-0.5 hover:bg-[#C23018] active:scale-[0.97]"
-              >
-                <SparklesIcon className="size-3.5" />
-                <span>立即合成</span>
-              </button>
+              {lockedSlots.portrait && lockedSlots.costume && lockedSlots.pose ? (
+                <Link
+                  to="/studio"
+                  className="ks-keycap inline-flex h-10 items-center gap-2 rounded-full bg-[#D9381E] px-6 text-xs font-semibold text-white shadow-md transition-all hover:-translate-y-0.5 hover:bg-[#C23018] active:scale-[0.97]"
+                >
+                  <span>已锁入配方 · 前往合成台</span>
+                  <ArrowRightIcon className="size-3.5" />
+                </Link>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleSynthesizeClick}
+                  className="ks-keycap inline-flex h-10 items-center gap-2 rounded-full bg-[#D9381E] px-6 text-xs font-semibold text-white shadow-md transition-all hover:-translate-y-0.5 hover:bg-[#C23018] active:scale-[0.97]"
+                >
+                  <SparklesIcon className="size-3.5" />
+                  <span>立即合成</span>
+                </button>
+              )}
             </motion.div>
           )}
         </AnimatePresence>

@@ -8,9 +8,10 @@ import {
   XIcon,
 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { costumesQuery, isNsfwCostume, isNsfwCostumeCategory } from '@/api/gallery'
+import { costumesQuery } from '@/api/gallery'
 import { FashionCard } from '@/components/cards/FashionCard'
 import { EmptyState } from '@/components/common/EmptyState'
+import { HorizontalFilterStrip } from '@/components/common/HorizontalFilterStrip'
 import { ScrollToTopButton } from '@/components/common/ScrollToTopButton'
 import { CostumeDetailModal } from '@/components/costumes/CostumeDetailModal'
 import {
@@ -61,7 +62,7 @@ const SOURCE_FILTER_LABELS: Array<{ id: CostumeSourceFilter; label: string }> = 
 
 function CostumesPage() {
   const { data: costumes } = useSuspenseQuery(costumesQuery)
-  const { recipe, toggleCostume, safeMode } = useStudio()
+  const { recipe, toggleCostume } = useStudio()
 
   const [styleTab, setStyleTab] = useState<CostumeStyleTab>('all')
   const [sourceFilter, setSourceFilter] = useState<CostumeSourceFilter>('all')
@@ -85,31 +86,26 @@ function CostumesPage() {
     setViewerOpen(true)
   }
 
-  const activeCategory = safeMode && category && isNsfwCostumeCategory(category) ? '' : category
-
-  const sfwCostumes = useMemo(
-    () => (safeMode ? costumes.filter((x) => !isNsfwCostume(x)) : costumes),
-    [costumes, safeMode]
-  )
+  const activeCategory = category
 
   const styleCounts = useMemo<Record<CostumeStyleTab, number>>(
     () => ({
-      all: sfwCostumes.length,
-      realistic: sfwCostumes.filter((x) => matchCostumeStyle(x, 'realistic')).length,
-      anime: sfwCostumes.filter((x) => matchCostumeStyle(x, 'anime')).length,
-      historical: sfwCostumes.filter((x) => matchCostumeStyle(x, 'historical')).length,
+      all: costumes.length,
+      realistic: costumes.filter((x) => matchCostumeStyle(x, 'realistic')).length,
+      anime: costumes.filter((x) => matchCostumeStyle(x, 'anime')).length,
+      historical: costumes.filter((x) => matchCostumeStyle(x, 'historical')).length,
     }),
-    [sfwCostumes]
+    [costumes]
   )
 
   const baseCostumes = useMemo(
     () =>
-      sfwCostumes.filter((x) => {
+      costumes.filter((x) => {
         if (!matchCostumeStyle(x, styleTab)) return false
         if (sourceFilter !== 'all' && costumeSourceId(x) !== sourceFilter) return false
         return true
       }),
-    [sfwCostumes, styleTab, sourceFilter]
+    [costumes, styleTab, sourceFilter]
   )
 
   const categoryOptions = useMemo(() => {
@@ -134,13 +130,13 @@ function CostumesPage() {
   }, [baseCostumes, activeCategory])
 
   const sourceOptions = useMemo(() => {
-    const scoped = sfwCostumes.filter((x) => matchCostumeStyle(x, styleTab))
+    const scoped = costumes.filter((x) => matchCostumeStyle(x, styleTab))
     return SOURCE_FILTER_LABELS.map((entry) => ({
       id: entry.id,
       label: entry.label,
       count: entry.id === 'all' ? scoped.length : scoped.filter((x) => costumeSourceId(x) === entry.id).length,
     })).filter((entry) => entry.id === 'all' || entry.count > 0)
-  }, [sfwCostumes, styleTab])
+  }, [costumes, styleTab])
 
   const activeTag =
     tag === 'all' || baseCostumes.some((x) => (!activeCategory || x.分类 === activeCategory) && (x.标签 || []).includes(tag))
@@ -182,6 +178,15 @@ function CostumesPage() {
           setViewerNav({ index: (viewerIndex - 1 + filtered.length) % filtered.length, dir: -1 })
           return
         }
+        if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && currentItem?.views?.length && currentItem.views.length > 1) {
+          e.preventDefault()
+          const delta = e.key === 'ArrowDown' ? 1 : -1
+          const curId = currentItem.selectedView || currentItem.views[0].id
+          const curIdx = Math.max(0, currentItem.views.findIndex((v) => v.id === curId))
+          const nextView = currentItem.views[(curIdx + delta + currentItem.views.length) % currentItem.views.length]
+          if (nextView) setView({ itemId: currentItem.id, id: nextView.id })
+          return
+        }
       }
 
       const target = e.target as HTMLElement | null
@@ -202,7 +207,7 @@ function CostumesPage() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [viewerOpen, viewerIndex, filtered.length])
+  }, [viewerOpen, viewerIndex, filtered.length, currentItem])
 
   const resetFilters = () => {
     setStyleTab('all')
@@ -261,7 +266,7 @@ function CostumesPage() {
                     : 'text-foreground hover:bg-muted/60'
                 )}
               >
-                <div className={cn('text-[11px]', active ? 'opacity-80' : 'text-muted-foreground')}>
+                <div className={cn('text-xs', active ? 'opacity-80' : 'text-muted-foreground')}>
                   {tab.label}
                 </div>
                 <div className="mt-0.5 font-mono text-sm font-semibold tabular-nums">
@@ -302,7 +307,7 @@ function CostumesPage() {
                 <XIcon className="size-3" />
               </button>
             ) : (
-              <kbd className="ml-2 hidden shrink-0 rounded-md border border-border bg-muted px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground sm:inline-block">
+              <kbd className="ml-2 hidden shrink-0 rounded-md border border-border bg-muted px-1.5 py-0.5 font-mono text-xs text-muted-foreground sm:inline-block">
                 /
               </kbd>
             )}
@@ -321,11 +326,11 @@ function CostumesPage() {
             <SlidersHorizontalIcon className="size-3.5" />
             <span>筛选</span>
             {activeFilterCount > 0 ? (
-              <span className="flex size-4 items-center justify-center rounded-full bg-background font-mono text-[11px] font-semibold text-foreground">
+              <span className="flex size-4 items-center justify-center rounded-full bg-background font-mono text-xs font-semibold text-foreground">
                 {activeFilterCount}
               </span>
             ) : (
-              <kbd className="hidden rounded-md border border-border bg-muted px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground sm:inline-block">
+              <kbd className="hidden rounded-md border border-border bg-muted px-1.5 py-0.5 font-mono text-xs text-muted-foreground sm:inline-block">
                 F
               </kbd>
             )}
@@ -344,7 +349,7 @@ function CostumesPage() {
         </div>
 
         {/* 单行横向轻盈分类胶囊 */}
-        <div className="no-scrollbar flex items-center gap-1.5 overflow-x-auto pb-0.5">
+        <HorizontalFilterStrip>
           {sourceFilter !== 'all' && (
             <button
               type="button"
@@ -409,13 +414,13 @@ function CostumesPage() {
                 )}
               >
                 {c.label}
-                <span className={cn('ml-1.5 font-mono text-[11px]', isActive ? 'opacity-80' : 'text-muted-foreground')}>
+                <span className={cn('ml-1.5 font-mono text-xs', isActive ? 'opacity-80' : 'text-muted-foreground')}>
                   {c.count}
                 </span>
               </button>
             )
           })}
-        </div>
+        </HorizontalFilterStrip>
       </div>
 
       {/* 对齐架构网格：无黑底、无裁切、与姿势库统一的底部色条铭牌 */}

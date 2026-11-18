@@ -490,7 +490,6 @@ export interface StyleTaxonomyRef {
   styleCategories?: StyleCategoryItem[]
   styleSubcategories?: StyleSubcategoryItem[]
   stylePresets?: StylePresetItem[]
-  stylePromptOverrides?: Record<string, string>
 }
 
 export function getEffectiveStyleCategories(platform?: StyleTaxonomyRef | null): StyleCategoryItem[] {
@@ -601,7 +600,6 @@ export function resolveStyleInfo(
 
 export function resolveStylePrompt(
   stylePreset: string,
-  _stylePromptOverrides?: Record<string, string>,
   stylePresets?: StylePresetItem[],
   styleCategories?: StyleCategoryItem[],
   styleSubcategories?: StyleSubcategoryItem[]
@@ -730,8 +728,12 @@ export interface PromptTemplateConfig {
   facelessClause: string
   defaultPersonClause: string
   extraClause: string
-  followStyleClause: string
-  defaultStyleClause: string
+  adaptiveCostumeClause: string
+  adaptivePortraitFullClause: string
+  adaptivePortraitWithPoseOnlyClause: string
+  adaptivePortraitOnlyClause: string
+  adaptivePortraitWithOwnOutfitOnlyClause: string
+  adaptiveStyleSuffix: string
   constraints: PromptConstraintItem[]
 }
 
@@ -751,8 +753,18 @@ export const DEFAULT_PROMPT_TEMPLATE: PromptTemplateConfig = {
   facelessClause: '生成无五官展示人物，全身肤色自然统一。',
   defaultPersonClause: '生成五官清晰、肤色自然的单一人物。',
   extraClause: '{{附图列表}}，按标注或合理画面关系自然融入图像。',
-  followStyleClause: '沿用{{基准风格图}}参考图原本的视觉质感与成像风格。',
-  defaultStyleClause: '自然真实的视觉质感与协调光影。',
+  adaptiveCostumeClause:
+    '可参考{{服装图}}中的服装与配饰设计（大致保留配色与主要款式特征），无需拘泥于每处单品与面料的逐一还原，可随整体风格自然调整。',
+  adaptivePortraitFullClause:
+    '可参考{{人像图}}的发型、发色与整体人物神韵（不沿用{{人像图}}的原始肢体动作与拍摄角度），人物的长相、脸型、五官特征、神态与肤色等均可为契合风格适当调整，并确保头身比例自然协调。',
+  adaptivePortraitWithPoseOnlyClause:
+    '可参考{{人像图}}的发型、发色、神韵与大致穿搭印象（不沿用{{人像图}}的原始肢体动作与拍摄角度），人物的长相特征与服装配饰细节均可为契合风格适当调整，并确保头身比例自然协调。',
+  adaptivePortraitOnlyClause:
+    '可参考{{人像图}}的发型、发色与整体人物神韵，人物的面部特征、脸型、五官、神态与肤色等均可为契合风格适当调整。',
+  adaptivePortraitWithOwnOutfitOnlyClause:
+    '可参考{{人像图}}的发型、发色、神韵与大致穿搭印象，人物的面部特征与服饰配饰细节均可为契合风格适当调整。',
+  adaptiveStyleSuffix:
+    '尽量让人物的脸部和服装为当前风格做出调整，以完全适配整体风格。',
   constraints: DEFAULT_PROMPT_CONSTRAINTS.map((c) => ({ ...c })),
 }
 
@@ -883,8 +895,12 @@ export function mergePromptTemplate(
     facelessClause: pickString('facelessClause'),
     defaultPersonClause: pickString('defaultPersonClause'),
     extraClause: pickString('extraClause'),
-    followStyleClause: pickString('followStyleClause'),
-    defaultStyleClause: pickString('defaultStyleClause'),
+    adaptiveCostumeClause: pickString('adaptiveCostumeClause'),
+    adaptivePortraitFullClause: pickString('adaptivePortraitFullClause'),
+    adaptivePortraitWithPoseOnlyClause: pickString('adaptivePortraitWithPoseOnlyClause'),
+    adaptivePortraitOnlyClause: pickString('adaptivePortraitOnlyClause'),
+    adaptivePortraitWithOwnOutfitOnlyClause: pickString('adaptivePortraitWithOwnOutfitOnlyClause'),
+    adaptiveStyleSuffix: pickString('adaptiveStyleSuffix'),
     constraints,
   }
 }
@@ -922,24 +938,6 @@ function matchesConstraintCondition(
 function renderPromptVars(template: string, vars: Record<string, string>): string {
   return template.replace(/\{\{([^}]+)\}\}/g, (_, key: string) => vars[key.trim()] ?? '').trim()
 }
-
-const STYLE_ADAPTIVE_COSTUME_CLAUSE =
-  '可参考{{服装图}}中的服装与配饰设计（大致保留配色与主要款式特征），无需拘泥于每处单品与面料的逐一还原，可随整体风格自然调整。'
-
-const STYLE_ADAPTIVE_PORTRAIT_FULL_CLAUSE =
-  '可参考{{人像图}}的发型、发色与整体人物神韵（不沿用{{人像图}}的原始肢体动作与拍摄角度），人物的长相、脸型、五官特征、神态与肤色等均可为契合风格适当调整，并确保头身比例自然协调。'
-
-const STYLE_ADAPTIVE_PORTRAIT_WITH_POSE_ONLY_CLAUSE =
-  '可参考{{人像图}}的发型、发色、神韵与大致穿搭印象（不沿用{{人像图}}的原始肢体动作与拍摄角度），人物的长相特征与服装配饰细节均可为契合风格适当调整，并确保头身比例自然协调。'
-
-const STYLE_ADAPTIVE_PORTRAIT_ONLY_CLAUSE =
-  '可参考{{人像图}}的发型、发色与整体人物神韵，人物的面部特征、脸型、五官、神态与肤色等均可为契合风格适当调整。'
-
-const STYLE_ADAPTIVE_PORTRAIT_WITH_OWN_OUTFIT_ONLY_CLAUSE =
-  '可参考{{人像图}}的发型、发色、神韵与大致穿搭印象，人物的面部特征与服饰配饰细节均可为契合风格适当调整。'
-
-const STYLE_ADAPTIVE_STYLE_SUFFIX =
-  '尽量让人物的脸部和服装为当前风格做出调整，以完全适配整体风格。'
 
 export interface CloudTermReplacement {
   from: string
@@ -1565,7 +1563,6 @@ export function buildRecipePrompt(
     allowFaceStyleShift?: boolean
     promptTemplate?: Partial<PromptTemplateConfig> | null
     poseSanitize?: Partial<PoseSanitizeConfig> | null
-    stylePromptOverrides?: Record<string, string>
     stylePresets?: StylePresetItem[]
     styleCategories?: StyleCategoryItem[]
     styleSubcategories?: StyleSubcategoryItem[]
@@ -1617,7 +1614,6 @@ export function buildRecipePrompt(
     stylePresets: promptOverrides?.stylePresets,
     styleCategories: promptOverrides?.styleCategories,
     styleSubcategories: promptOverrides?.styleSubcategories,
-    stylePromptOverrides: promptOverrides?.stylePromptOverrides,
   })
   const isNoStylePreset = stylePreset === 'none' || resolvedStyle.id === 'none'
   const effectiveStylePrompt = isNoStylePreset
@@ -1633,7 +1629,7 @@ export function buildRecipePrompt(
   }
 
   if (costumeIdx !== null) {
-    const costumeTpl = applyFaceStyleShift ? STYLE_ADAPTIVE_COSTUME_CLAUSE : tpl.costumeClause
+    const costumeTpl = applyFaceStyleShift ? tpl.adaptiveCostumeClause : tpl.costumeClause
     const costumeLine = renderPromptVars(costumeTpl.replace(/\r\n?/g, '\n'), {
       服装图: costumeTagOrEmpty,
     })
@@ -1643,12 +1639,12 @@ export function buildRecipePrompt(
   if (portraitIdx !== null) {
     const personTemplate = applyFaceStyleShift
       ? poseIdx !== null && costumeIdx !== null
-        ? STYLE_ADAPTIVE_PORTRAIT_FULL_CLAUSE
+        ? tpl.adaptivePortraitFullClause
         : poseIdx !== null
-          ? STYLE_ADAPTIVE_PORTRAIT_WITH_POSE_ONLY_CLAUSE
+          ? tpl.adaptivePortraitWithPoseOnlyClause
           : costumeIdx !== null
-            ? STYLE_ADAPTIVE_PORTRAIT_ONLY_CLAUSE
-            : STYLE_ADAPTIVE_PORTRAIT_WITH_OWN_OUTFIT_ONLY_CLAUSE
+            ? tpl.adaptivePortraitOnlyClause
+            : tpl.adaptivePortraitWithOwnOutfitOnlyClause
       : poseIdx !== null && costumeIdx !== null
         ? tpl.portraitFullClause
         : poseIdx !== null
@@ -1676,9 +1672,11 @@ export function buildRecipePrompt(
 
   if (effectiveStylePrompt) {
     const baseStyleText = ensureSentenceEnd(effectiveStylePrompt)
-    const styleLine = applyFaceStyleShift
-      ? `${baseStyleText}${STYLE_ADAPTIVE_STYLE_SUFFIX}`
-      : baseStyleText
+    const adaptiveSuffix = tpl.adaptiveStyleSuffix.replace(/\r\n?/g, '\n').trim()
+    const styleLine =
+      applyFaceStyleShift && adaptiveSuffix
+        ? `${baseStyleText}${ensureSentenceEnd(adaptiveSuffix)}`
+        : baseStyleText
     bullets.push(`• 风格：${styleLine}`)
   }
 
@@ -1784,8 +1782,6 @@ export function poseImagePath(pose: PoseItem, useDepth = Boolean(pose.useDepth))
 export interface PlatformConfig {
   registerBonusCredits: number
   allowRegistration: boolean
-  defaultSafeMode: boolean
-  allowUserNsfwUnlock: boolean
   defaultStylePreset: string
   defaultPromptPrefix: string
   defaultPromptSuffix: string
@@ -1795,7 +1791,6 @@ export interface PlatformConfig {
   styleCategories: StyleCategoryItem[]
   styleSubcategories: StyleSubcategoryItem[]
   stylePresets: StylePresetItem[]
-  stylePromptOverrides?: Record<string, string>
   imagePassMode: ImagePassMode
   sendStitchedSheet: boolean
 }
@@ -1803,8 +1798,6 @@ export interface PlatformConfig {
 export const DEFAULT_PLATFORM_CONFIG: PlatformConfig = {
   registerBonusCredits: 50,
   allowRegistration: true,
-  defaultSafeMode: true,
-  allowUserNsfwUnlock: true,
   defaultStylePreset: 'none',
   defaultPromptPrefix: '',
   defaultPromptSuffix: '',
@@ -1813,11 +1806,14 @@ export const DEFAULT_PLATFORM_CONFIG: PlatformConfig = {
   poseSanitize: createDefaultPoseSanitizeConfig(),
   styleCategories: [
     { id: 'acg', label: 'ACG' },
+    { id: 'photography', label: '摄影' },
   ],
   styleSubcategories: [
     { id: 'acg_2d_anime', categoryId: 'acg', label: '2D动漫' },
     { id: 'acg_3d_anime', categoryId: 'acg', label: '3D动漫' },
     { id: 'acg_game', categoryId: 'acg', label: '游戏' },
+    { id: 'photo_phone', categoryId: 'photography', label: '真实手机' },
+    { id: 'photo_pro', categoryId: 'photography', label: '专业设备' },
   ],
   stylePresets: [
     {
@@ -2009,8 +2005,87 @@ export const DEFAULT_PLATFORM_CONFIG: PlatformConfig = {
       prompt:
         '女神异闻录5式日本潮流动漫游戏美术风格，鲜明锐利的日系动漫五官，时尚化的人物造型比例，流畅利落的手绘线稿，强烈的红黑白对比色彩，大胆鲜明的平面色块，硬朗清晰的赛璐璐阴影，夸张倾斜的动态构图，强烈的平面图形设计感，充满街头潮流与先锋视觉张力的游戏角色插画美学。',
     },
+    {
+      id: 'photo_selfie',
+      categoryId: 'photography',
+      subcategoryId: 'photo_phone',
+      label: '自拍',
+      prompt:
+        '真实手机前置摄像头自拍风格，近距离手持自拍视角，自然随意的生活化姿态与表情，轻微广角透视，真实细腻的皮肤纹理与自然瑕疵，手机计算摄影特有的清晰度与HDR效果，自然环境光，未经刻意修饰的色彩，原汁原味的日常手机自拍质感。',
+    },
+    {
+      id: 'photo_mirror_selfie',
+      categoryId: 'photography',
+      subcategoryId: 'photo_phone',
+      label: '对镜自拍',
+      prompt:
+        '真实手机原相机镜面自拍风格，通过镜子反射拍摄人物，手机自然出现在镜面画面中，真实还原人物与镜面空间关系，自然随意的生活化姿态，真实细腻的皮肤与环境细节，手机计算摄影的清晰度与HDR效果，自然室内光线，未经刻意修饰的日常手机摄影质感。',
+    },
+    {
+      id: 'photo_pov',
+      categoryId: 'photography',
+      subcategoryId: 'photo_phone',
+      label: '第一人称POV',
+      prompt:
+        '真实手机第一人称POV拍摄风格，以拍摄者的主观视角呈现人物，镜头模拟拍摄者本人视线高度与观察距离，人物仿佛正在与镜头前的拍摄者互动，自然的眼神交流与生活化动作，真实环境光，细腻自然的皮肤纹理，轻微广角透视，手机原相机的真实成像与HDR质感。',
+    },
+    {
+      id: 'photo_candid',
+      categoryId: 'photography',
+      subcategoryId: 'photo_phone',
+      label: '第三人称抓拍',
+      prompt:
+        '真实手机第三人称随手抓拍风格，以旁观者视角拍摄人物，人物自然处于生活环境中，不刻意摆拍，不要求直视镜头，捕捉真实随意的动作与瞬间表情，非专业摄影构图，真实细腻的皮肤纹理与自然瑕疵，手机计算摄影特有的清晰度与HDR效果，自然环境光，轻微广角透视，未经刻意修饰的日常手机摄影质感。',
+    },
+    {
+      id: 'photo_commercial',
+      categoryId: 'photography',
+      subcategoryId: 'photo_pro',
+      label: '商业写真',
+      prompt:
+        '高品质专业模特写真摄影风格，成熟商业写真机构级拍摄水准，精致自然的人物面部与身体比例，细腻真实的皮肤质感，精致专业的妆容与人物造型，优雅自然且富有表现力的姿态，专业摄影布光与精准曝光，细腻真实的色彩与材质表现，清晰锐利的主体细节，构图精致协调，呈现高品质网红模特、职业Coser及商业写真集的专业摄影质感。',
+    },
+    {
+      id: 'photo_magazine',
+      categoryId: 'photography',
+      subcategoryId: 'photo_pro',
+      label: '时尚杂志',
+      prompt:
+        '高级时尚杂志摄影风格，精致高级的人物造型与时尚表现力，优雅而富有张力的人物姿态，专业戏剧化布光，鲜明而高级的色彩搭配，清晰细腻的皮肤与服装材质，具有视觉冲击力的时尚构图，强烈的画面设计感与艺术表现力，奢华精致的商业时尚大片质感。',
+    },
+    {
+      id: 'photo_polaroid',
+      categoryId: 'photography',
+      subcategoryId: 'photo_pro',
+      label: '拍立得',
+      prompt:
+        '经典拍立得即时成像摄影风格，真实即时显影照片质感，柔和自然的色彩表现，低饱和复古色调，细腻的模拟成像颗粒，柔和的高光过渡与适度曝光偏差，轻微色彩褪变，独特的即时相纸成像质感，自然随意的生活摄影氛围，经典宝丽来与Instax拍立得摄影美学。',
+    },
+    {
+      id: 'photo_dv',
+      categoryId: 'photography',
+      subcategoryId: 'photo_pro',
+      label: 'DV录像',
+      prompt:
+        '90年代至2000年代复古家用DV录像成像风格，真实低分辨率数字视频画面，明显的早期数码摄像机成像特征，柔和模糊的细节，轻微色彩溢出与视频压缩痕迹，交错扫描纹理，动态画面残影，有限的动态范围与不均匀曝光，怀旧的家庭录像质感，原汁原味的MiniDV与早期Handycam影像美学。',
+    },
+    {
+      id: 'photo_cctv',
+      categoryId: 'photography',
+      subcategoryId: 'photo_pro',
+      label: '监控摄像头',
+      prompt:
+        '真实监控摄像头录像画面风格，固定机位的高位俯拍或广角监控视角，明显的桶形畸变与空间透视，低分辨率数字成像，有限的动态范围，轻微数字噪点与视频压缩痕迹，偏冷或偏灰的监控色彩，较深的景深与大范围环境记录，缺乏专业摄影布光的真实监控影像质感。',
+    },
+    {
+      id: 'photo_vintage_film',
+      categoryId: 'photography',
+      subcategoryId: 'photo_pro',
+      label: '复古胶片',
+      prompt:
+        '经典复古彩色胶片摄影风格，真实自然的模拟胶片成像质感，有机细腻的胶片颗粒，柔和自然的高光过渡，丰富细腻的中间调，温暖通透的胶片色彩，自然真实的肤色表现，柔和适度的明暗反差，轻微色彩偏移与细腻的胶片光晕，保留真实的光学成像质感，呈现原汁原味的经典35mm彩色胶片摄影美学。',
+    },
   ],
-  stylePromptOverrides: {},
   imagePassMode: 'url',
   sendStitchedSheet: false,
 }
@@ -2088,6 +2163,16 @@ export interface BootstrapPayload {
   wechatLogin?: WechatLoginPublicInfo
 }
 
+export interface SupplierChannelRef {
+  channelId: string
+  channelName: string
+  providerId: ImageProviderId
+  profileId: string
+  profileName: string
+  enabled: boolean
+  model: string
+}
+
 export interface SupplierDTO {
   id: string
   name: string
@@ -2097,6 +2182,7 @@ export interface SupplierDTO {
   enabled: boolean
   note: string
   channelCount: number
+  channels?: SupplierChannelRef[]
   createdAt: number
   updatedAt: number
 }
@@ -2143,6 +2229,8 @@ export interface AdminProviderSlotDTO {
   creditCost: number
   sortOrder: number
   updatedAt: number
+  usesEnvFallback?: boolean
+  hasEnvKey?: boolean
   profiles: ModelProfileDTO[]
 }
 
@@ -2353,6 +2441,26 @@ export interface GenerationHistoryItem {
   auditTrace?: GenerationAuditTrace | null
 }
 
+export interface AdminOverviewTrendPoint {
+  date: string
+  label: string
+  jobsTotal: number
+  jobsSucceeded: number
+  jobsFailed: number
+  creditsConsumed: number
+}
+
+export interface AdminOverviewRecentFailureItem {
+  id: string
+  username: string
+  provider: ImageProviderId
+  profileName: string | null
+  channelName: string | null
+  supplierName: string | null
+  errorMessage: string
+  createdAt: number
+}
+
 export interface AdminOverviewPayload {
   usersTotal: number
   activeUsersTotal: number
@@ -2370,4 +2478,30 @@ export interface AdminOverviewPayload {
   r2TotalBytes: number
   encryptionConfigured: boolean
   allowRegistration?: boolean
+  trend7d?: AdminOverviewTrendPoint[]
+  recentFailures?: AdminOverviewRecentFailureItem[]
+  staleProcessingCount?: number
+}
+
+export interface AdminR2CleanupReport {
+  orphanStyleKeysCount: number
+  orphanStyleBytes: number
+  expiredStitchedCount: number
+  expiredStitchedBytes: number
+  totalStitchedCount: number
+  totalStitchedBytes: number
+}
+
+export interface AdminR2CleanupResult {
+  deletedStylesCount: number
+  deletedStitchedCount: number
+  freedBytes: number
+}
+
+export interface AdminJobsStatsSummary {
+  total: number
+  succeeded: number
+  failed: number
+  processing: number
+  retried: number
 }

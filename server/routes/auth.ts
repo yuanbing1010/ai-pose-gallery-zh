@@ -23,6 +23,7 @@ import {
   clearWechatStateCookie,
   getRequestOrigin,
   requireAuth,
+  setAdminSessionCookie,
   setSessionCookie,
   setWechatStateCookie,
 } from '../middleware'
@@ -197,12 +198,26 @@ authRoutes.post('/auth/login', async (c) => {
     return c.json({ error: { message: '该账号已被停用，请联系管理员' } }, 403)
   }
 
-  if (requireAdminFlag && row.role !== 'admin') {
-    return c.json({ error: { message: '该账号不具备管理员权限' } }, 403)
+  if (requireAdminFlag) {
+    if (row.role !== 'admin') {
+      return c.json({ error: { message: '该账号不具备管理员权限' } }, 403)
+    }
+    const { rawToken } = await createSession(c.env.DB, row.id, c.req.header('user-agent'))
+    setAdminSessionCookie(c, rawToken)
+    c.header('Cache-Control', 'no-store')
+    return c.json({ user: mapUserRow({ ...row, last_login_at: Date.now() }) })
   }
 
   const { rawToken } = await createSession(c.env.DB, row.id, c.req.header('user-agent'))
   setSessionCookie(c, rawToken)
+  if (row.role === 'admin') {
+    const { rawToken: adminRawToken } = await createSession(
+      c.env.DB,
+      row.id,
+      c.req.header('user-agent')
+    )
+    setAdminSessionCookie(c, adminRawToken)
+  }
   c.header('Cache-Control', 'no-store')
   return c.json({ user: mapUserRow({ ...row, last_login_at: Date.now() }) })
 })

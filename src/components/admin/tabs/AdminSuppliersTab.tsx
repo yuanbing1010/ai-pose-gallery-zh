@@ -11,7 +11,8 @@ import {
   updateAdminSupplierApi,
 } from '@/lib/apiClient'
 import { toast } from '@/lib/notifications'
-import type { SupplierDTO } from '@/types/gallery'
+import type { ImageProviderId, SupplierDTO } from '@/types/gallery'
+import { PROVIDER_META } from '../../../../shared/studio'
 import { AdminBadge, AdminField, AdminPageHeader } from '../AdminPrimitives'
 import {
   ADMIN_BTN_CLS,
@@ -38,6 +39,7 @@ interface AdminSuppliersTabProps {
   onLoadingChange: (loading: boolean) => void
   onConfirm: (action: AdminConfirmAction) => void
   onRefreshBootstrap: () => Promise<void>
+  onOpenProvider?: (providerId: ImageProviderId) => void
 }
 
 export function AdminSuppliersTab({
@@ -45,6 +47,7 @@ export function AdminSuppliersTab({
   onLoadingChange,
   onConfirm,
   onRefreshBootstrap,
+  onOpenProvider,
 }: AdminSuppliersTabProps) {
   const [suppliers, setSuppliers] = useState<SupplierDTO[]>([])
   const [supplierDialogOpen, setSupplierDialogOpen] = useState(false)
@@ -230,7 +233,7 @@ export function AdminSuppliersTab({
                 <tr key={s.id} className="hover:bg-zinc-50/70 dark:hover:bg-zinc-900/50">
                   <td className="px-4 py-3">
                     <div className="font-bold">{s.name}</div>
-                    {s.note && <div className="text-[11px] text-zinc-500">{s.note}</div>}
+                    {s.note && <div className="text-xs text-zinc-500">{s.note}</div>}
                   </td>
                   <td className="max-w-[260px] truncate px-4 py-3 font-mono">{s.baseUrl}</td>
                   <td className="px-4 py-3">
@@ -240,7 +243,29 @@ export function AdminSuppliersTab({
                       <AdminBadge tone="danger">未配置</AdminBadge>
                     )}
                   </td>
-                  <td className="px-4 py-3 font-mono">{s.channelCount} 个渠道</td>
+                  <td className="px-4 py-3">
+                    {s.channels && s.channels.length > 0 ? (
+                      <div className="flex flex-wrap gap-1">
+                        {s.channels.map((ch) => (
+                          <button
+                            key={ch.channelId}
+                            type="button"
+                            onClick={() => onOpenProvider?.(ch.providerId)}
+                            title={`跳转到「04. 画笔档位与路由」查看 ${ch.channelName}`}
+                            className={`border px-1.5 py-0.5 font-mono text-xs transition-colors hover:border-zinc-950 dark:hover:border-zinc-100 ${
+                              ch.enabled
+                                ? 'border-zinc-300 bg-zinc-50 text-zinc-800 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200'
+                                : 'border-zinc-200 text-zinc-400 line-through dark:border-zinc-800'
+                            }`}
+                          >
+                            {PROVIDER_META[ch.providerId]?.shortName || ch.providerId} · {ch.profileName || ch.channelName}
+                          </button>
+                        ))}
+                      </div>
+                    ) : (
+                      <span className="font-mono text-xs text-zinc-500">{s.channelCount} 个渠道</span>
+                    )}
+                  </td>
                   <td className="px-4 py-3">
                     <Switch
                       checked={s.enabled}

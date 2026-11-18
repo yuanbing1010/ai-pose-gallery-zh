@@ -4,20 +4,23 @@ import {
   ActivityIcon,
   ArrowLeftIcon,
   CpuIcon,
+  FileTextIcon,
   LayoutGridIcon,
   LogOutIcon,
   MenuIcon,
+  PaletteIcon,
   RefreshCwIcon,
   ServerIcon,
   ShieldAlertIcon,
-  ShieldCheckIcon,
+  SlidersHorizontalIcon,
   TicketIcon,
   UsersIcon,
   type LucideIcon,
 } from 'lucide-react'
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet'
 import { ThemeToggle } from '@/components/theme/ThemeToggle'
-import { useStudio } from '@/store/studioStore'
+import { adminLogoutApi } from '@/lib/apiClient'
+import type { PublicUser } from '@/types/gallery'
 import { getAdminNavGroups, getAdminNavItems, type AdminTab } from './auditHelpers'
 
 const TAB_ICONS: Record<AdminTab, LucideIcon> = {
@@ -27,31 +30,36 @@ const TAB_ICONS: Record<AdminTab, LucideIcon> = {
   suppliers: ServerIcon,
   api: CpuIcon,
   jobs: ActivityIcon,
-  safety: ShieldCheckIcon,
+  styles: PaletteIcon,
+  access: SlidersHorizontalIcon,
+  prompts: FileTextIcon,
   sanitize: ShieldAlertIcon,
 }
 
 interface AdminShellProps {
   activeTab: AdminTab
   directoryLabel: string
+  adminUser?: PublicUser | null
   headerLeftExtra?: ReactNode
   loading?: boolean
   onRefresh?: () => void
   onSelectTab?: (tab: AdminTab) => void
+  onBeforeLeave?: (proceed: () => void) => void
   children: ReactNode
 }
 
 export function AdminShell({
   activeTab,
   directoryLabel,
+  adminUser,
   headerLeftExtra,
   loading = false,
   onRefresh,
   onSelectTab,
+  onBeforeLeave,
   children,
 }: AdminShellProps) {
   const navigate = useNavigate()
-  const { user, logout } = useStudio()
   const navGroups = getAdminNavGroups()
   const navItems = getAdminNavItems()
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
@@ -68,10 +76,23 @@ export function AdminShell({
     })
   }
 
-  const handleLogout = async () => {
+  const executeLogout = async () => {
     setMobileMenuOpen(false)
-    await logout()
+    try {
+      await adminLogoutApi()
+    } catch {
+      // Ignore logout network error and still redirect
+    }
     void navigate({ to: '/admin/login' })
+  }
+
+  const handleLogout = () => {
+    setMobileMenuOpen(false)
+    if (onBeforeLeave) {
+      onBeforeLeave(() => void executeLogout())
+      return
+    }
+    void executeLogout()
   }
 
   const renderSidebarNav = () => (
@@ -80,24 +101,30 @@ export function AdminShell({
         <Link
           to="/admin"
           search={{}}
-          onClick={() => setMobileMenuOpen(false)}
+          onClick={(e) => {
+            setMobileMenuOpen(false)
+            if (onSelectTab) {
+              e.preventDefault()
+              onSelectTab('overview')
+            }
+          }}
           className="block border-b border-zinc-950 pb-3.5 transition-opacity hover:opacity-80 dark:border-zinc-100"
         >
           <div className="flex items-center justify-between gap-2">
             <span className="text-sm font-bold tracking-tight">CASTDECK · 管理台</span>
-            <span className="border border-zinc-950 bg-zinc-950 px-1.5 py-0.5 font-mono text-[10px] font-bold text-white dark:border-zinc-100 dark:bg-zinc-100 dark:text-zinc-950">
+            <span className="border border-zinc-950 bg-zinc-950 px-1.5 py-0.5 font-mono text-xs font-bold text-white dark:border-zinc-100 dark:bg-zinc-100 dark:text-zinc-950">
               ADMIN
             </span>
           </div>
-          <div className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
-            成员准入 · 账本 · 模型路由
+          <div className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+            成员准入 · 账本 · 画笔路由
           </div>
         </Link>
 
         <nav aria-label="管理端菜单" className="mt-4 space-y-4 text-xs">
           {navGroups.map((group) => (
             <div key={group.id} className="space-y-1">
-              <div className="px-1 font-mono text-[10px] font-bold tracking-wider text-zinc-400 uppercase dark:text-zinc-500">
+              <div className="px-1 font-mono text-xs font-bold tracking-wider text-zinc-400 uppercase dark:text-zinc-500">
                 {group.label}
               </div>
               <div className="divide-y divide-zinc-200/70 border-t border-b border-zinc-200 dark:divide-zinc-800/70 dark:border-zinc-800">
@@ -118,7 +145,7 @@ export function AdminShell({
                       <span className="flex min-w-0 items-center gap-2">
                         <Icon className="size-3.5 shrink-0 opacity-75" />
                         <span className="truncate">
-                          <span className="mr-1 font-mono text-[11px] opacity-65">{item.code}.</span>
+                          <span className="mr-1 font-mono text-xs opacity-65">{item.code}.</span>
                           <span>{item.label}</span>
                         </span>
                       </span>
@@ -135,15 +162,21 @@ export function AdminShell({
       </div>
 
       <div className="mt-4 space-y-2 border-t border-zinc-200 pt-3 text-xs dark:border-zinc-800">
-        {user && (
+        {adminUser && (
           <div className="flex items-center justify-between border border-zinc-200 bg-zinc-50 px-2.5 py-2 dark:border-zinc-800 dark:bg-zinc-900/60">
-            <span className="truncate font-mono text-[11px] font-semibold">@{user.username}</span>
-            <span className="font-mono text-[10px] text-zinc-500">管理员</span>
+            <span className="truncate font-mono text-xs font-semibold">@{adminUser.username}</span>
+            <span className="font-mono text-xs text-zinc-500">管理会话</span>
           </div>
         )}
         <Link
           to="/"
-          onClick={() => setMobileMenuOpen(false)}
+          onClick={(e) => {
+            setMobileMenuOpen(false)
+            if (onBeforeLeave) {
+              e.preventDefault()
+              onBeforeLeave(() => void navigate({ to: '/' }))
+            }
+          }}
           className="flex w-full items-center justify-between border border-zinc-300 px-2.5 py-2 text-zinc-800 transition-colors hover:border-zinc-950 hover:text-zinc-950 dark:border-zinc-700 dark:text-zinc-200 dark:hover:border-zinc-100"
         >
           <span>返回用户前端</span>
@@ -154,7 +187,7 @@ export function AdminShell({
           onClick={() => void handleLogout()}
           className="flex w-full items-center justify-between border border-zinc-300 px-2.5 py-2 text-zinc-800 transition-colors hover:border-zinc-950 hover:text-zinc-950 dark:border-zinc-700 dark:text-zinc-200 dark:hover:border-zinc-100"
         >
-          <span>退出登录</span>
+          <span>退出管理登录</span>
           <LogOutIcon className="size-3.5" />
         </button>
       </div>

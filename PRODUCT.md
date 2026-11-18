@@ -8,7 +8,6 @@
 
 ## Platform & Constraints
 - 全栈运行于 Cloudflare Workers（Hono + D1 + R2）+ React 19 / TypeScript 7 / Tailwind CSS 4 单页应用。
-- 默认开启 SFW 安全模式（隐藏 18+ 敏感姿势与内衣分类），受管理端平台策略约束并需年龄确认解锁。
 - 厂商 API Key 统一由管理员在 `/admin` 配置并加密存储于 Cloudflare D1，绝不下发至用户浏览器。
 - 用户上传参考图与 AI 成图保存在 Cloudflare R2 私有桶，由 Worker 鉴权读取；生成记录与积分流水保存于 D1。
 - 管理端（`/admin/login` 与 `/admin`）为独立后台系统，采用服务端 HttpOnly Cookie 会话与角色鉴权。

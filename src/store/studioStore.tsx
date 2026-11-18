@@ -1,18 +1,7 @@
-import { createContext, type ReactNode, useCallback, useContext, useEffect, useRef, useState } from 'react'
+import { createContext, type ReactNode, useCallback, useContext, useEffect, useRef } from 'react'
 import { create } from 'zustand'
 import { arrayMove } from '@dnd-kit/sortable'
 import { toast } from '@/lib/notifications'
-import { isNsfwCostume, isNsfwPose } from '@/api/gallery'
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
 import { idbRead, idbWrite } from '@/lib/idbStorage'
 import { recipeBackup } from '@/lib/recipeImages'
 import { randomSlot, type RandomScope, type ReferencePools, type ReferenceSlot } from '@/lib/randomRecipe'
@@ -59,7 +48,6 @@ import type {
 
 const PREFS_KEY = 'pose_atlas_client_prefs_v4'
 const RECIPE_KEY = 'pose_atlas_recipe_v4'
-const SAFE_MODE_KEY = 'pose_atlas_safe_mode_user_v2'
 
 export type AuthModalTab = 'login' | 'register'
 export type AccountModalTab = 'overview' | 'redeem' | 'ledger' | 'security'
@@ -163,15 +151,6 @@ const initialRecipe = (): RecipeState => {
   }
 }
 
-const initialSafeMode = (): boolean => {
-  try {
-    const raw = localStorage.getItem(SAFE_MODE_KEY)
-    return raw === null ? true : raw !== 'false'
-  } catch {
-    return true
-  }
-}
-
 const DEFAULT_PUBLIC_PROVIDERS: ProviderPublicInfo[] = PROVIDER_ORDER.map((id, idx) => ({
   providerId: id,
   enabled: true,
@@ -238,7 +217,6 @@ interface StudioZustandStore {
   allowFaceStyleShift: boolean
   aspectRatio: StudioAspectRatio
   history: GenerationHistoryItem[]
-  safeMode: boolean
   poseDepthMode: boolean
   poseFrontOnly: boolean
   sceneNote: string
@@ -269,7 +247,6 @@ interface StudioZustandStore {
   setAllowFaceStyleShift: (updater: Updater<boolean>) => void
   setAspectRatio: (val: StudioAspectRatio) => void
   setHistory: (updater: Updater<GenerationHistoryItem[]>) => void
-  setSafeMode: (updater: Updater<boolean>) => void
   setPoseDepthModeState: (updater: Updater<boolean>) => void
   setPoseFrontOnly: (updater: Updater<boolean>) => void
   setSceneNote: (updater: Updater<string>) => void
@@ -304,7 +281,6 @@ export const useStudioStore = create<StudioZustandStore>((set) => {
     allowFaceStyleShift: prefs.allowFaceStyleShift,
     aspectRatio: prefs.aspectRatio,
     history: [],
-    safeMode: initialSafeMode(),
     poseDepthMode: Boolean(rec.pose?.useDepth),
     poseFrontOnly: prefs.poseFrontOnly,
     sceneNote: prefs.sceneNote,
@@ -350,8 +326,6 @@ export const useStudioStore = create<StudioZustandStore>((set) => {
     setAspectRatio: (aspectRatio) => set({ aspectRatio }),
     setHistory: (updater) =>
       set((s) => ({ history: typeof updater === 'function' ? updater(s.history) : updater })),
-    setSafeMode: (updater) =>
-      set((s) => ({ safeMode: typeof updater === 'function' ? updater(s.safeMode) : updater })),
     setPoseDepthModeState: (updater) =>
       set((s) => ({ poseDepthMode: typeof updater === 'function' ? updater(s.poseDepthMode) : updater })),
     setPoseFrontOnly: (updater) =>
@@ -389,7 +363,6 @@ interface StudioContextValue {
   allowFaceStyleShift: boolean
   aspectRatio: StudioAspectRatio
   history: GenerationHistoryItem[]
-  safeMode: boolean
   poseDepthMode: boolean
   poseFrontOnly: boolean
   sceneNote: string
@@ -425,13 +398,12 @@ interface StudioContextValue {
   setStylePreset: (preset: string) => void
   setAllowFaceStyleShift: (updater: Updater<boolean>) => void
   setAspectRatio: (ratio: StudioAspectRatio) => void
-  toggleSafeMode: () => void
-  requestUnlockNsfw: (onUnlocked?: () => void) => void
   setPoseDepthMode: (val: boolean) => void
   setPoseFrontOnly: (val: boolean) => void
   setSceneNote: (updater: Updater<string>) => void
   toggleRecipePoseDepth: () => void
   setPreviewUrl: (url: string) => void
+  setGenerationError: (val: string) => void
   startGeneration: (sceneNote?: string) => Promise<void>
   refreshStitchPreview: () => Promise<void>
   setPortrait: (item: PortraitItem | null) => void
@@ -469,7 +441,6 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     allowFaceStyleShift,
     aspectRatio,
     history,
-    safeMode,
     poseDepthMode,
     poseFrontOnly,
     sceneNote,
@@ -500,7 +471,6 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     setAllowFaceStyleShift,
     setAspectRatio,
     setHistory,
-    setSafeMode,
     setPoseDepthModeState,
     setPoseFrontOnly,
     setSceneNote,
@@ -515,9 +485,6 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     setAccountModalOpen,
     setAccountModalTab,
   } = store
-
-  const [ageGateOpen, setAgeGateOpen] = useState(false)
-  const pendingUnlockCbRef = useRef<(() => void) | null>(null)
 
   const isGeneratingRef = useRef(false)
   const abortRef = useRef<AbortController | null>(null)
@@ -567,11 +534,6 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       setProviders(data.providers)
       setWechatLogin(data.wechatLogin ?? DEFAULT_WECHAT_LOGIN_INFO)
       setProvidersLoaded(true)
-
-      setSafeMode(data.platform.defaultSafeMode)
-      try {
-        localStorage.removeItem(SAFE_MODE_KEY)
-      } catch {}
 
       const validStyleIds = new Set(getEffectiveStyleCatalog(data.platform).map((s) => s.id))
       const isValidStyle = (id: string | undefined) => id === 'none' || (Boolean(id) && validStyleIds.has(id!))
@@ -642,7 +604,6 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     setPlatform,
     setProviders,
     setProvidersLoaded,
-    setSafeMode,
     setSelectedProfileByProviderState,
     setSelectedProvider,
     setSelectedResolutionByProfileState,
@@ -780,8 +741,6 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     sceneNote,
   ])
 
-  // Only persist safeMode when the user explicitly toggles it (never overwrite platform.defaultSafeMode on mount)
-
   // 轮询未完成的云端任务（例如刷新页面 / 切换后台 / SSE 重连恢复后的 processing 任务）
   useEffect(() => {
     if (!user || isGenerating) return
@@ -848,43 +807,6 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     const res = await redeemCodeApi(code)
     setUser((prev) => (prev ? { ...prev, creditBalance: res.creditBalance } : prev))
     return res
-  }
-
-  const requestUnlockNsfw = (onUnlocked?: () => void) => {
-    if (!platform.allowUserNsfwUnlock) {
-      toast.info('当前画廊已开启统一内容保护')
-      return
-    }
-    if (!safeMode) {
-      onUnlocked?.()
-      return
-    }
-    pendingUnlockCbRef.current = onUnlocked || null
-    setAgeGateOpen(true)
-  }
-
-  const confirmUnlockNsfw = () => {
-    setSafeMode(false)
-    try {
-      localStorage.setItem(SAFE_MODE_KEY, 'false')
-    } catch {}
-    setAgeGateOpen(false)
-    toast.success('已解锁完整图库浏览')
-    const cb = pendingUnlockCbRef.current
-    pendingUnlockCbRef.current = null
-    cb?.()
-  }
-
-  const toggleSafeMode = () => {
-    if (safeMode) {
-      requestUnlockNsfw()
-    } else {
-      setSafeMode(true)
-      try {
-        localStorage.setItem(SAFE_MODE_KEY, 'true')
-      } catch {}
-      toast.success('已切换回标准图库视图')
-    }
   }
 
   const setPortrait = (portrait: PortraitItem | null) => setRecipe((r) => ({ ...r, portrait }))
@@ -974,16 +896,12 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     poses?: PoseItem[]
   }) => {
     const live = useStudioStore.getState()
-    const safePosePool = live.safeMode
-      ? (pools.poses || []).filter((p) => !isNsfwPose(p))
-      : pools.poses || []
+    const allPoses = pools.poses || []
     const frontPosePool = live.poseFrontOnly
-      ? safePosePool.filter((p) => p.角度 === '正面')
-      : safePosePool
-    const posePool = frontPosePool.length ? frontPosePool : safePosePool
-    const costumePool = (pools.costumes || []).filter(
-      (c) => !c.source && c.一级分类 !== '二次元' && (!live.safeMode || !isNsfwCostume(c))
-    )
+      ? allPoses.filter((p) => p.角度 === '正面')
+      : allPoses
+    const posePool = frontPosePool.length ? frontPosePool : allPoses
+    const costumePool = pools.costumes || []
     const portraitPool = pools.portraits || []
 
     setRecipe((prev) => ({
@@ -1010,7 +928,6 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     const live = useStudioStore.getState()
     const current = {
       recipe: live.recipe,
-      safeMode: live.safeMode,
       poseDepthMode: live.poseDepthMode,
       poseFrontOnly: live.poseFrontOnly,
     }
@@ -1022,11 +939,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       current.recipe,
       slot,
       scope,
-      {
-        ...pools,
-        costumes: (pools.costumes || []).filter((item) => !current.safeMode || !isNsfwCostume(item)),
-        poses: (pools.poses || []).filter((item) => !current.safeMode || !isNsfwPose(item)),
-      },
+      pools,
       current.poseDepthMode,
       current.poseFrontOnly
     )
@@ -1362,7 +1275,6 @@ export function StudioProvider({ children }: { children: ReactNode }) {
         allowFaceStyleShift,
         aspectRatio,
         history,
-        safeMode,
         poseDepthMode,
         poseFrontOnly,
         sceneNote,
@@ -1393,13 +1305,12 @@ export function StudioProvider({ children }: { children: ReactNode }) {
         setStylePreset,
         setAllowFaceStyleShift,
         setAspectRatio,
-        toggleSafeMode,
-        requestUnlockNsfw,
         setPoseDepthMode,
         setPoseFrontOnly,
         setSceneNote,
         toggleRecipePoseDepth,
         setPreviewUrl,
+        setGenerationError,
         startGeneration,
         refreshStitchPreview,
         setPortrait,
@@ -1419,41 +1330,6 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       }}
     >
       {children}
-
-      <AlertDialog open={ageGateOpen} onOpenChange={setAgeGateOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>🔞 年龄确认与免责声明（NSFW 18+）</AlertDialogTitle>
-            <AlertDialogDescription className="space-y-2 text-left leading-relaxed">
-              <span className="block">
-                关闭「安全模式 (SFW)」后，图库将显示包含成人向艺术参考的敏感分类：
-              </span>
-              <span className="block rounded-lg bg-muted p-2.5 text-xs text-foreground">
-                • <strong>动作姿势库</strong>：全身单人・性感系（399 张）、双人缠绵（275 张）
-                <br />• <strong>服装穿搭库</strong>：内衣・睡衣（199 套）、性感穿搭（140 套）
-              </span>
-              <span className="block text-xs">
-                <strong>免责声明</strong>：
-                <br />1. <strong>年龄限制</strong>：未满 18 周岁的未成年人严禁关闭安全模式或浏览上述敏感分类。
-                <br />2. <strong>来源说明</strong>：原有图鉴素材来自 ギア（@giaaibusi）；二次元服装来自 たき AI · CharaDB，适用独立来源条件，禁止真人、未成年人用途及图片再分发，首次使用须确认。
-                <br />3. <strong>合法使用</strong>：本工具与素材<strong>仅供 AI 绘画学习与合法艺术创作使用，严禁用于任何违法违规、色情传播或侵害他人肖像权（如未经授权的真人换脸）等用途</strong>，使用者须自行承担一切法律责任。
-              </span>
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel
-              onClick={() => {
-                pendingUnlockCbRef.current = null
-              }}
-            >
-              保持安全模式
-            </AlertDialogCancel>
-            <AlertDialogAction onClick={confirmUnlockNsfw}>
-              我已年满 18 岁并同意免责声明
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </StudioContext.Provider>
   )
 }

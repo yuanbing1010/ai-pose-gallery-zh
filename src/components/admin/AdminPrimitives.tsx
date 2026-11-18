@@ -70,7 +70,7 @@ export function AdminPanel({
               </div>
             )}
             {subtitle && (
-              <p className="mt-0.5 text-[11px] text-zinc-500 dark:text-zinc-400">{subtitle}</p>
+              <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">{subtitle}</p>
             )}
           </div>
           {headerRight && <div className="flex flex-wrap items-center gap-2">{headerRight}</div>}
@@ -121,7 +121,7 @@ export function AdminMetricGrid({ items }: { items: AdminMetricItem[] }) {
               {item.value}
             </div>
             {item.hint && (
-              <div className="mt-1 truncate text-[11px] text-zinc-500 dark:text-zinc-400">
+              <div className="mt-1 truncate text-xs text-zinc-500 dark:text-zinc-400">
                 {item.hint}
               </div>
             )}
@@ -216,7 +216,7 @@ export function AdminBadge({
     <span
       title={title}
       className={cn(
-        'inline-flex items-center gap-1 border px-1.5 py-0.5 font-mono text-[11px] font-semibold',
+        'inline-flex items-center gap-1 border px-1.5 py-0.5 font-mono text-xs font-semibold',
         toneCls[tone],
         className
       )}
@@ -228,6 +228,7 @@ export function AdminBadge({
 
 export function AdminField({
   label,
+  htmlFor,
   required,
   hint,
   rightSlot,
@@ -235,6 +236,7 @@ export function AdminField({
   className,
 }: {
   label: ReactNode
+  htmlFor?: string
   required?: boolean
   hint?: ReactNode
   rightSlot?: ReactNode
@@ -244,14 +246,21 @@ export function AdminField({
   return (
     <div className={cn('space-y-1.5', className)}>
       <div className="flex items-center justify-between gap-2">
-        <label className="block text-xs font-bold text-zinc-900 dark:text-zinc-100">
-          {label}
-          {required ? <span className="ml-0.5 text-red-600">*</span> : null}
-        </label>
+        {htmlFor ? (
+          <label htmlFor={htmlFor} className="block text-xs font-bold text-zinc-900 dark:text-zinc-100">
+            {label}
+            {required ? <span className="ml-0.5 text-red-600">*</span> : null}
+          </label>
+        ) : (
+          <div className="block text-xs font-bold text-zinc-900 dark:text-zinc-100">
+            {label}
+            {required ? <span className="ml-0.5 text-red-600">*</span> : null}
+          </div>
+        )}
         {rightSlot}
       </div>
       {children}
-      {hint && <p className="text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">{hint}</p>}
+      {hint && <p className="text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">{hint}</p>}
     </div>
   )
 }

@@ -6,7 +6,10 @@ import {
   ChevronDownIcon,
   ChevronUpIcon,
   DicesIcon,
+  ExternalLinkIcon,
+  LayersIcon,
   LoaderCircleIcon,
+  PaperclipIcon,
   PersonStandingIcon,
   ShirtIcon,
   SparklesIcon,
@@ -16,6 +19,13 @@ import {
 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { costumesQuery, portraitsQuery, posesQuery } from '@/api/gallery'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+import { selectCostumeView } from '@/lib/costumeSources'
 import { poseThumbPath, referenceImageUrl } from '@/lib/recipeImages'
 import { cn } from '@/lib/utils'
 import { useStudio } from '@/store/studioStore'
@@ -62,6 +72,7 @@ export function RecipeDock() {
     setPortrait,
     setCostume,
     setPose,
+    removeExtraImage,
     toggleRecipePoseDepth,
     clearRecipe,
     randomizeRecipe,
@@ -82,14 +93,14 @@ export function RecipeDock() {
   const [diceSpin, setDiceSpin] = useState(0)
   const [minimized, setMinimized] = useState(false)
 
-  const extraCount = (recipe.extraImages || []).length
+  const extraImages = recipe.extraImages || []
+  const extraCount = extraImages.length
   const coreSlotsFilled = [recipe.portrait, recipe.costume, recipe.pose].filter(Boolean).length
   const hasAnyItem = coreSlotsFilled > 0 || extraCount > 0
   const hasRunningJob = isGenerating || history.some((item) => item.status === 'processing')
   const isFullReady = coreSlotsFilled === 3
   const isHome = pathname === '/'
 
-  // 监听单张卡落地撞击事件：每选中/飞落一张即刻独立抖动 + 星芒迸发
   useEffect(() => {
     const onImpact = (e: Event) => {
       const detail = (e as CustomEvent<{ slot?: CoreSlot; index?: number; isFinal?: boolean }>).detail
@@ -191,7 +202,9 @@ export function RecipeDock() {
               <span className={cn('size-2 rounded-full', recipe.costume ? 'bg-[#19857B]' : 'bg-black/20 dark:bg-white/25')} />
               <span className={cn('size-2 rounded-full', recipe.portrait ? 'bg-[#E5A918]' : 'bg-black/20 dark:bg-white/25')} />
             </span>
-            <span className="whitespace-nowrap">配方 {coreSlotsFilled}/3</span>
+            <span className="whitespace-nowrap">
+              配方 {coreSlotsFilled}/3{extraCount > 0 ? ` +${extraCount}` : ''}
+            </span>
             <ChevronUpIcon className="size-3.5 text-muted-foreground" />
           </button>
 
@@ -265,13 +278,10 @@ export function RecipeDock() {
         </div>
 
         <div className="flex flex-row items-center gap-2 sm:gap-3.5">
-          {/* 三张纯图像配方卡槽 */}
+          {/* 三张纯图像配方卡槽 + 可选附加参考卡管理 */}
           <div className="flex shrink-0 items-center gap-1.5 rounded-xl bg-muted/75 p-1 sm:gap-2.5 sm:rounded-2xl sm:p-1.5">
             {/* Slot 1: Pose */}
-            <div
-              data-dock-slot="pose"
-              className="group/slot relative shrink-0"
-            >
+            <div data-dock-slot="pose" className="group/slot relative shrink-0">
               <SlotSparkBurst slot="pose" burstKey={sparkKeys.pose} />
               {recipe.pose ? (
                 <motion.div
@@ -281,25 +291,79 @@ export function RecipeDock() {
                   transition={{ duration: 0.12, ease: [0.22, 1, 0.36, 1] }}
                   className="relative"
                 >
-                  <Link
-                    to="/poses"
-                    title={
-                      (recipe.pose.角度
-                        ? `${recipe.pose.姿势名称} · ${recipe.pose.角度}`
-                        : recipe.pose.姿势名称) + ' · 点击前往姿势库更换'
-                    }
-                    aria-label={`姿势参考：${recipe.pose.姿势名称}，点击前往姿势库更换`}
-                    className={cn(
-                      'block h-[58px] w-[44px] overflow-hidden rounded-lg border border-[#D9381E]/55 shadow-xs ring-1 ring-[#D9381E]/30 transition-all hover:scale-[1.03] hover:ring-[#D9381E]/75 sm:h-[92px] sm:w-[70px] sm:rounded-xl',
-                      recipe.pose.useDepth ? 'bg-[#2B2B32]' : 'bg-white'
-                    )}
-                  >
-                    <img
-                      src={referenceImageUrl(poseThumbPath(recipe.pose))}
-                      alt={recipe.pose.姿势名称}
-                      className="size-full object-contain"
-                    />
-                  </Link>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <button
+                        type="button"
+                        title={`${recipe.pose.姿势名称}${recipe.pose.角度 ? ` · ${recipe.pose.角度}` : ''}（点击检查或调整）`}
+                        aria-label={`检查姿势参考：${recipe.pose.姿势名称}`}
+                        className={cn(
+                          'block h-[58px] w-[44px] cursor-pointer overflow-hidden rounded-lg border border-[#D9381E]/55 shadow-xs ring-1 ring-[#D9381E]/30 transition-all hover:scale-[1.03] hover:ring-[#D9381E]/75 sm:h-[92px] sm:w-[70px] sm:rounded-xl',
+                          recipe.pose.useDepth ? 'bg-[#2B2B32]' : 'bg-white'
+                        )}
+                      >
+                        <img
+                          src={referenceImageUrl(poseThumbPath(recipe.pose))}
+                          alt={recipe.pose.姿势名称}
+                          className="size-full object-contain"
+                        />
+                      </button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent side="top" align="center" sideOffset={10} className="w-64 rounded-2xl p-3">
+                      <div className="flex items-start gap-3">
+                        <img
+                          src={referenceImageUrl(poseThumbPath(recipe.pose))}
+                          alt={recipe.pose.姿势名称}
+                          className={cn(
+                            'h-20 w-15 shrink-0 rounded-xl border border-border object-contain',
+                            recipe.pose.useDepth ? 'bg-[#2B2B32]' : 'bg-white'
+                          )}
+                        />
+                        <div className="min-w-0 flex-1 space-y-1">
+                          <div className="text-xs font-semibold text-[#D9381E]">动作姿势</div>
+                          <div className="line-clamp-2 text-xs font-bold leading-snug">
+                            {recipe.pose.姿势名称}
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            {[recipe.pose.角度, recipe.pose.useDepth ? '深度图' : '素体白模']
+                              .filter(Boolean)
+                              .join(' · ')}
+                          </div>
+                        </div>
+                      </div>
+                      <DropdownMenuSeparator className="my-2.5" />
+                      <div className="flex flex-col gap-1.5">
+                        {recipe.pose.source !== 'upload' && (
+                          <button
+                            type="button"
+                            onClick={toggleRecipePoseDepth}
+                            className="flex w-full items-center justify-between rounded-xl border border-border bg-muted/50 px-3 py-1.5 text-xs font-medium transition-colors hover:bg-muted"
+                          >
+                            <span>底图模式：{recipe.pose.useDepth ? '深度图' : '素体白模'}</span>
+                            <span className="font-mono text-xs text-[#D9381E]">切换</span>
+                          </button>
+                        )}
+                        <div className="flex items-center gap-1.5">
+                          <Link
+                            to="/poses"
+                            className="inline-flex flex-1 items-center justify-center gap-1 rounded-xl border border-border bg-card px-2.5 py-1.5 text-xs font-medium transition-colors hover:bg-muted"
+                          >
+                            <ExternalLinkIcon className="size-3" />
+                            <span>去图库换卡</span>
+                          </Link>
+                          <button
+                            type="button"
+                            onClick={() => setPose(null)}
+                            className="inline-flex items-center justify-center gap-1 rounded-xl border border-border px-2.5 py-1.5 text-xs font-medium text-destructive transition-colors hover:bg-destructive/10"
+                          >
+                            <Trash2Icon className="size-3" />
+                            <span>移除</span>
+                          </button>
+                        </div>
+                      </div>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+
                   {recipe.pose.source !== 'upload' && (
                     <button
                       type="button"
@@ -307,7 +371,7 @@ export function RecipeDock() {
                       title="切换白模或深度图"
                       aria-label={`切换白模或深度图，当前为${recipe.pose.useDepth ? '深度图' : '白模'}`}
                       className={cn(
-                        'absolute bottom-0.5 left-0.5 z-10 inline-flex h-4.5 items-center rounded-md px-1 font-mono text-[11px] font-bold leading-none shadow-xs backdrop-blur-xs transition-colors sm:bottom-1 sm:left-1 sm:px-1.5',
+                        'absolute bottom-0.5 left-0.5 z-10 inline-flex h-5 items-center rounded-md px-1.5 font-mono text-xs font-bold leading-none shadow-xs backdrop-blur-xs transition-colors sm:bottom-1 sm:left-1',
                         recipe.pose.useDepth
                           ? 'bg-[#D9381E] text-white'
                           : 'border border-black/15 bg-white/90 text-zinc-900 hover:bg-white'
@@ -334,37 +398,113 @@ export function RecipeDock() {
                   className="flex h-[58px] w-[44px] flex-col items-center justify-center gap-0.5 rounded-lg border border-dashed border-border/90 bg-card/45 text-muted-foreground transition-colors hover:border-[#D9381E]/65 hover:bg-card/85 hover:text-foreground sm:h-[92px] sm:w-[70px] sm:gap-1 sm:rounded-xl"
                 >
                   <PersonStandingIcon className="size-4 text-[#D9381E] sm:size-5" />
-                  <span className="text-[11px] font-medium leading-none">姿势</span>
+                  <span className="text-xs font-medium leading-none">姿势</span>
                 </Link>
               )}
             </div>
 
             {/* Slot 2: Costume */}
-            <div
-              data-dock-slot="costume"
-              className="group/slot relative shrink-0"
-            >
+            <div data-dock-slot="costume" className="group/slot relative shrink-0">
               <SlotSparkBurst slot="costume" burstKey={sparkKeys.costume} />
               {recipe.costume ? (
                 <motion.div
-                  key={recipe.costume.id}
+                  key={`${recipe.costume.id}-${recipe.costume.selectedView || 'front'}`}
                   initial={{ opacity: 0.5, scale: 0.92 }}
                   animate={{ opacity: 1, scale: 1 }}
                   transition={{ duration: 0.12, ease: [0.22, 1, 0.36, 1] }}
                   className="relative"
                 >
-                  <Link
-                    to="/costumes"
-                    title={`${recipe.costume.服装名称} · 点击前往服装库更换`}
-                    aria-label={`穿搭参考：${recipe.costume.服装名称}，点击前往服装库更换`}
-                    className="block h-[58px] w-[44px] overflow-hidden rounded-lg border border-[#19857B]/55 bg-card shadow-xs ring-1 ring-[#19857B]/30 transition-all hover:scale-[1.03] hover:ring-[#19857B]/75 sm:h-[92px] sm:w-[70px] sm:rounded-xl"
-                  >
-                    <img
-                      src={referenceImageUrl(recipe.costume.缩略图)}
-                      alt={recipe.costume.服装名称}
-                      className="size-full object-cover object-[50%_15%]"
-                    />
-                  </Link>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <button
+                        type="button"
+                        title={`${recipe.costume.服装名称}（点击检查或切换视角）`}
+                        aria-label={`检查服装参考：${recipe.costume.服装名称}`}
+                        className="block h-[58px] w-[44px] cursor-pointer overflow-hidden rounded-lg border border-[#19857B]/55 bg-card shadow-xs ring-1 ring-[#19857B]/30 transition-all hover:scale-[1.03] hover:ring-[#19857B]/75 sm:h-[92px] sm:w-[70px] sm:rounded-xl"
+                      >
+                        <img
+                          src={referenceImageUrl(recipe.costume.缩略图)}
+                          alt={recipe.costume.服装名称}
+                          className="size-full object-cover object-[50%_15%]"
+                        />
+                      </button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent side="top" align="center" sideOffset={10} className="w-64 rounded-2xl p-3">
+                      <div className="flex items-start gap-3">
+                        <img
+                          src={referenceImageUrl(recipe.costume.缩略图)}
+                          alt={recipe.costume.服装名称}
+                          className="h-20 w-15 shrink-0 rounded-xl border border-border bg-muted/30 object-cover object-top"
+                        />
+                        <div className="min-w-0 flex-1 space-y-1">
+                          <div className="text-xs font-semibold text-[#116E65] dark:text-[#4FD1C5]">服装穿搭</div>
+                          <div className="line-clamp-2 text-xs font-bold leading-snug">
+                            {recipe.costume.服装名称}
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            {recipe.costume.分类}
+                            {recipe.costume.selectedView && recipe.costume.views?.length
+                              ? ` · ${recipe.costume.views.find((v) => v.id === recipe.costume?.selectedView)?.label || recipe.costume.selectedView}`
+                              : ''}
+                          </div>
+                        </div>
+                      </div>
+                      {recipe.costume.views && recipe.costume.views.length > 1 && (
+                        <>
+                          <DropdownMenuSeparator className="my-2.5" />
+                          <div className="space-y-1.5">
+                            <div className="flex items-center gap-1 text-xs font-medium text-muted-foreground">
+                              <LayersIcon className="size-3" />
+                              <span>切换服装视角</span>
+                            </div>
+                            <div className="grid grid-cols-4 gap-1">
+                              {recipe.costume.views.map((v) => {
+                                const active = (recipe.costume?.selectedView || 'front') === v.id
+                                return (
+                                  <button
+                                    key={v.id}
+                                    type="button"
+                                    onClick={() => {
+                                      if (recipe.costume) {
+                                        setCostume(selectCostumeView(recipe.costume, v.id))
+                                      }
+                                    }}
+                                    className={cn(
+                                      'rounded-lg py-1 text-xs font-medium transition-colors',
+                                      active
+                                        ? 'bg-[#19857B] text-white'
+                                        : 'border border-border bg-card text-muted-foreground hover:bg-muted hover:text-foreground'
+                                    )}
+                                  >
+                                    {v.label}
+                                  </button>
+                                )
+                              })}
+                            </div>
+                          </div>
+                        </>
+                      )}
+                      <DropdownMenuSeparator className="my-2.5" />
+                      <div className="flex items-center gap-1.5">
+                        <Link
+                          to="/costumes"
+                          className="inline-flex flex-1 items-center justify-center gap-1 rounded-xl border border-border bg-card px-2.5 py-1.5 text-xs font-medium transition-colors hover:bg-muted"
+                        >
+                          <ExternalLinkIcon className="size-3" />
+                          <span>去图库换卡</span>
+                        </Link>
+                        <button
+                          type="button"
+                          onClick={() => setCostume(null)}
+                          className="inline-flex items-center justify-center gap-1 rounded-xl border border-border px-2.5 py-1.5 text-xs font-medium text-destructive transition-colors hover:bg-destructive/10"
+                        >
+                          <Trash2Icon className="size-3" />
+                          <span>移除</span>
+                        </button>
+                      </div>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+
                   <button
                     type="button"
                     title="清除服装参考图"
@@ -383,16 +523,13 @@ export function RecipeDock() {
                   className="flex h-[58px] w-[44px] flex-col items-center justify-center gap-0.5 rounded-lg border border-dashed border-border/90 bg-card/45 text-muted-foreground transition-colors hover:border-[#19857B]/65 hover:bg-card/85 hover:text-foreground sm:h-[92px] sm:w-[70px] sm:gap-1 sm:rounded-xl"
                 >
                   <ShirtIcon className="size-4 text-[#19857B] sm:size-5" />
-                  <span className="text-[11px] font-medium leading-none">穿搭</span>
+                  <span className="text-xs font-medium leading-none">穿搭</span>
                 </Link>
               )}
             </div>
 
             {/* Slot 3: Portrait */}
-            <div
-              data-dock-slot="portrait"
-              className="group/slot relative shrink-0"
-            >
+            <div data-dock-slot="portrait" className="group/slot relative shrink-0">
               <SlotSparkBurst slot="portrait" burstKey={sparkKeys.portrait} />
               {recipe.portrait ? (
                 <motion.div
@@ -402,18 +539,59 @@ export function RecipeDock() {
                   transition={{ duration: 0.12, ease: [0.22, 1, 0.36, 1] }}
                   className="relative"
                 >
-                  <Link
-                    to="/portraits"
-                    title={`${recipe.portrait.发型名称} · 点击前往人像库更换`}
-                    aria-label={`人像参考：${recipe.portrait.发型名称}，点击前往人像库更换`}
-                    className="block h-[58px] w-[44px] overflow-hidden rounded-lg border border-[#E5A918]/55 bg-card shadow-xs ring-1 ring-[#E5A918]/30 transition-all hover:scale-[1.03] hover:ring-[#E5A918]/75 sm:h-[92px] sm:w-[70px] sm:rounded-xl"
-                  >
-                    <img
-                      src={referenceImageUrl(recipe.portrait.缩略图)}
-                      alt={recipe.portrait.标题 || recipe.portrait.发型名称}
-                      className="size-full object-cover object-top"
-                    />
-                  </Link>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <button
+                        type="button"
+                        title={`${recipe.portrait.发型名称 || recipe.portrait.标题}（点击检查）`}
+                        aria-label={`检查人像参考：${recipe.portrait.发型名称}`}
+                        className="block h-[58px] w-[44px] cursor-pointer overflow-hidden rounded-lg border border-[#E5A918]/55 bg-card shadow-xs ring-1 ring-[#E5A918]/30 transition-all hover:scale-[1.03] hover:ring-[#E5A918]/75 sm:h-[92px] sm:w-[70px] sm:rounded-xl"
+                      >
+                        <img
+                          src={referenceImageUrl(recipe.portrait.缩略图)}
+                          alt={recipe.portrait.标题 || recipe.portrait.发型名称}
+                          className="size-full object-cover object-top"
+                        />
+                      </button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent side="top" align="center" sideOffset={10} className="w-64 rounded-2xl p-3">
+                      <div className="flex items-start gap-3">
+                        <img
+                          src={referenceImageUrl(recipe.portrait.缩略图)}
+                          alt={recipe.portrait.标题 || recipe.portrait.发型名称}
+                          className="h-20 w-15 shrink-0 rounded-xl border border-border bg-muted/30 object-cover object-top"
+                        />
+                        <div className="min-w-0 flex-1 space-y-1">
+                          <div className="text-xs font-semibold text-[#7A5200] dark:text-[#E5A918]">人像颜模</div>
+                          <div className="line-clamp-2 text-xs font-bold leading-snug">
+                            {recipe.portrait.标题 || recipe.portrait.发型名称}
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            {[recipe.portrait.分区, recipe.portrait.发长].filter(Boolean).join(' · ')}
+                          </div>
+                        </div>
+                      </div>
+                      <DropdownMenuSeparator className="my-2.5" />
+                      <div className="flex items-center gap-1.5">
+                        <Link
+                          to="/portraits"
+                          className="inline-flex flex-1 items-center justify-center gap-1 rounded-xl border border-border bg-card px-2.5 py-1.5 text-xs font-medium transition-colors hover:bg-muted"
+                        >
+                          <ExternalLinkIcon className="size-3" />
+                          <span>去图库换卡</span>
+                        </Link>
+                        <button
+                          type="button"
+                          onClick={() => setPortrait(null)}
+                          className="inline-flex items-center justify-center gap-1 rounded-xl border border-border px-2.5 py-1.5 text-xs font-medium text-destructive transition-colors hover:bg-destructive/10"
+                        >
+                          <Trash2Icon className="size-3" />
+                          <span>移除</span>
+                        </button>
+                      </div>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+
                   <button
                     type="button"
                     title="清除人像参考图"
@@ -432,10 +610,56 @@ export function RecipeDock() {
                   className="flex h-[58px] w-[44px] flex-col items-center justify-center gap-0.5 rounded-lg border border-dashed border-border/90 bg-card/45 text-muted-foreground transition-colors hover:border-[#E5A918]/65 hover:bg-card/85 hover:text-foreground sm:h-[92px] sm:w-[70px] sm:gap-1 sm:rounded-xl"
                 >
                   <UserRoundIcon className="size-4 text-[#E5A918] sm:size-5" />
-                  <span className="text-[11px] font-medium leading-none">人像</span>
+                  <span className="text-xs font-medium leading-none">人像</span>
                 </Link>
               )}
             </div>
+
+            {extraCount > 0 && (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button
+                    type="button"
+                    title="查看或移除附加参考图"
+                    className="flex h-[58px] flex-col items-center justify-center gap-1 rounded-lg border border-border bg-card/85 px-1.5 text-xs font-semibold text-foreground transition-colors hover:bg-card sm:h-[92px] sm:rounded-xl sm:px-2.5"
+                  >
+                    <PaperclipIcon className="size-3.5 text-muted-foreground" />
+                    <span className="font-mono">+{extraCount}</span>
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent side="top" align="center" sideOffset={10} className="w-64 rounded-2xl p-3">
+                  <div className="mb-2 flex items-center justify-between text-xs">
+                    <span className="font-bold">附加参考图 ({extraCount})</span>
+                    <Link to="/studio" className="text-xs text-muted-foreground underline hover:text-foreground">
+                      合成台管理
+                    </Link>
+                  </div>
+                  <div className="max-h-56 space-y-2 overflow-y-auto">
+                    {extraImages.map((img) => (
+                      <div
+                        key={img.id}
+                        className="flex items-center gap-2 rounded-xl border border-border bg-muted/40 p-1.5"
+                      >
+                        <img
+                          src={referenceImageUrl(img.url)}
+                          alt={img.name}
+                          className="size-10 shrink-0 rounded-lg border border-border object-cover"
+                        />
+                        <span className="min-w-0 flex-1 truncate text-xs font-medium">{img.name}</span>
+                        <button
+                          type="button"
+                          aria-label={`移除附图 ${img.name}`}
+                          onClick={() => removeExtraImage(img.id)}
+                          className="inline-flex size-6 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+                        >
+                          <XIcon className="size-3.5" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
           </div>
 
           {/* 右侧上下两行操作区：上排整理配方（随机 + 清空），下排主 CTA（立即合成） */}

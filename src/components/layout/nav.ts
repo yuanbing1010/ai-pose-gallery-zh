@@ -14,38 +14,20 @@ export interface NavItem {
   title: string
   to: NonNullable<LinkProps['to']>
   icon: LucideIcon
-  badge?: string
 }
 
-export interface NavGroup {
-  label: string
-  items: NavItem[]
-}
-
-export const navGroups: NavGroup[] = [
-  {
-    label: 'DIRECTORY // 核心索引',
-    items: [
-      { code: '00', title: '盲盒抽卡', to: '/', icon: LayoutDashboardIcon, badge: '[DRAW]' },
-      { code: '01', title: '动作姿势库', to: '/poses', icon: PersonStandingIcon, badge: '1439' },
-      { code: '02', title: '服装穿搭库', to: '/costumes', icon: ShirtIcon, badge: '3224' },
-      { code: '03', title: '人像颜值库', to: '/portraits', icon: UserRoundIcon, badge: '1499' },
-      { code: '04', title: 'AI 角色合成台', to: '/studio', icon: SparklesIcon, badge: '->' },
-    ],
-  },
-  {
-    label: 'SYSTEM // 配置与说明',
-    items: [
-      { code: '05', title: '使用指南', to: '/guide', icon: BookOpenIcon, badge: '[DOC]' },
-    ],
-  },
+export const NAV_ITEMS: NavItem[] = [
+  { code: '00', title: '盲盒抽卡', to: '/', icon: LayoutDashboardIcon },
+  { code: '01', title: '动作姿势', to: '/poses', icon: PersonStandingIcon },
+  { code: '02', title: '服装穿搭', to: '/costumes', icon: ShirtIcon },
+  { code: '03', title: '人像颜值', to: '/portraits', icon: UserRoundIcon },
+  { code: '04', title: '使用指南', to: '/guide', icon: BookOpenIcon },
+  { code: '05', title: 'AI 合成台', to: '/studio', icon: SparklesIcon },
 ]
-
-const allItems = navGroups.flatMap((g) => g.items)
 
 export function activeNavTo(pathname: string): string | undefined {
   let best: string | undefined
-  for (const { to } of allItems) {
+  for (const { to } of NAV_ITEMS) {
     const hit = to === '/' ? pathname === '/' : pathname === to || pathname.startsWith(`${to}/`)
     if (hit && (!best || to.length > best.length)) best = to
   }

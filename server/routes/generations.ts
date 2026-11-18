@@ -244,7 +244,6 @@ generationRoutes.post('/', async (c) => {
     stylePresets: platform.stylePresets,
     styleCategories: platform.styleCategories,
     styleSubcategories: platform.styleSubcategories,
-    stylePromptOverrides: platform.stylePromptOverrides,
   })
 
   const recipeSummary =

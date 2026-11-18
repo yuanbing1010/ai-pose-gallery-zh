@@ -9,23 +9,27 @@ import { referenceImageUrl } from '../../../shared/studio'
 
 export type AdminTab =
   | 'overview'
-  | 'suppliers'
-  | 'api'
   | 'users'
   | 'redeem'
-  | 'safety'
-  | 'sanitize'
+  | 'suppliers'
+  | 'api'
   | 'jobs'
+  | 'styles'
+  | 'access'
+  | 'prompts'
+  | 'sanitize'
 
 export const ADMIN_TABS: readonly AdminTab[] = [
   'overview',
-  'suppliers',
-  'api',
   'users',
   'redeem',
-  'safety',
-  'sanitize',
+  'suppliers',
+  'api',
   'jobs',
+  'styles',
+  'access',
+  'prompts',
+  'sanitize',
 ]
 
 export interface AdminNavItemMeta {
@@ -62,10 +66,12 @@ export function getAdminNavItems(): AdminNavItemMeta[] {
     { id: 'users', code: '01', label: '成员与积分', group: 'operations' },
     { id: 'redeem', code: '02', label: '兑换码卡密', group: 'operations' },
     { id: 'suppliers', code: '03', label: '供应商凭证', group: 'models' },
-    { id: 'api', code: '04', label: '模型渠道定价', group: 'models' },
+    { id: 'api', code: '04', label: '画笔档位与路由', group: 'models' },
     { id: 'jobs', code: '05', label: '生成记录审计', group: 'models' },
-    { id: 'safety', code: '06', label: '准入、画风与模板', group: 'policy' },
-    { id: 'sanitize', code: '07', label: '姿势敏感词屏蔽', group: 'policy' },
+    { id: 'styles', code: '06', label: '画风图鉴管理', group: 'policy' },
+    { id: 'access', code: '07', label: '准入与生图链路', group: 'policy' },
+    { id: 'prompts', code: '08', label: '提示词模板', group: 'policy' },
+    { id: 'sanitize', code: '09', label: '姿势敏感词屏蔽', group: 'policy' },
   ]
 }
 
@@ -79,12 +85,12 @@ export function getAdminNavGroups(): AdminNavGroupMeta[] {
     },
     {
       id: 'models',
-      label: '模型与链路',
+      label: '画笔与链路',
       items: items.filter((i) => i.group === 'models'),
     },
     {
       id: 'policy',
-      label: '安全与内容',
+      label: '画风与策略',
       items: items.filter((i) => i.group === 'policy'),
     },
   ]

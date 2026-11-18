@@ -66,8 +66,12 @@ uploadRoutes.post('/uploads', requireAuth, async (c) => {
   )
 })
 
-uploadRoutes.get('/files/*', requireAuth, async (c) => {
-  const user = c.get('user')!
+uploadRoutes.get('/files/*', async (c) => {
+  const user = c.get('user')
+  const adminUser = c.get('adminUser')
+  if (!user && !adminUser) {
+    return c.json({ error: { message: '请先登录账号' } }, 401)
+  }
   const rawKey = c.req.path.replace(/^\/api\/files\//, '')
   let key: string
   try {
@@ -80,9 +84,11 @@ uploadRoutes.get('/files/*', requireAuth, async (c) => {
     return c.json({ error: { message: '非法的图片路径' } }, 400)
   }
 
-  const isOwner =
-    key.startsWith(`uploads/${user.id}/`) || key.startsWith(`generations/${user.id}/`)
-  if (!isOwner && user.role !== 'admin') {
+  const isAdminSession = adminUser?.role === 'admin' || user?.role === 'admin'
+  const isOwner = Boolean(
+    user && (key.startsWith(`uploads/${user.id}/`) || key.startsWith(`generations/${user.id}/`))
+  )
+  if (!isOwner && !isAdminSession) {
     return c.json({ error: { message: '无权访问该图片' } }, 403)
   }
 

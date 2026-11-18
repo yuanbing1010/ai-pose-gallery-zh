@@ -259,7 +259,7 @@ export function AuthModal() {
               <>
                 <div className="relative flex items-center py-0.5">
                   <div className="flex-1 border-t border-border" />
-                  <span className="px-2.5 text-[11px] text-muted-foreground">或使用快捷登录</span>
+                  <span className="px-2.5 text-xs text-muted-foreground">或使用快捷登录</span>
                   <div className="flex-1 border-t border-border" />
                 </div>
 
@@ -279,7 +279,7 @@ export function AuthModal() {
             )}
 
             {bootstrapLoaded && !platform.allowRegistration && (
-              <p className="pt-1 text-center text-[11px] text-muted-foreground">
+              <p className="pt-1 text-center text-xs text-muted-foreground">
                 本站当前仅限受邀成员使用（暂未开放自助注册），如需账号请联系管理员创建。
               </p>
             )}
@@ -307,7 +307,7 @@ export function AuthModal() {
 
                 <div className="relative flex items-center">
                   <div className="flex-1 border-t border-border" />
-                  <span className="px-2.5 text-[11px] text-muted-foreground">或填写账号信息注册</span>
+                  <span className="px-2.5 text-xs text-muted-foreground">或填写账号信息注册</span>
                   <div className="flex-1 border-t border-border" />
                 </div>
               </>

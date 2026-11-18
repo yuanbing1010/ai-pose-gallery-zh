@@ -34,7 +34,7 @@ function RootLayout() {
           isHome
             ? 'sk-grid-bg relative flex h-dvh flex-col overflow-hidden bg-background text-foreground'
             : isStudio
-              ? 'sk-grid-bg relative flex min-h-dvh flex-col bg-background text-foreground md:h-dvh md:overflow-hidden'
+              ? 'sk-grid-bg relative flex min-h-dvh flex-col bg-background text-foreground [@media(min-width:768px)_and_(min-height:820px)]:h-dvh [@media(min-width:768px)_and_(min-height:820px)]:overflow-hidden'
               : 'sk-grid-bg relative flex min-h-dvh flex-col bg-background text-foreground'
         }
       >
@@ -44,7 +44,7 @@ function RootLayout() {
             isHome
               ? '@container/main relative z-10 flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden'
               : isStudio
-                ? '@container/main relative z-10 flex min-w-0 flex-1 flex-col md:min-h-0 md:overflow-hidden'
+                ? '@container/main relative z-10 flex min-w-0 flex-1 flex-col [@media(min-width:768px)_and_(min-height:820px)]:min-h-0 [@media(min-width:768px)_and_(min-height:820px)]:overflow-hidden'
                 : '@container/main relative z-10 flex min-w-0 flex-1 flex-col'
           }
         >
@@ -53,8 +53,8 @@ function RootLayout() {
               isHome
                 ? 'mx-auto flex min-h-0 min-w-0 w-full max-w-[1440px] flex-1 flex-col'
                 : isStudio
-                  ? 'mx-auto flex min-w-0 w-full max-w-[1440px] flex-1 flex-col gap-2 px-4 pt-2 pb-2 sm:px-6 md:min-h-0 md:overflow-hidden'
-                  : 'mx-auto flex min-w-0 w-full max-w-[1440px] flex-1 flex-col gap-6 px-4 pt-6 pb-12 sm:px-6'
+                  ? 'mx-auto flex min-w-0 w-full max-w-[1440px] flex-1 flex-col gap-2 px-4 pt-2 pb-2 sm:px-6 [@media(min-width:768px)_and_(min-height:820px)]:min-h-0 [@media(min-width:768px)_and_(min-height:820px)]:overflow-hidden'
+                  : 'mx-auto flex min-w-0 w-full max-w-[1440px] flex-1 flex-col gap-6 px-4 pt-6 pb-28 sm:px-6'
             }
           >
             <Outlet />

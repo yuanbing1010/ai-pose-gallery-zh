@@ -82,6 +82,11 @@ export function AdminUsersTab({
   const [users, setUsers] = useState<AdminUserItem[]>([])
   const [usersTotal, setUsersTotal] = useState(0)
   const [ledger, setLedger] = useState<CreditLedgerItem[]>([])
+  const [ledgerTotal, setLedgerTotal] = useState<number | null>(null)
+  const [ledgerQuery, setLedgerQuery] = useState('')
+  const [appliedLedgerQuery, setAppliedLedgerQuery] = useState('')
+  const [ledgerTypeFilter, setLedgerTypeFilter] = useState('all')
+  const [ledgerOffset, setLedgerOffset] = useState(0)
   const [busyList, setBusyList] = useState(false)
 
   // 新建成员弹窗
@@ -123,20 +128,41 @@ export function AdminUsersTab({
     setBusyList(true)
     onLoadingChange(true)
     try {
-      const [uRes, lRes] = await Promise.all([
-        fetchAdminUsersApi(appliedUserQuery.trim(), 60, usersOffset, userFilter),
-        fetchAdminLedgerApi(80),
-      ])
-      setUsers(uRes.users)
-      setUsersTotal(uRes.total)
-      setLedger(lRes.items)
+      if (subView === 'members') {
+        const uRes = await fetchAdminUsersApi(
+          appliedUserQuery.trim(),
+          60,
+          usersOffset,
+          userFilter
+        )
+        setUsers(uRes.users)
+        setUsersTotal(uRes.total)
+      } else {
+        const lRes = await fetchAdminLedgerApi({
+          limit: 50,
+          offset: ledgerOffset,
+          q: appliedLedgerQuery.trim() || undefined,
+          type: ledgerTypeFilter,
+        })
+        setLedger(lRes.items)
+        setLedgerTotal(lRes.total)
+      }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : '加载成员与流水失败')
     } finally {
       setBusyList(false)
       onLoadingChange(false)
     }
-  }, [appliedUserQuery, onLoadingChange, userFilter, usersOffset])
+  }, [
+    appliedLedgerQuery,
+    appliedUserQuery,
+    ledgerOffset,
+    ledgerTypeFilter,
+    onLoadingChange,
+    subView,
+    userFilter,
+    usersOffset,
+  ])
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -145,6 +171,14 @@ export function AdminUsersTab({
     }, 280)
     return () => window.clearTimeout(timer)
   }, [userQuery])
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setAppliedLedgerQuery(ledgerQuery)
+      setLedgerOffset(0)
+    }, 280)
+    return () => window.clearTimeout(timer)
+  }, [ledgerQuery])
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -325,7 +359,10 @@ export function AdminUsersTab({
       <AdminFilterBar
         options={[
           { id: 'members', label: `成员账号 (${usersTotal})` },
-          { id: 'ledger', label: `近期积分流水 (${ledger.length})` },
+          {
+            id: 'ledger',
+            label: ledgerTotal !== null ? `积分流水 (${ledgerTotal})` : '积分账本流水',
+          },
         ]}
         value={subView}
         onChange={setSubView}
@@ -356,7 +393,54 @@ export function AdminUsersTab({
                 查询
               </Button>
             </form>
-          ) : null
+          ) : (
+            <div className="flex flex-wrap items-center gap-1.5">
+              <Select
+                value={ledgerTypeFilter}
+                onValueChange={(v) => {
+                  setLedgerTypeFilter(v)
+                  setLedgerOffset(0)
+                }}
+              >
+                <SelectTrigger className={`w-32 font-mono ${ADMIN_SELECT_CLS}`}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">全部类型</SelectItem>
+                  <SelectItem value="register_bonus">注册赠送</SelectItem>
+                  <SelectItem value="redeem_code">卡密兑换</SelectItem>
+                  <SelectItem value="admin_adjust">后台调账</SelectItem>
+                  <SelectItem value="generate_deduct">生图扣费</SelectItem>
+                  <SelectItem value="generate_refund">失败退还</SelectItem>
+                </SelectContent>
+              </Select>
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault()
+                  setLedgerOffset(0)
+                  if (appliedLedgerQuery === ledgerQuery && ledgerOffset === 0) {
+                    void loadData()
+                  } else {
+                    setAppliedLedgerQuery(ledgerQuery)
+                  }
+                }}
+                className="flex items-center gap-1.5"
+              >
+                <div className="relative">
+                  <SearchIcon className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-zinc-400" />
+                  <Input
+                    value={ledgerQuery}
+                    onChange={(e) => setLedgerQuery(e.target.value)}
+                    placeholder="搜用户名 / 备注 / 摘要…"
+                    className="h-8 w-44 rounded-none pl-8 font-mono text-xs sm:w-52"
+                  />
+                </div>
+                <Button type="submit" size="sm" variant="outline" className={ADMIN_BTN_CLS}>
+                  查询
+                </Button>
+              </form>
+            </div>
+          )
         }
       />
 
@@ -414,7 +498,7 @@ export function AdminUsersTab({
                             <button
                               type="button"
                               onClick={() => openEditDialog(u)}
-                              className="border border-dashed border-zinc-300 px-1.5 py-0.5 font-mono text-[10px] text-zinc-400 transition-colors hover:border-zinc-700 hover:text-zinc-700 dark:border-zinc-700 dark:hover:border-zinc-300 dark:hover:text-zinc-200"
+                              className="border border-dashed border-zinc-300 px-1.5 py-0.5 font-mono text-xs text-zinc-400 transition-colors hover:border-zinc-700 hover:text-zinc-700 dark:border-zinc-700 dark:hover:border-zinc-300 dark:hover:text-zinc-200"
                             >
                               + 加备注
                             </button>
@@ -429,7 +513,7 @@ export function AdminUsersTab({
                             </AdminBadge>
                           )}
                         </div>
-                        <div className="mt-0.5 font-mono text-[11px] text-zinc-500">
+                        <div className="mt-0.5 font-mono text-xs text-zinc-500">
                           @{u.username}
                           {u.email ? ` · ${u.email}` : ''}
                           {u.wechatBound && u.wechatNickname ? ` · 微信:${u.wechatNickname}` : ''}
@@ -449,9 +533,9 @@ export function AdminUsersTab({
                           {u.status === 'active' ? '正常' : '已禁用'}
                         </AdminBadge>
                       </td>
-                      <td className="px-4 py-2.5 font-mono text-[11px] text-zinc-500">
+                      <td className="px-4 py-2.5 font-mono text-xs text-zinc-500">
                         <div>{u.lastLoginAt ? formatAdminDateTime(u.lastLoginAt) : '尚未登录'}</div>
-                        <div className="text-[10px] opacity-75">
+                        <div className="text-xs opacity-75">
                           建于 {formatAdminDateTime(u.createdAt)}
                         </div>
                       </td>
@@ -534,61 +618,95 @@ export function AdminUsersTab({
           )}
         </div>
       ) : (
-        <AdminPanel
-          title="全站近期积分流水（最近 80 笔）"
-          subtitle="包含成员充值、生图扣费与失败自动退还明细。"
-          padded={false}
-        >
-          {ledger.length === 0 ? (
-            <div className="p-8 text-center text-xs text-zinc-500">暂无积分变动流水。</div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-left font-mono text-xs">
-                <thead className="border-b border-zinc-200 bg-zinc-50 text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900">
-                  <tr>
-                    <th className="px-4 py-2.5">成员</th>
-                    <th className="px-4 py-2.5">类型</th>
-                    <th className="px-4 py-2.5">说明</th>
-                    <th className="px-4 py-2.5">变动</th>
-                    <th className="px-4 py-2.5">余</th>
-                    <th className="px-4 py-2.5 text-right">时间</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800">
-                  {ledger.map((item) => (
-                    <tr key={item.id} className="hover:bg-zinc-50/70 dark:hover:bg-zinc-900/50">
-                      <td className="px-4 py-2.5">
-                        <span className="font-bold">@{item.username || item.userId.slice(0, 8)}</span>
-                        {item.userAdminNote && (
-                          <span className="ml-1.5 font-sans text-[11px] text-zinc-500">
-                            ({item.userAdminNote})
-                          </span>
-                        )}
-                      </td>
-                      <td className="px-4 py-2.5 font-sans text-zinc-500">
-                        {LEDGER_TYPE_LABELS[item.type] ?? item.type}
-                      </td>
-                      <td className="px-4 py-2.5 font-sans text-zinc-600 dark:text-zinc-400">
-                        {item.note || '—'}
-                      </td>
-                      <td
-                        className={`px-4 py-2.5 font-bold ${
-                          item.delta >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-500'
-                        }`}
-                      >
-                        {item.delta >= 0 ? `+${item.delta}` : item.delta}
-                      </td>
-                      <td className="px-4 py-2.5 text-zinc-500">{item.balanceAfter}</td>
-                      <td className="px-4 py-2.5 text-right text-zinc-500">
-                        {formatAdminDateTime(item.createdAt)}
-                      </td>
+        <div className="space-y-4">
+          <AdminPanel
+            title={`全站积分账本流水 (${ledgerTotal ?? ledger.length})`}
+            subtitle="包含注册赠送、卡密兑换、后台调账、生图扣费与失败自动退还明细，支持按类型与关键字筛选。"
+            padded={false}
+          >
+            {ledger.length === 0 ? (
+              <div className="p-8 text-center text-xs text-zinc-500">暂无符合筛选条件的积分流水。</div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left font-mono text-xs">
+                  <thead className="border-b border-zinc-200 bg-zinc-50 text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900">
+                    <tr>
+                      <th className="px-4 py-2.5">成员</th>
+                      <th className="px-4 py-2.5">类型</th>
+                      <th className="px-4 py-2.5">说明</th>
+                      <th className="px-4 py-2.5">变动</th>
+                      <th className="px-4 py-2.5">余</th>
+                      <th className="px-4 py-2.5 text-right">时间</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800">
+                    {ledger.map((item) => (
+                      <tr key={item.id} className="hover:bg-zinc-50/70 dark:hover:bg-zinc-900/50">
+                        <td className="px-4 py-2.5">
+                          <span className="font-bold">@{item.username || item.userId.slice(0, 8)}</span>
+                          {item.userAdminNote && (
+                            <span className="ml-1.5 font-sans text-xs text-zinc-500">
+                              ({item.userAdminNote})
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-4 py-2.5 font-sans text-zinc-500">
+                          {LEDGER_TYPE_LABELS[item.type] ?? item.type}
+                        </td>
+                        <td className="px-4 py-2.5 font-sans text-zinc-600 dark:text-zinc-400">
+                          {item.note || '—'}
+                        </td>
+                        <td
+                          className={`px-4 py-2.5 font-bold ${
+                            item.delta >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-500'
+                          }`}
+                        >
+                          {item.delta >= 0 ? `+${item.delta}` : item.delta}
+                        </td>
+                        <td className="px-4 py-2.5 text-zinc-500">{item.balanceAfter}</td>
+                        <td className="px-4 py-2.5 text-right text-zinc-500">
+                          {formatAdminDateTime(item.createdAt)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </AdminPanel>
+
+          {ledgerTotal !== null && ledgerTotal > 50 && (
+            <div className="flex items-center justify-between border border-zinc-200 px-4 py-2.5 font-mono text-xs text-zinc-500 dark:border-zinc-800">
+              <span>
+                第 {Math.floor(ledgerOffset / 50) + 1} / {Math.ceil(ledgerTotal / 50)} 页 · 共 {ledgerTotal} 条
+              </span>
+              <div className="flex items-center gap-1.5">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className={ADMIN_BTN_SM_CLS}
+                  disabled={ledgerOffset === 0 || busyList}
+                  onClick={() => setLedgerOffset((o) => Math.max(0, o - 50))}
+                >
+                  <ChevronLeftIcon className="size-3.5" />
+                  上一页
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className={ADMIN_BTN_SM_CLS}
+                  disabled={ledgerOffset + 50 >= ledgerTotal || busyList}
+                  onClick={() => setLedgerOffset((o) => o + 50)}
+                >
+                  下一页
+                  <ChevronRightIcon className="size-3.5" />
+                </Button>
+              </div>
             </div>
           )}
-        </AdminPanel>
+        </div>
       )}
 
       {/* 新建成员账号弹窗 */}
@@ -709,7 +827,7 @@ export function AdminUsersTab({
                   <button
                     type="button"
                     onClick={() => setCreatePassword(generateRandomPassword(10))}
-                    className="inline-flex items-center gap-1 font-mono text-[11px] font-semibold text-zinc-600 hover:text-zinc-950 dark:text-zinc-400 dark:hover:text-zinc-100"
+                    className="inline-flex items-center gap-1 font-mono text-xs font-semibold text-zinc-600 hover:text-zinc-950 dark:text-zinc-400 dark:hover:text-zinc-100"
                   >
                     <DicesIcon className="size-3" />
                     <span>随机生成</span>
@@ -761,7 +879,7 @@ export function AdminUsersTab({
                           key={preset}
                           type="button"
                           onClick={() => setCreateCredits(preset)}
-                          className="border border-zinc-200 px-1.5 py-0.5 font-mono text-[10px] text-zinc-600 hover:border-zinc-950 hover:text-zinc-950 dark:border-zinc-800 dark:text-zinc-400 dark:hover:border-zinc-200 dark:hover:text-zinc-100"
+                          className="border border-zinc-200 px-1.5 py-0.5 font-mono text-xs text-zinc-600 hover:border-zinc-950 hover:text-zinc-950 dark:border-zinc-800 dark:text-zinc-400 dark:hover:border-zinc-200 dark:hover:text-zinc-100"
                         >
                           {preset}
                         </button>
@@ -865,7 +983,7 @@ export function AdminUsersTab({
                   <button
                     type="button"
                     onClick={() => setEditNewPassword(generateRandomPassword(10))}
-                    className="inline-flex items-center gap-1 font-mono text-[11px] font-semibold text-zinc-600 hover:text-zinc-950 dark:text-zinc-400 dark:hover:text-zinc-100"
+                    className="inline-flex items-center gap-1 font-mono text-xs font-semibold text-zinc-600 hover:text-zinc-950 dark:text-zinc-400 dark:hover:text-zinc-100"
                   >
                     <DicesIcon className="size-3" />
                     <span>生成新密码</span>
@@ -997,7 +1115,7 @@ export function AdminUsersTab({
                       key={preset}
                       type="button"
                       onClick={() => setAdjustDelta(preset.replace('+', ''))}
-                      className="border border-zinc-200 px-1.5 py-0.5 font-mono text-[10px] text-zinc-600 hover:border-zinc-950 hover:text-zinc-950 dark:border-zinc-800 dark:text-zinc-400 dark:hover:border-zinc-200 dark:hover:text-zinc-100"
+                      className="border border-zinc-200 px-1.5 py-0.5 font-mono text-xs text-zinc-600 hover:border-zinc-950 hover:text-zinc-950 dark:border-zinc-800 dark:text-zinc-400 dark:hover:border-zinc-200 dark:hover:text-zinc-100"
                     >
                       {preset}
                     </button>
