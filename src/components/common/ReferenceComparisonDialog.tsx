@@ -1,7 +1,8 @@
 import { useEffect, useEffectEvent, useRef, useState, type CSSProperties, type PointerEvent, type ReactNode } from 'react'
-import { MinusIcon, PlusIcon, RotateCcwIcon, XIcon } from 'lucide-react'
+import { MinusIcon, MoveHorizontalIcon, PlusIcon, RotateCcwIcon, XIcon } from 'lucide-react'
 import { Dialog as DialogPrimitive } from 'radix-ui'
 import { Button } from '@/components/ui/button'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { comparisonReferences } from '@/lib/comparisonReferences'
 import type { GenerationHistoryItem } from '@/types/gallery'
 
@@ -72,13 +73,27 @@ function ComparisonContent({ result }: { result: GenerationHistoryItem }) {
     <Button variant="outline" className="min-h-11" onClick={() => update(initialView)}><RotateCcwIcon className="size-4" />复位</Button>
   </div>
   const gestureProps = { view, update, zoomAt }
+  const updateSplitFromPointer = (el: HTMLElement, clientX: number) => {
+    const parent = el.parentElement
+    if (!parent) return
+    const rect = parent.getBoundingClientRect()
+    if (rect.width <= 0) return
+    const pct = ((clientX - rect.left) / rect.width) * 100
+    setSplit(Math.round(Math.max(0, Math.min(100, pct))))
+  }
   return <>
     {reference ? <div className="flex shrink-0 flex-wrap items-center gap-2">
-      <label className="flex min-w-0 flex-1 items-center gap-2 text-sm">选择参考
-        <select aria-label="选择本次生成的参考" value={reference.id} onChange={(e) => { setSelected(e.target.value); update(initialView) }} className="min-h-11 min-w-0 flex-1 rounded-md border bg-background px-2">
-          {refs.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
-        </select>
-      </label>
+      <div className="flex min-w-0 flex-1 items-center gap-2 text-sm">
+        <span className="shrink-0">选择参考</span>
+        <Select value={reference.id} onValueChange={(v) => { setSelected(v); update(initialView) }}>
+          <SelectTrigger aria-label="选择本次生成的参考" className="min-h-11 min-w-0 flex-1">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent className="z-[110]">
+            {refs.map((item) => <SelectItem key={item.id} value={item.id}>{item.label}</SelectItem>)}
+          </SelectContent>
+        </Select>
+      </div>
       <div className="flex gap-2" aria-label="对比模式">
         <Button variant={mode === 'side' ? 'default' : 'outline'} className="min-h-11" aria-pressed={mode === 'side'} onClick={() => setMode('side')}>并排</Button>
         <Button variant={mode === 'slider' ? 'default' : 'outline'} className="min-h-11" aria-pressed={mode === 'slider'} onClick={() => setMode('slider')}>滑杆</Button>
@@ -90,7 +105,43 @@ function ComparisonContent({ result }: { result: GenerationHistoryItem }) {
       <div className="absolute inset-0 bg-muted" style={{ clipPath: `inset(0 ${100 - split}% 0 0)` }}>
         <ComparisonImage key={reference.url} url={reference.url} label={reference.label} transform={transform} onSize={(size) => imageSize(reference.url, size)} />
       </div>
-      <div className="pointer-events-none absolute inset-y-0 w-0.5 bg-primary shadow" style={{ left: `${split}%` }} />
+      <div
+        role="slider"
+        tabIndex={0}
+        aria-label="左右拖动调整参考对比位置"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={split}
+        onPointerDown={(e) => {
+          if (e.button !== 0) return
+          e.stopPropagation()
+          e.currentTarget.focus()
+          e.currentTarget.setPointerCapture(e.pointerId)
+          updateSplitFromPointer(e.currentTarget, e.clientX)
+        }}
+        onPointerMove={(e) => {
+          if (!e.currentTarget.hasPointerCapture(e.pointerId)) return
+          updateSplitFromPointer(e.currentTarget, e.clientX)
+        }}
+        onKeyDown={(e) => {
+          if (e.key === 'ArrowLeft') {
+            e.preventDefault()
+            e.stopPropagation()
+            setSplit((v) => Math.max(0, v - 5))
+          } else if (e.key === 'ArrowRight') {
+            e.preventDefault()
+            e.stopPropagation()
+            setSplit((v) => Math.min(100, v + 5))
+          }
+        }}
+        style={{ left: `${split}%`, transform: 'translateX(-50%)' }}
+        className="pointer-events-auto absolute inset-y-0 z-10 flex w-8 cursor-ew-resize touch-none items-center justify-center focus-visible:outline-none"
+      >
+        <div className="h-full w-0.5 bg-primary shadow" />
+        <span className="absolute flex size-7 items-center justify-center rounded-full border border-border bg-background/95 text-foreground shadow-md ring-1 ring-black/10 dark:ring-white/15">
+          <MoveHorizontalIcon className="size-3.5" />
+        </span>
+      </div>
       <div className="pointer-events-none absolute inset-x-2 top-2 flex justify-between text-xs"><span className="rounded bg-background/90 px-2 py-1">参考图</span><span className="rounded bg-background/90 px-2 py-1">生成结果</span></div>
     </ComparisonSurface> : <div className={`grid min-h-0 flex-1 gap-2 ${reference ? 'grid-rows-2 md:grid-cols-2 md:grid-rows-1' : 'grid-cols-1'}`}>
       {reference && <ComparisonSurface {...gestureProps} onSize={(size) => paneSize('reference', size)} label={reference.label}><ComparisonImage key={reference.url} url={reference.url} label={reference.label} transform={transform} onSize={(size) => imageSize(reference.url, size)} /><PaneLabel label={reference.label} /></ComparisonSurface>}

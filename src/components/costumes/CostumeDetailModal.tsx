@@ -10,12 +10,14 @@ import Stack from '@/components/cards/Stack'
 import { ShowcaseDialog, ShowcaseStageTabs, type ShowcaseStageTabItem } from '@/components/common/ShowcaseDialog'
 import { ZoomViewport } from '@/components/common/ZoomViewport'
 import { GlowCard3D } from '@/components/costumes/GlowCard3D'
+import { useTheme } from '@/components/theme/ThemeProvider'
 import { getCostumeAccent } from '@/lib/cardAccents'
 import { CHARADB_NOTICE_URL } from '@/lib/charadb'
 import { SHISEI_SOURCE_URLS } from '@/lib/costumeSources'
-import { referenceImageUrl } from '@/lib/recipeImages'
+import { downloadFileName, referenceImageUrl } from '@/lib/recipeImages'
 import { cn } from '@/lib/utils'
 import type { CostumeItem } from '@/types/gallery'
+import { MIO_SOURCE_LABEL } from '../../../shared/mioArchive'
 
 export interface CostumeDetailModalProps {
   open: boolean
@@ -31,12 +33,15 @@ export interface CostumeDetailModalProps {
   direction?: 1 | -1
   onPrev: () => void
   onNext: () => void
+  stageMode?: '3d' | 'stack' | 'zoom'
+  onStageModeChange?: (next: '3d' | 'stack' | 'zoom') => void
 }
 
 const SOURCE_DISPLAY: Record<string, string> = {
   shisei: 'Shisei · 中国历代',
   charadb: 'たき AI · CharaDB',
   'gia-anime': 'ギア · 动漫服装',
+  mio: MIO_SOURCE_LABEL,
   gia: 'ギア（@giaaibusi）· 写实',
 }
 
@@ -54,8 +59,16 @@ export function CostumeDetailModal({
   direction = 1,
   onPrev,
   onNext,
+  stageMode: controlledStageMode,
+  onStageModeChange,
 }: CostumeDetailModalProps) {
-  const [stageMode, setStageMode] = useState<'3d' | 'stack' | 'zoom'>('3d')
+  const { resolvedTheme } = useTheme()
+  const [uncontrolledStageMode, setUncontrolledStageMode] = useState<'3d' | 'stack' | 'zoom'>('3d')
+  const stageMode = controlledStageMode ?? uncontrolledStageMode
+  const setStageMode = (next: '3d' | 'stack' | 'zoom') => {
+    setUncontrolledStageMode(next)
+    onStageModeChange?.(next)
+  }
   const [viewDir, setViewDir] = useState<{ itemId: string; viewId: string; dir: 1 | -1 }>({
     itemId: '',
     viewId: selectedViewId,
@@ -73,7 +86,7 @@ export function CostumeDetailModal({
   const activeViewIdx = hasMultiViews
     ? Math.max(0, views.findIndex((v) => v.id === (selectedViewId || 'front')))
     : 0
-  const isHotlinkSource = ['charadb', 'gia-anime'].includes(item.source || '')
+  const isHotlinkSource = ['charadb', 'gia-anime', 'mio'].includes(item.source || '')
   const accent = getCostumeAccent(item.分类, item.一级分类)
   const sourceLabel = SOURCE_DISPLAY[item.source || 'gia'] || SOURCE_DISPLAY.gia
 
@@ -112,7 +125,7 @@ export function CostumeDetailModal({
       pickLabel={picked ? '已在配方中（点击移除）' : '锁入角色配方'}
       onTogglePick={onTogglePick}
       downloadHref={referenceImageUrl(item.原图)}
-      downloadName={`${item.id}.webp`}
+      downloadName={downloadFileName(item.id, item.原图, 'webp')}
       downloadExternal={isHotlinkSource}
       downloadLabel={isHotlinkSource ? '前往来源原图' : '下载高清原图'}
       externalHref={
@@ -148,7 +161,7 @@ export function CostumeDetailModal({
               depth={0.46}
               radius={22}
               frame={4}
-              frameColor="#1E1E28"
+              frameColor={resolvedTheme === 'dark' ? '#242320' : '#E6E2DA'}
               tilt={22}
               speed={1.08}
               sendToBackOnClick
@@ -161,7 +174,7 @@ export function CostumeDetailModal({
                 }
               }}
               cards={views.map((v, vIdx) => (
-                <div key={v.id} className="relative h-full w-full overflow-hidden rounded-[18px] bg-[#181822]">
+                <div key={v.id} className="relative h-full w-full overflow-hidden rounded-[18px] bg-card dark:bg-[#1C1C19]">
                   <img
                     src={referenceImageUrl(v.预览图 || v.原图)}
                     alt={`${item.服装名称} · ${v.label}`}
@@ -172,7 +185,7 @@ export function CostumeDetailModal({
                     <span className="rounded-full bg-black/75 px-2.5 py-0.5 text-xs font-medium text-white ring-1 ring-white/15 backdrop-blur-md">
                       {v.label}
                     </span>
-                    <span className="rounded-full bg-black/60 px-2 py-0.5 font-mono text-xs text-foreground backdrop-blur-md">
+                    <span className="rounded-full bg-black/75 px-2 py-0.5 font-mono text-xs text-white/95 ring-1 ring-white/15 backdrop-blur-md">
                       {vIdx + 1}/{views.length}
                     </span>
                   </div>
@@ -226,7 +239,9 @@ export function CostumeDetailModal({
             <p className="text-xs text-muted-foreground">
               {effectiveStageMode === 'stack'
                 ? '点击或拖拽牌面丝滑切换多视角'
-                : '悬停倾斜 · 按住拖拽旋转 · 左右箭头切牌'}
+                : hasMultiViews
+                  ? '悬停倾斜 · 按住拖拽旋转 · ←/→ 切套 · ↑/↓ 切视角'
+                  : '悬停倾斜 · 按住拖拽旋转 · 左右箭头切牌'}
             </p>
           </>
         ) : null

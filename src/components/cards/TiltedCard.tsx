@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useMemo,
   useRef,
   useState,
   type CSSProperties,
@@ -188,31 +189,60 @@ const TiltedCard = ({
   const controlled = typeof flipped === 'boolean';
   const isFlipped = Boolean(backContent) && (controlled ? flipped : innerFlipped);
 
-  const settings: Settings = {
-    amplitude: clamp(rotateAmplitude, 0, 60),
-    scale: Math.max(0.5, scaleOnHover),
-    smoothness: clamp(smoothness, 0, 1),
-    glare: clamp(glare, 0, 1),
-    shadow: clamp(shadow, 0, 1),
-    parallax: Math.max(0, parallax),
-    axis,
-    reverse,
-    trackWindow,
-    floating,
-    gyroscope,
-    intro,
-    introDelay: Math.max(0, introDelay),
-    flippable: Boolean(backContent) && flipOnClick,
-    interactive: (Boolean(backContent) && flipOnClick) || Boolean(onClick),
-    flipped: isFlipped,
-    tooltip: showTooltip && Boolean(captionText)
-  };
+  const hasBackContent = Boolean(backContent);
+  const hasOnClick = Boolean(onClick);
+  const hasCaption = Boolean(captionText);
+
+  const settings = useMemo<Settings>(
+    () => ({
+      amplitude: clamp(rotateAmplitude, 0, 60),
+      scale: Math.max(0.5, scaleOnHover),
+      smoothness: clamp(smoothness, 0, 1),
+      glare: clamp(glare, 0, 1),
+      shadow: clamp(shadow, 0, 1),
+      parallax: Math.max(0, parallax),
+      axis,
+      reverse,
+      trackWindow,
+      floating,
+      gyroscope,
+      intro,
+      introDelay: Math.max(0, introDelay),
+      flippable: hasBackContent && flipOnClick,
+      interactive: (hasBackContent && flipOnClick) || hasOnClick,
+      flipped: isFlipped,
+      tooltip: showTooltip && hasCaption,
+    }),
+    [
+      rotateAmplitude,
+      scaleOnHover,
+      smoothness,
+      glare,
+      shadow,
+      parallax,
+      axis,
+      reverse,
+      trackWindow,
+      floating,
+      gyroscope,
+      intro,
+      introDelay,
+      hasBackContent,
+      flipOnClick,
+      hasOnClick,
+      isFlipped,
+      showTooltip,
+      hasCaption,
+    ]
+  );
   const settingsRef = useRef(settings);
 
   useEffect(() => {
-    settingsRef.current = settings;
-    wakeRef.current?.();
-  });
+    if (settingsRef.current !== settings) {
+      settingsRef.current = settings;
+      wakeRef.current?.();
+    }
+  }, [settings]);
 
   useEffect(() => {
     const figure = figureRef.current;
@@ -453,6 +483,11 @@ const TiltedCard = ({
       if (typeof request === 'function') request.call(window.DeviceOrientationEvent).catch(() => {});
     };
 
+    const releaseWindowPress = () => {
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onCancel);
+    };
+
     const onDown = (event: PointerEvent) => {
       press.active = true;
       press.moved = false;
@@ -463,16 +498,20 @@ const TiltedCard = ({
         pointer.inside = true;
         track(event);
       }
+      window.addEventListener('pointerup', onUp, { passive: true });
+      window.addEventListener('pointercancel', onCancel, { passive: true });
       askMotion();
       wake();
     };
     const onUp = (event: PointerEvent) => {
+      releaseWindowPress();
       if (!press.active) return;
       press.active = false;
       if (event.pointerType !== 'mouse' && event.pointerType !== 'pen') pointer.inside = false;
       wake();
     };
     const onCancel = () => {
+      releaseWindowPress();
       press.active = false;
       press.moved = true;
       pointer.inside = false;
@@ -506,17 +545,25 @@ const TiltedCard = ({
       wake();
     };
 
+    const trackWindowRef = {
+      move: onWindowMove,
+      leave: onWindowLeave,
+    };
+    const orientationHandler = onOrientation;
+
     figure.addEventListener('pointerenter', onEnter);
     figure.addEventListener('pointermove', onMove);
     figure.addEventListener('pointerleave', onLeave);
     figure.addEventListener('pointerdown', onDown);
     figure.addEventListener('focus', onFocus);
     figure.addEventListener('blur', onBlur);
-    window.addEventListener('pointerup', onUp, { passive: true });
-    window.addEventListener('pointercancel', onCancel, { passive: true });
-    window.addEventListener('pointermove', onWindowMove, { passive: true });
-    document.documentElement.addEventListener('pointerleave', onWindowLeave);
-    window.addEventListener('deviceorientation', onOrientation);
+    if (settingsRef.current.trackWindow) {
+      window.addEventListener('pointermove', trackWindowRef.move, { passive: true });
+      document.documentElement.addEventListener('pointerleave', trackWindowRef.leave);
+    }
+    if (settingsRef.current.gyroscope && coarse) {
+      window.addEventListener('deviceorientation', orientationHandler);
+    }
 
     const observer = new IntersectionObserver(entries => {
       visible = entries.some(entry => entry.isIntersecting);
@@ -532,17 +579,16 @@ const TiltedCard = ({
       wakeRef.current = null;
       flipRef.current = null;
       observer.disconnect();
+      releaseWindowPress();
       figure.removeEventListener('pointerenter', onEnter);
       figure.removeEventListener('pointermove', onMove);
       figure.removeEventListener('pointerleave', onLeave);
       figure.removeEventListener('pointerdown', onDown);
       figure.removeEventListener('focus', onFocus);
       figure.removeEventListener('blur', onBlur);
-      window.removeEventListener('pointerup', onUp);
-      window.removeEventListener('pointercancel', onCancel);
-      window.removeEventListener('pointermove', onWindowMove);
-      document.documentElement.removeEventListener('pointerleave', onWindowLeave);
-      window.removeEventListener('deviceorientation', onOrientation);
+      window.removeEventListener('pointermove', trackWindowRef.move);
+      document.documentElement.removeEventListener('pointerleave', trackWindowRef.leave);
+      window.removeEventListener('deviceorientation', orientationHandler);
     };
   }, []);
 

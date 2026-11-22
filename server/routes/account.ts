@@ -1,6 +1,14 @@
 import { Hono } from 'hono'
 import { claimRedeemCode, getUserWithOAuthById, mapLedgerRow, mapUserRow } from '../db'
 import { requireAuth } from '../middleware'
+import {
+  clearRateLimits,
+  formatRetryWait,
+  getRequestClientIp,
+  inspectRateLimits,
+  recordRateLimitHit,
+  type RateLimitDescriptor,
+} from '../rateLimit'
 import type { AppEnv } from '../types'
 
 export const accountRoutes = new Hono<AppEnv>()
@@ -41,12 +49,40 @@ accountRoutes.post('/redeem', async (c) => {
     return c.json({ error: { message: '请求体格式错误' } }, 400)
   }
 
+  const now = Date.now()
+  const rlDescriptors: RateLimitDescriptor[] = [
+    {
+      scope: 'redeem_user',
+      identifier: user.id,
+      maxAttempts: 10,
+      windowMs: 15 * 60 * 1000,
+      lockMs: 5 * 60 * 1000,
+    },
+    {
+      scope: 'redeem_ip',
+      identifier: getRequestClientIp(c),
+      maxAttempts: 20,
+      windowMs: 15 * 60 * 1000,
+      lockMs: 5 * 60 * 1000,
+    },
+  ]
+  const rlState = await inspectRateLimits(c.env.DB, rlDescriptors, now)
+  if (rlState.blocked) {
+    c.header('Retry-After', String(rlState.retryAfterSec))
+    return c.json(
+      { error: { message: `兑换尝试过于频繁，请 ${formatRetryWait(rlState.retryAfterSec)} 后再试` } },
+      429
+    )
+  }
+
   const code = typeof body.code === 'string' ? body.code : ''
   try {
     const result = await claimRedeemCode(c.env.DB, { code, userId: user.id })
+    await clearRateLimits(c.env.DB, rlState.keys)
     c.header('Cache-Control', 'no-store')
     return c.json(result)
   } catch (err) {
+    await recordRateLimitHit(c.env.DB, rlDescriptors, rlState, now)
     return c.json(
       { error: { message: err instanceof Error ? err.message : '兑换失败' } },
       400

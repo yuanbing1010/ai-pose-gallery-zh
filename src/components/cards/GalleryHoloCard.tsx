@@ -16,6 +16,7 @@ export interface GalleryHoloCardProps {
   index?: number
   picked: boolean
   flipped: boolean
+  hideFlip?: boolean
   accent: CardAccent
   onFlipToggle: () => void
   onPickToggle: () => void
@@ -31,6 +32,7 @@ export function GalleryHoloCard({
   index = 0,
   picked,
   flipped,
+  hideFlip = false,
   accent,
   onFlipToggle,
   onPickToggle,
@@ -118,19 +120,21 @@ export function GalleryHoloCard({
               {media}
             </button>
 
-            <div className="pointer-events-none absolute inset-x-2 top-2 z-10 flex items-center justify-between gap-1.5">
-              <button
-                type="button"
-                aria-label={flipAriaLabel}
-                title={flipAriaLabel}
-                onClick={(e) => {
-                  e.stopPropagation()
-                  onFlipToggle()
-                }}
-                className="md-pill pointer-events-auto flex size-7 items-center justify-center rounded-full transition-colors hover:bg-primary hover:text-primary-foreground"
-              >
-                <RotateCwIcon className="size-3.5" />
-              </button>
+            <div className={cn('pointer-events-none absolute inset-x-2 top-2 z-10 flex items-center gap-1.5', hideFlip ? 'justify-end' : 'justify-between')}>
+              {!hideFlip && (
+                <button
+                  type="button"
+                  aria-label={flipAriaLabel}
+                  title={flipAriaLabel}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onFlipToggle()
+                  }}
+                  className="md-pill pointer-events-auto flex size-7 items-center justify-center rounded-full transition-colors hover:bg-primary hover:text-primary-foreground"
+                >
+                  <RotateCwIcon className="size-3.5" />
+                </button>
+              )}
 
               <button
                 type="button"

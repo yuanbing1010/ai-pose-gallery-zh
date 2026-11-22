@@ -1,13 +1,15 @@
 import { queryOptions } from '@tanstack/react-query'
-import type { CostumeItem, PortraitItem, PoseGroup, PoseItem } from '@/types/gallery'
+import { MIO_POSE_SYSTEM } from '../../shared/mioArchive'
+import type { CostumeItem, MioGalleryPayload, PortraitItem, PoseGroup, PoseItem } from '@/types/gallery'
 
-export const ANGLES = ['正面', '俯视', '仰视', '侧面', '斜侧'] as const
+export const ANGLES = ['正面', '俯视', '仰视', '侧面', '斜侧', '背面'] as const
 
 export const PREFERRED_POSE_LINE_ORDER = [
   '全身单人・标准系',
   '上半身单人',
   '全身单人・性感系',
   '双人缠绵',
+  MIO_POSE_SYSTEM,
 ] as const
 
 export function buildPoseGroups(items: PoseItem[]): { items: PoseItem[]; groups: PoseGroup[]; lines: string[] } {
@@ -54,16 +56,81 @@ export function buildPoseGroups(items: PoseItem[]): { items: PoseItem[]; groups:
   return { items, groups, lines }
 }
 
-const GALLERY_DATA_VERSION = '20261115'
+const GALLERY_DATA_VERSION = '20261119'
+
+let mioOverlayPromise: Promise<MioGalleryPayload | null> | null = null
+let mioOverlayFetchedAt = 0
+
+export function invalidateMioGalleryCache(): void {
+  mioOverlayPromise = null
+  mioOverlayFetchedAt = 0
+}
+
+async function fetchStaticJson<T>(url: string, fallback?: T): Promise<T> {
+  const res = await fetch(`${url}?v=${GALLERY_DATA_VERSION}`)
+  if (!res.ok) {
+    if (fallback !== undefined) return fallback
+    throw new Error(`加载参考库数据失败: HTTP ${res.status}`)
+  }
+  return (await res.json()) as T
+}
+
+async function fetchSyncedMioOverlay(): Promise<MioGalleryPayload | null> {
+  const now = Date.now()
+  if (!mioOverlayPromise || now - mioOverlayFetchedAt > 60_000) {
+    mioOverlayFetchedAt = now
+    mioOverlayPromise = (async () => {
+      try {
+        const res = await fetch('/api/gallery/mio', { signal: AbortSignal.timeout(4000) })
+        if (!res.ok) return null
+        const payload = (await res.json()) as Partial<MioGalleryPayload>
+        if (!payload?.synced) return null
+        return payload as MioGalleryPayload
+      } catch {
+        return null
+      }
+    })()
+  }
+  return mioOverlayPromise
+}
+
+function resolveEffectiveMioList<T extends { id: string }>(
+  staticList: T[],
+  staticGenerated: string | null,
+  overlayList: T[] | undefined,
+  overlayGenerated: string | null | undefined,
+  overlaySynced: boolean | undefined
+): T[] {
+  if (!overlaySynced || !overlayList || overlayList.length === 0) {
+    return staticList
+  }
+  const sGen = staticGenerated || ''
+  const oGen = overlayGenerated || ''
+  const preferOverlay = oGen > sGen || (oGen === sGen && overlayList.length >= staticList.length)
+  if (preferOverlay) return overlayList
+  const seen = new Set(staticList.map((item) => item.id))
+  const extras = overlayList.filter((item) => !seen.has(item.id))
+  return extras.length > 0 ? [...staticList, ...extras] : staticList
+}
 
 export const posesQuery = queryOptions({
   queryKey: ['gallery', 'poses', GALLERY_DATA_VERSION],
   staleTime: Infinity,
   queryFn: async () => {
-    const res = await fetch(`/data/pose-zh.json?v=${GALLERY_DATA_VERSION}`)
-    if (!res.ok) throw new Error(`加载姿势数据失败: HTTP ${res.status}`)
-    const data = (await res.json()) as PoseItem[]
-    return buildPoseGroups(data)
+    const [giaPoses, mioStaticPoses, mioSourceMeta, overlay] = await Promise.all([
+      fetchStaticJson<PoseItem[]>('/data/pose-zh.json'),
+      fetchStaticJson<PoseItem[]>('/data/pose-mio-zh.json', []),
+      fetchStaticJson<{ generated?: string }>('/data/mio/source.json', {}),
+      fetchSyncedMioOverlay(),
+    ])
+    const effectiveMio = resolveEffectiveMioList(
+      mioStaticPoses,
+      mioSourceMeta.generated || null,
+      overlay?.poses,
+      overlay?.generated,
+      overlay?.synced
+    )
+    return buildPoseGroups([...giaPoses, ...effectiveMio])
   },
 })
 
@@ -71,12 +138,23 @@ export const costumesQuery = queryOptions({
   queryKey: ['gallery', 'costumes', GALLERY_DATA_VERSION],
   staleTime: Infinity,
   queryFn: async () => {
-    const lists = await Promise.all(['/data/costume-zh.json', '/data/costume-anime-zh.json', '/data/costume-gia-anime-zh.json', '/data/costume-shisei-zh.json'].map(async (url) => {
-      const res = await fetch(`${url}?v=${GALLERY_DATA_VERSION}`)
-      if (!res.ok) throw new Error(`加载服装数据失败: HTTP ${res.status}`)
-      return (await res.json()) as CostumeItem[]
-    }))
-    return lists.flat()
+    const [giaReal, charadb, giaAnime, shisei, mioStaticCostumes, mioSourceMeta, overlay] = await Promise.all([
+      fetchStaticJson<CostumeItem[]>('/data/costume-zh.json'),
+      fetchStaticJson<CostumeItem[]>('/data/costume-anime-zh.json'),
+      fetchStaticJson<CostumeItem[]>('/data/costume-gia-anime-zh.json'),
+      fetchStaticJson<CostumeItem[]>('/data/costume-shisei-zh.json'),
+      fetchStaticJson<CostumeItem[]>('/data/costume-mio-zh.json', []),
+      fetchStaticJson<{ generated?: string }>('/data/mio/source.json', {}),
+      fetchSyncedMioOverlay(),
+    ])
+    const effectiveMio = resolveEffectiveMioList(
+      mioStaticCostumes,
+      mioSourceMeta.generated || null,
+      overlay?.costumes,
+      overlay?.generated,
+      overlay?.synced
+    )
+    return [...giaReal, ...charadb, ...giaAnime, ...shisei, ...effectiveMio]
   },
 })
 

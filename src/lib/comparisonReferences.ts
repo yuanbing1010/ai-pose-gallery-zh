@@ -1,5 +1,5 @@
 import type { GenerationHistoryItem } from '@/types/gallery'
-import { poseImagePath, referenceImageUrl } from './recipeImages'
+import { hasPoseDepthMap, poseImagePath, referenceImageUrl } from './recipeImages'
 
 export interface ComparisonReference {
   id: string
@@ -29,7 +29,7 @@ export function comparisonReferences(result: GenerationHistoryItem): ComparisonR
   if (recipe.pose) {
     add(
       'pose',
-      `姿势 · ${recipe.pose.姿势名称}${recipe.pose.useDepth ? '（深度图）' : ''}`,
+      `姿势 · ${recipe.pose.姿势名称}${recipe.pose.useDepth && hasPoseDepthMap(recipe.pose) ? '（深度图）' : ''}`,
       poseImagePath(recipe.pose)
     )
   }

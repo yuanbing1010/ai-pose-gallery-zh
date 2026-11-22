@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from 'react'
-import { ArrowRightIcon, LoaderCircleIcon } from 'lucide-react'
+import { ArrowRightIcon, ChevronLeftIcon, ChevronRightIcon, LoaderCircleIcon } from 'lucide-react'
+import { Button } from '@/components/ui/button'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -98,11 +99,21 @@ const METRIC_TONE_CLS: Record<NonNullable<AdminMetricItem['tone']>, string> = {
 }
 
 export function AdminMetricGrid({ items }: { items: AdminMetricItem[] }) {
+  const colsCls =
+    items.length <= 1
+      ? 'grid-cols-1 sm:divide-y-0'
+      : items.length === 2
+        ? 'grid-cols-2 sm:grid-cols-2 sm:divide-y-0'
+        : items.length === 3
+          ? 'grid-cols-2 sm:grid-cols-3 sm:divide-y-0'
+          : items.length === 5
+            ? 'grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 lg:divide-y-0'
+            : 'grid-cols-2 sm:grid-cols-4 lg:divide-y-0'
   return (
     <div
       className={cn(
-        'grid grid-cols-2 divide-x divide-y divide-zinc-200 border border-zinc-200 sm:divide-y-0 dark:divide-zinc-800 dark:border-zinc-800',
-        items.length === 3 ? 'sm:grid-cols-3' : 'sm:grid-cols-4'
+        'grid divide-x divide-y divide-zinc-200 border border-zinc-200 dark:divide-zinc-800 dark:border-zinc-800',
+        colsCls
       )}
     >
       {items.map((item, idx) => {
@@ -313,5 +324,74 @@ export function AdminConfirmDialog({
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
+  )
+}
+
+export function AdminPagination({
+  offset,
+  limit,
+  total,
+  loading = false,
+  unitLabel = '条',
+  alwaysShowSummary = false,
+  onPageChange,
+  className,
+}: {
+  offset: number
+  limit: number
+  total: number
+  loading?: boolean
+  unitLabel?: string
+  alwaysShowSummary?: boolean
+  onPageChange: (nextOffset: number) => void
+  className?: string
+}) {
+  if (total <= 0) return null
+  if (!alwaysShowSummary && total <= limit) return null
+
+  const currentPage = Math.floor(offset / limit) + 1
+  const totalPages = Math.max(1, Math.ceil(total / limit))
+  const startItem = Math.min(total, offset + 1)
+  const endItem = Math.min(total, offset + limit)
+
+  return (
+    <div
+      className={cn(
+        'flex flex-wrap items-center justify-between gap-2 border border-zinc-200 px-4 py-2.5 font-mono text-xs text-zinc-500 dark:border-zinc-800',
+        className
+      )}
+    >
+      <span>
+        {alwaysShowSummary
+          ? `第 ${startItem}–${endItem} ${unitLabel} · 共 ${total} ${unitLabel}`
+          : `第 ${currentPage} / ${totalPages} 页 · 共 ${total} ${unitLabel}`}
+      </span>
+      {total > limit && (
+        <div className="flex items-center gap-1.5">
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="h-7 rounded-none text-xs"
+            disabled={loading || offset <= 0}
+            onClick={() => onPageChange(Math.max(0, offset - limit))}
+          >
+            <ChevronLeftIcon className="size-3.5" />
+            上一页
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="h-7 rounded-none text-xs"
+            disabled={loading || offset + limit >= total}
+            onClick={() => onPageChange(offset + limit)}
+          >
+            下一页
+            <ChevronRightIcon className="size-3.5" />
+          </Button>
+        </div>
+      )}
+    </div>
   )
 }

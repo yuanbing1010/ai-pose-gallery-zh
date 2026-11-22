@@ -138,6 +138,14 @@ export function playSpriteHover(providerId: ImageProviderId): void {
     eng.playTone({ freqFrom: 660, freqTo: 880, type: 'sine', gain: 0.018, dur: 0.055 })
     return
   }
+  if (providerId === 'muse') {
+    eng.playTone({ freqFrom: 1174.66, freqTo: 1396.91, type: 'sine', gain: 0.018, dur: 0.06 })
+    return
+  }
+  if (providerId === 'seedream') {
+    eng.playNoiseTick({ freqFrom: 1600, freqTo: 2900, q: 2.0, gain: 0.018, dur: 0.045 })
+    return
+  }
   eng.playTone({ freqFrom: 987.77, freqTo: 1174.66, type: 'triangle', gain: 0.02, dur: 0.065 })
 }
 
@@ -155,6 +163,20 @@ export function playSpriteSelect(providerId: ImageProviderId): void {
     // 星舰跃迁清脆扫频
     eng.playTone({ freqFrom: 440, freqTo: 880, type: 'triangle', gain: 0.045, dur: 0.11 })
     eng.playTone({ freqFrom: 1108.73, freqTo: 1318.51, type: 'sine', gain: 0.035, dur: 0.13, delay: 0.04 })
+    return
+  }
+  if (providerId === 'muse') {
+    // 缪斯竖琴柔美双音泛音
+    eng.playTone({ freqFrom: 880, freqTo: 932.33, type: 'sine', gain: 0.04, dur: 0.11 })
+    eng.playTone({ freqFrom: 1396.91, freqTo: 1567.98, type: 'sine', gain: 0.036, dur: 0.15, delay: 0.045 })
+    return
+  }
+  if (providerId === 'seedream') {
+    // 旋梦造境师：字节四连琴键跳跃音（呼应四根跃动音律柱）
+    const keys = [523.25, 659.25, 783.99, 1046.5]
+    keys.forEach((f, idx) => {
+      eng.playTone({ freqFrom: f * 0.96, freqTo: f, type: 'triangle', gain: 0.036, dur: 0.085, delay: idx * 0.038 })
+    })
     return
   }
   // 蕉糖幻想家：三连星芒铃音
@@ -185,6 +207,26 @@ export function playSpritePoke(providerId: ImageProviderId, combo: number): void
       type: 'sine',
       gain: 0.048,
       dur: 0.1,
+    })
+    return
+  }
+  if (providerId === 'muse') {
+    eng.playTone({
+      freqFrom: 1046.5 * pitchScale,
+      freqTo: 1480 * pitchScale,
+      type: 'sine',
+      gain: 0.044,
+      dur: 0.105,
+    })
+    return
+  }
+  if (providerId === 'seedream') {
+    eng.playTone({
+      freqFrom: 820 * pitchScale,
+      freqTo: 1240 * pitchScale,
+      type: 'sine',
+      gain: 0.046,
+      dur: 0.095,
     })
     return
   }
@@ -249,6 +291,36 @@ export function playSpriteTravel(providerId: ImageProviderId, direction: 'to_can
       type: 'sine',
       gain: 0.04,
       dur: 0.28,
+    })
+    return
+  }
+  if (providerId === 'muse') {
+    // 缪斯丝带滑翔泛音
+    const notes = direction === 'to_canvas' ? [587.33, 880, 1174.66] : [1174.66, 880, 587.33]
+    notes.forEach((f, idx) => {
+      eng.playTone({
+        freqFrom: f,
+        freqTo: f * 1.04,
+        type: 'sine',
+        gain: 0.034,
+        dur: 0.15,
+        delay: idx * 0.06,
+      })
+    })
+    return
+  }
+  if (providerId === 'seedream') {
+    // 四连音律跃动音效
+    const notes = direction === 'to_canvas' ? [523.25, 659.25, 783.99, 1046.5] : [1046.5, 783.99, 659.25, 523.25]
+    notes.forEach((f, idx) => {
+      eng.playTone({
+        freqFrom: f,
+        freqTo: f * 1.05,
+        type: 'triangle',
+        gain: 0.035,
+        dur: 0.095,
+        delay: idx * 0.055,
+      })
     })
     return
   }

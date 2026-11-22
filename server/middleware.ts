@@ -101,6 +101,12 @@ export const withSession: MiddlewareHandler<AppEnv> = async (c, next) => {
     adminToken && adminToken === token
       ? resolved
       : resolvedAdmin
+  if (resolved?.renewed && token) {
+    setSessionCookie(c, token)
+  }
+  if (effectiveAdmin?.renewed && adminToken && effectiveAdmin.user.role === 'admin') {
+    setAdminSessionCookie(c, adminToken)
+  }
   c.set('user', resolved?.user ?? null)
   c.set('sessionId', resolved?.sessionId ?? null)
   c.set('adminUser', effectiveAdmin?.user?.role === 'admin' ? effectiveAdmin.user : null)

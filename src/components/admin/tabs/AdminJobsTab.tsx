@@ -2,8 +2,6 @@ import { useCallback, useEffect, useState } from 'react'
 import { Link, useNavigate } from '@tanstack/react-router'
 import {
   ActivityIcon,
-  ChevronLeftIcon,
-  ChevronRightIcon,
   SearchIcon,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -13,10 +11,9 @@ import { fetchAdminGenerationsApi } from '@/lib/apiClient'
 import { toast } from '@/lib/notifications'
 import type { AdminJobsStatsSummary, GenerationHistoryItem } from '@/types/gallery'
 import { PROVIDER_META, PROVIDER_ORDER } from '../../../../shared/studio'
-import { AdminMetricGrid, AdminPageHeader } from '../AdminPrimitives'
+import { AdminMetricGrid, AdminPageHeader, AdminPagination } from '../AdminPrimitives'
 import {
   ADMIN_BTN_CLS,
-  ADMIN_BTN_SM_CLS,
   ADMIN_SELECT_CLS,
   AUDIT_STATUS_META,
   formatAdminDateTime,
@@ -39,6 +36,8 @@ export function AdminJobsTab({ reloadTick, onLoadingChange }: AdminJobsTabProps)
     succeeded: 0,
     failed: 0,
     processing: 0,
+    queued: 0,
+    cancelled: 0,
     retried: 0,
   })
   const [jobStatusFilter, setJobStatusFilter] = useState('all')
@@ -124,11 +123,13 @@ export function AdminJobsTab({ reloadTick, onLoadingChange }: AdminJobsTabProps)
               <SelectTrigger className={`w-28 font-mono ${ADMIN_SELECT_CLS}`}>
                 <SelectValue />
               </SelectTrigger>
-              <SelectContent>
+              <SelectContent className="rounded-none">
                 <SelectItem value="all">全部状态</SelectItem>
                 <SelectItem value="succeeded">成功</SelectItem>
                 <SelectItem value="processing">进行中</SelectItem>
+                <SelectItem value="queued">排队等待</SelectItem>
                 <SelectItem value="failed">失败</SelectItem>
+                <SelectItem value="cancelled">已取消排队</SelectItem>
               </SelectContent>
             </Select>
             <Select
@@ -141,7 +142,7 @@ export function AdminJobsTab({ reloadTick, onLoadingChange }: AdminJobsTabProps)
               <SelectTrigger className={`w-32 font-mono ${ADMIN_SELECT_CLS}`}>
                 <SelectValue />
               </SelectTrigger>
-              <SelectContent>
+              <SelectContent className="rounded-none">
                 <SelectItem value="all">全部画师</SelectItem>
                 {PROVIDER_ORDER.map((pid) => (
                   <SelectItem key={pid} value={pid}>
@@ -211,10 +212,11 @@ export function AdminJobsTab({ reloadTick, onLoadingChange }: AdminJobsTabProps)
                     (a) =>
                       a.triggerType === 'failover_switch' || a.triggerType === 'fallback_retry'
                   ) || uniqueChannels > 1
-                const hasRetry = attempts.some(
+                const retryCount = attempts.filter(
                   (a) =>
                     a.triggerType === 'transient_retry' || a.triggerType === 'fallback_retry'
-                )
+                ).length
+                const hasRetry = retryCount > 0
                 const submittedPrompt =
                   trace?.promptBreakdown?.finalPrompt || j.prompt || j.recipeSummary
 
@@ -309,7 +311,13 @@ export function AdminJobsTab({ reloadTick, onLoadingChange }: AdminJobsTabProps)
                           <div className="flex flex-wrap items-center gap-1">
                             {attemptCount === 0 ? (
                               <span className="border border-zinc-300 px-1.5 py-0.5 text-xs text-zinc-600 dark:border-zinc-700 dark:text-zinc-400">
-                                {j.status === 'processing' ? '调度中' : '0次调用'}
+                                {j.status === 'queued'
+                                  ? `排队 #${j.queueInfo?.position ?? '—'}`
+                                  : j.status === 'cancelled'
+                                    ? '取消未调度'
+                                    : j.status === 'processing'
+                                      ? '调度中'
+                                      : '0次调用'}
                               </span>
                             ) : attemptCount === 1 ? (
                               <span
@@ -329,15 +337,16 @@ export function AdminJobsTab({ reloadTick, onLoadingChange }: AdminJobsTabProps)
                               </span>
                             ) : (
                               <>
-                                {hasFailover ? (
+                                {hasFailover && (
                                   <span className="border border-amber-600/45 bg-amber-500/10 px-1.5 py-0.5 text-xs font-bold text-amber-800 dark:text-amber-300">
                                     切换{uniqueChannels}渠道
                                   </span>
-                                ) : hasRetry ? (
+                                )}
+                                {hasRetry && (
                                   <span className="border border-sky-600/45 bg-sky-500/10 px-1.5 py-0.5 text-xs font-bold text-sky-800 dark:text-sky-300">
-                                    重试{attemptCount}次
+                                    重试{retryCount}次
                                   </span>
-                                ) : null}
+                                )}
                                 {hasDowngrade && (
                                   <span className="border border-purple-600/45 bg-purple-500/10 px-1.5 py-0.5 text-xs font-bold text-purple-800 dark:text-purple-300">
                                     降级重试
@@ -372,7 +381,11 @@ export function AdminJobsTab({ reloadTick, onLoadingChange }: AdminJobsTabProps)
                             ? 'font-bold text-emerald-600 dark:text-emerald-400'
                             : j.status === 'failed'
                               ? 'font-bold text-red-500'
-                              : 'font-bold text-amber-600'
+                              : j.status === 'queued'
+                                ? 'font-bold text-sky-600 dark:text-sky-400'
+                                : j.status === 'cancelled'
+                                  ? 'font-bold text-zinc-500'
+                                  : 'font-bold text-amber-600'
                         }
                       >
                         {AUDIT_STATUS_META[j.status]?.label ?? j.status}
@@ -405,37 +418,13 @@ export function AdminJobsTab({ reloadTick, onLoadingChange }: AdminJobsTabProps)
         </table>
       </div>
 
-      {total > PAGE_LIMIT && (
-        <div className="flex items-center justify-between border border-zinc-200 px-4 py-2.5 font-mono text-xs text-zinc-500 dark:border-zinc-800">
-          <span>
-            第 {Math.floor(offset / PAGE_LIMIT) + 1} / {Math.ceil(total / PAGE_LIMIT)} 页 · 共 {total} 条
-          </span>
-          <div className="flex items-center gap-1.5">
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              className={ADMIN_BTN_SM_CLS}
-              disabled={offset === 0}
-              onClick={() => setOffset((o) => Math.max(0, o - PAGE_LIMIT))}
-            >
-              <ChevronLeftIcon className="size-3.5" />
-              上一页
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              className={ADMIN_BTN_SM_CLS}
-              disabled={offset + PAGE_LIMIT >= total}
-              onClick={() => setOffset((o) => o + PAGE_LIMIT)}
-            >
-              下一页
-              <ChevronRightIcon className="size-3.5" />
-            </Button>
-          </div>
-        </div>
-      )}
+      <AdminPagination
+        offset={offset}
+        limit={PAGE_LIMIT}
+        total={total}
+        unitLabel="条"
+        onPageChange={setOffset}
+      />
     </div>
   )
 }

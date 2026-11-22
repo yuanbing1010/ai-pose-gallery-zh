@@ -1,7 +1,6 @@
 import { useMemo, useState } from 'react'
 import { motion } from 'motion/react'
 import {
-  CheckIcon,
   GlobeIcon,
   LayersIcon,
   SearchIcon,
@@ -12,7 +11,7 @@ import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import { COSTUME_STYLE_TABS, type CostumeStyleTab } from '@/lib/costumeFrame'
 import { cn } from '@/lib/utils'
 
-export type CostumeSourceFilter = 'all' | 'gia' | 'gia-anime' | 'charadb' | 'shisei'
+export type CostumeSourceFilter = 'all' | 'gia' | 'gia-anime' | 'charadb' | 'shisei' | 'mio'
 
 type SectionKey = 'all' | 'style' | 'category' | 'tag' | 'source'
 
@@ -98,7 +97,6 @@ export function CostumeFilterModal({
         <div className="flex items-center gap-3 border-b border-border px-4 py-3.5">
           <SearchIcon className="size-4 shrink-0 text-muted-foreground" />
           <input
-            autoFocus
             type="text"
             value={filterSearch}
             onChange={(e) => setFilterSearch(e.target.value)}
@@ -114,7 +112,7 @@ export function CostumeFilterModal({
           </button>
         </div>
 
-        {/* 双栏主体：左侧维度导航 + 右侧统计勾选列表 */}
+        {/* 双栏主体：左侧维度导航 + 右侧统计单选列表 */}
         <div className="grid max-h-[68dvh] min-h-[320px] grid-cols-1 grid-rows-[auto_minmax(0,1fr)] sm:max-h-[60dvh] sm:grid-cols-[176px_minmax(0,1fr)] sm:grid-rows-1">
           <aside className="no-scrollbar flex min-w-0 shrink-0 gap-1 overflow-x-auto border-b border-border p-2.5 sm:flex-col sm:border-r sm:border-b-0">
             {RAIL_ITEMS.map((item) => {
@@ -151,26 +149,28 @@ export function CostumeFilterModal({
                 <div className="px-2 text-xs font-medium tracking-wider text-muted-foreground uppercase">
                   风格板块
                 </div>
-                <div className="space-y-0.5">
+                <div className="space-y-0.5" role="radiogroup" aria-label="风格板块">
                   {COSTUME_STYLE_TABS.filter((t) => !q || t.label.toLowerCase().includes(q)).map((t) => {
                     const checked = styleTab === t.id
                     return (
                       <button
                         key={t.id}
                         type="button"
+                        role="radio"
+                        aria-checked={checked}
                         onClick={() => onSelectStyle(t.id)}
                         className="flex w-full items-center justify-between rounded-[10px] px-2.5 py-2 text-[13px] transition-colors hover:bg-muted/70"
                       >
                         <span className="flex items-center gap-2.5">
                           <span
                             className={cn(
-                              'flex size-4 items-center justify-center rounded-[5px] border transition-colors',
+                              'flex size-4 items-center justify-center rounded-full border transition-colors',
                               checked
                                 ? 'border-primary bg-primary text-primary-foreground'
                                 : 'border-border bg-transparent'
                             )}
                           >
-                            {checked && <CheckIcon className="size-3 stroke-[2.5]" />}
+                            {checked && <span className="size-1.5 rounded-full bg-current" />}
                           </span>
                           <span className={checked ? 'font-medium text-foreground' : 'text-muted-foreground'}>
                             {t.label}
@@ -191,26 +191,53 @@ export function CostumeFilterModal({
                 <div className="px-2 text-xs font-medium tracking-wider text-muted-foreground uppercase">
                   穿搭分类
                 </div>
-                <div className="space-y-0.5">
+                <div className="space-y-0.5" role="radiogroup" aria-label="穿搭分类">
+                  {!q && (
+                    <button
+                      type="button"
+                      role="radio"
+                      aria-checked={category === ''}
+                      onClick={() => onSelectCategory('')}
+                      className="flex w-full items-center justify-between rounded-[10px] px-2.5 py-2 text-[13px] transition-colors hover:bg-muted/70"
+                    >
+                      <span className="flex items-center gap-2.5">
+                        <span
+                          className={cn(
+                            'flex size-4 items-center justify-center rounded-full border transition-colors',
+                            category === ''
+                              ? 'border-primary bg-primary text-primary-foreground'
+                              : 'border-border bg-transparent'
+                          )}
+                        >
+                          {category === '' && <span className="size-1.5 rounded-full bg-current" />}
+                        </span>
+                        <span className={category === '' ? 'font-medium text-foreground' : 'text-muted-foreground'}>
+                          全部分类
+                        </span>
+                      </span>
+                    </button>
+                  )}
                   {filteredCategories.map((c) => {
                     const checked = category === c.label
                     return (
                       <button
                         key={c.label}
                         type="button"
+                        role="radio"
+                        aria-checked={checked}
                         onClick={() => onSelectCategory(checked ? '' : c.label)}
                         className="flex w-full items-center justify-between rounded-[10px] px-2.5 py-2 text-[13px] transition-colors hover:bg-muted/70"
                       >
                         <span className="flex items-center gap-2.5">
                           <span
                             className={cn(
-                              'flex size-4 items-center justify-center rounded-[5px] border transition-colors',
+                              'flex size-4 items-center justify-center rounded-full border transition-colors',
                               checked
                                 ? 'border-primary bg-primary text-primary-foreground'
                                 : 'border-border bg-transparent'
                             )}
                           >
-                            {checked && <CheckIcon className="size-3 stroke-[2.5]" />}
+                            {checked && <span className="size-1.5 rounded-full bg-current" />}
                           </span>
                           <span className={checked ? 'font-medium text-foreground' : 'text-muted-foreground'}>
                             {c.label}
@@ -231,26 +258,28 @@ export function CostumeFilterModal({
                 <div className="px-2 text-xs font-medium tracking-wider text-muted-foreground uppercase">
                   素材来源
                 </div>
-                <div className="space-y-0.5">
+                <div className="space-y-0.5" role="radiogroup" aria-label="素材来源">
                   {filteredSources.map((s) => {
                     const checked = sourceFilter === s.id
                     return (
                       <button
                         key={s.id}
                         type="button"
+                        role="radio"
+                        aria-checked={checked}
                         onClick={() => onSelectSource(checked && s.id !== 'all' ? 'all' : s.id)}
                         className="flex w-full items-center justify-between rounded-[10px] px-2.5 py-2 text-[13px] transition-colors hover:bg-muted/70"
                       >
                         <span className="flex items-center gap-2.5">
                           <span
                             className={cn(
-                              'flex size-4 items-center justify-center rounded-[5px] border transition-colors',
+                              'flex size-4 items-center justify-center rounded-full border transition-colors',
                               checked
                                 ? 'border-primary bg-primary text-primary-foreground'
                                 : 'border-border bg-transparent'
                             )}
                           >
-                            {checked && <CheckIcon className="size-3 stroke-[2.5]" />}
+                            {checked && <span className="size-1.5 rounded-full bg-current" />}
                           </span>
                           <span className={checked ? 'font-medium text-foreground' : 'text-muted-foreground'}>
                             {s.label}
@@ -276,26 +305,53 @@ export function CostumeFilterModal({
                     <span className="text-xs text-muted-foreground">展示高频前 48 项，输入可搜全部</span>
                   )}
                 </div>
-                <div className="space-y-0.5">
+                <div className="space-y-0.5" role="radiogroup" aria-label="单品与色彩标签">
+                  {!q && (
+                    <button
+                      type="button"
+                      role="radio"
+                      aria-checked={tag === 'all'}
+                      onClick={() => onSelectTag('all')}
+                      className="flex w-full items-center justify-between rounded-[10px] px-2.5 py-2 text-[13px] transition-colors hover:bg-muted/70"
+                    >
+                      <span className="flex items-center gap-2.5">
+                        <span
+                          className={cn(
+                            'flex size-4 items-center justify-center rounded-full border transition-colors',
+                            tag === 'all'
+                              ? 'border-primary bg-primary text-primary-foreground'
+                              : 'border-border bg-transparent'
+                          )}
+                        >
+                          {tag === 'all' && <span className="size-1.5 rounded-full bg-current" />}
+                        </span>
+                        <span className={tag === 'all' ? 'font-medium text-foreground' : 'text-muted-foreground'}>
+                          全部标签
+                        </span>
+                      </span>
+                    </button>
+                  )}
                   {filteredTags.map((t) => {
                     const checked = tag === t.label
                     return (
                       <button
                         key={t.label}
                         type="button"
+                        role="radio"
+                        aria-checked={checked}
                         onClick={() => onSelectTag(checked ? 'all' : t.label)}
                         className="flex w-full items-center justify-between rounded-[10px] px-2.5 py-2 text-[13px] transition-colors hover:bg-muted/70"
                       >
                         <span className="flex items-center gap-2.5">
                           <span
                             className={cn(
-                              'flex size-4 items-center justify-center rounded-[5px] border transition-colors',
+                              'flex size-4 items-center justify-center rounded-full border transition-colors',
                               checked
                                 ? 'border-primary bg-primary text-primary-foreground'
                                 : 'border-border bg-transparent'
                             )}
                           >
-                            {checked && <CheckIcon className="size-3 stroke-[2.5]" />}
+                            {checked && <span className="size-1.5 rounded-full bg-current" />}
                           </span>
                           <span className={checked ? 'font-medium text-foreground' : 'text-muted-foreground'}>
                             #{t.label}

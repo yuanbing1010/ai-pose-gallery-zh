@@ -6,9 +6,12 @@ import {
   PROVIDER_ORDER,
   PROVIDER_SUPPORTED_RESOLUTIONS,
   getEffectiveProfileCreditCost,
+  mergeGenerationQueueConfig,
   mergePoseSanitizeConfig,
   mergePromptTemplate,
+  mergeVisionFallbackConfig,
   normalizeProfileResolutions,
+  normalizeSupplierModelIds,
   resolveProfileDefaultResolution,
   validatePoseSanitizeInput,
   type AdminJobsStatsSummary,
@@ -18,55 +21,93 @@ import {
   type ImageProviderId,
   type PlatformConfig,
   type ProfileResolutionOption,
+  type ReferenceDescriptionKind,
   type StudioResolution,
   type StylePresetItem,
+  type SupplierQueriedModel,
 } from '../../shared/studio'
 import {
   detectImageFormat,
   encryptSecret,
   hashPassword,
   maskApiKey,
-  sha256Hex,
   verifyPassword,
 } from '../crypto'
 import {
   ADMIN_SESSION_COOKIE_NAME,
   adjustUserCredits,
+  computeQueuePositions,
   createRedeemCodesBatch,
   createSession,
   createUserWithBonus,
+  deleteReferenceDescription,
   deleteSession,
+  findReferenceDescriptionById,
   getAdminProviderSlots,
   getAdminWechatConfig,
   getPlatformConfig,
   getSuppliers,
   getUserWithOAuthById,
+  listActiveQueueRows,
+  listReferenceDescriptions,
   mapAdminUserRow,
   mapJobRow,
   mapLedgerRow,
   mapUserRow,
+  markSupplierKeyCooldown,
+  markSupplierKeySuccess,
+  parseKeyIdsJson,
   parseProfileRow,
   reapStaleProcessingJobs,
   resolveProfileForGeneration,
+  resolveSupplierSecret,
+  resolveVisionFallbackTargets,
   sanitizeStyleCategoriesInput,
   sanitizeStylePresetsInput,
   sanitizeStyleSubcategoriesInput,
   savePlatformConfig,
   saveWechatOAuthConfig,
+  syncSupplierLegacyKeyMirror,
+  updateReferenceDescriptionManual,
+  updateReferenceDescriptionRegenerated,
   type ChannelRow,
   type JobRow,
   type ModelProfileRow,
   type ProviderRow,
+  type SupplierKeyRow,
   type SupplierRow,
   type UserRow,
 } from '../db'
+import {
+  clearRateLimits,
+  formatRetryWait,
+  getRequestClientIp,
+  inspectRateLimits,
+  recordRateLimitHit,
+  type RateLimitDescriptor,
+} from '../rateLimit'
 import {
   clearAdminSessionCookie,
   requireAdmin,
   setAdminSessionCookie,
 } from '../middleware'
-import type { AppEnv } from '../types'
+import { getMioSyncStatus, syncMioArchive } from '../mioSync'
 import {
+  buildSourceFromPreviewPath,
+  devProxyAwareFetch,
+  regenerateReferenceDescriptionFromPreview,
+  resolveOrTranscribeReferenceDescription,
+  saveManualReferenceDescriptionFromSource,
+} from '../aiProviders'
+import {
+  cancelQueuedJobViaCoordinator,
+  fetchQueueSnapshotViaCoordinator,
+  forceCancelProcessingJobViaCoordinator,
+  reconcileQueueViaCoordinator,
+} from '../generationQueue'
+import type { AppEnv, Env } from '../types'
+import {
+  isPrivateOrLocalHostname,
   parseIntSafe,
   sanitizeCallbackBaseUrl,
   validateEmail,
@@ -75,6 +116,100 @@ import {
 } from '../validation'
 
 export const adminRoutes = new Hono<AppEnv>()
+
+const WAVESPEED_CHANNEL_PARAM_KEYS = [
+  'wavespeedSyncMode',
+  'wavespeedOutputFormat',
+  'wavespeedSeed',
+  'wavespeedResolution',
+  'wavespeedRefMode',
+] as const
+
+const DREAMINA_CHANNEL_PARAM_KEYS = [
+  'dreaminaRefMode',
+  'dreaminaOutputQuality',
+] as const
+
+const ALLOWED_CHANNEL_PARAM_KEYS: Record<ImageProviderId, ReadonlySet<string>> = {
+  gpt: new Set([
+    'endpointMode',
+    'size',
+    'quality',
+    'complexity',
+    'inputFidelity',
+    'background',
+    'outputFormat',
+    'moderation',
+    ...WAVESPEED_CHANNEL_PARAM_KEYS,
+    ...DREAMINA_CHANNEL_PARAM_KEYS,
+  ]),
+  gemini: new Set([
+    'endpointMode',
+    'authMode',
+    'aspectRatio',
+    'imageSize',
+    ...WAVESPEED_CHANNEL_PARAM_KEYS,
+    ...DREAMINA_CHANNEL_PARAM_KEYS,
+  ]),
+  grok: new Set([
+    'endpointMode',
+    'aspectRatio',
+    'resolution',
+    'quality',
+    'responseFormat',
+    ...WAVESPEED_CHANNEL_PARAM_KEYS,
+    ...DREAMINA_CHANNEL_PARAM_KEYS,
+  ]),
+  muse: new Set([
+    'endpointMode',
+    'aspectRatio',
+    'responseFormat',
+    ...WAVESPEED_CHANNEL_PARAM_KEYS,
+    ...DREAMINA_CHANNEL_PARAM_KEYS,
+  ]),
+  seedream: new Set([
+    'endpointMode',
+    'aspectRatio',
+    'resolution',
+    'responseFormat',
+    ...WAVESPEED_CHANNEL_PARAM_KEYS,
+    ...DREAMINA_CHANNEL_PARAM_KEYS,
+  ]),
+}
+
+function sanitizeChannelParams(providerId: ImageProviderId, raw: unknown): Record<string, string | number | boolean> {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {}
+  const allowed = ALLOWED_CHANNEL_PARAM_KEYS[providerId]
+  const out: Record<string, string | number | boolean> = {}
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (!allowed.has(k)) continue
+    if (typeof v === 'string') out[k] = v.slice(0, 100)
+    else if (typeof v === 'number' && Number.isFinite(v)) {
+      out[k] =
+        k === 'dreaminaSampleStrength'
+          ? Math.max(0, Math.min(1, Math.round(v * 100) / 100))
+          : Math.trunc(v)
+    } else if (typeof v === 'boolean') out[k] = v
+  }
+  return out
+}
+
+async function listAllR2Objects(
+  bucket: R2Bucket,
+  prefix: string
+): Promise<Array<{ key: string; size: number }>> {
+  const out: Array<{ key: string; size: number }> = []
+  let cursor: string | undefined
+  for (let page = 0; page < 20; page++) {
+    const res = await bucket.list({ prefix, limit: 1000, ...(cursor ? { cursor } : {}) })
+    for (const obj of res.objects || []) {
+      out.push({ key: obj.key, size: obj.size || 0 })
+    }
+    if (!res.truncated || !res.cursor) break
+    cursor = res.cursor
+  }
+  return out
+}
 
 function isLocalBootstrapRequest(c: Context<AppEnv>): boolean {
   try {
@@ -140,47 +275,10 @@ adminRoutes.get('/me', (c) => {
   })
 })
 
-interface AdminLoginRateBucket {
-  count: number
-  windowStart: number
-  lockedUntil: number
-}
-
 const ADMIN_LOGIN_WINDOW_MS = 15 * 60 * 1000
 const ADMIN_LOGIN_LOCK_MS = 5 * 60 * 1000
 const ADMIN_LOGIN_IP_MAX = 8
 const ADMIN_LOGIN_ACCOUNT_MAX = 5
-
-function getAdminClientIp(c: Context<AppEnv>): string {
-  const cfIp = c.req.header('cf-connecting-ip')?.trim()
-  if (cfIp) return cfIp.slice(0, 64)
-  const forwarded = c.req.header('x-forwarded-for')?.split(',')[0]?.trim()
-  if (forwarded) return forwarded.slice(0, 64)
-  return 'unknown'
-}
-
-function parseRateBucket(raw: string | undefined, now: number): AdminLoginRateBucket {
-  if (!raw) return { count: 0, windowStart: now, lockedUntil: 0 }
-  try {
-    const parsed = JSON.parse(raw) as Partial<AdminLoginRateBucket>
-    const count = Number(parsed.count) || 0
-    const windowStart = Number(parsed.windowStart) || now
-    const lockedUntil = Number(parsed.lockedUntil) || 0
-    if (now - windowStart > ADMIN_LOGIN_WINDOW_MS && lockedUntil <= now) {
-      return { count: 0, windowStart: now, lockedUntil: 0 }
-    }
-    return { count, windowStart, lockedUntil }
-  } catch {
-    return { count: 0, windowStart: now, lockedUntil: 0 }
-  }
-}
-
-function formatRetryWait(retryAfterSec: number): string {
-  if (retryAfterSec < 60) return `${retryAfterSec} 秒`
-  const mins = Math.floor(retryAfterSec / 60)
-  const secs = retryAfterSec % 60
-  return secs > 0 ? `${mins} 分 ${secs} 秒` : `${mins} 分钟`
-}
 
 adminRoutes.post('/login', async (c) => {
   let body: Record<string, unknown>
@@ -204,63 +302,34 @@ adminRoutes.post('/login', async (c) => {
 
   const lower = account.toLowerCase()
   const now = Date.now()
-  const clientIp = getAdminClientIp(c)
-  const [ipHash, acctHash] = await Promise.all([
-    sha256Hex(`ip:${clientIp}`),
-    sha256Hex(`acct:${lower}`),
-  ])
-  const ipKey = `admin_login_rl_ip_${ipHash.slice(0, 32)}`
-  const acctKey = `admin_login_rl_acct_${acctHash.slice(0, 32)}`
+  const rlDescriptors: RateLimitDescriptor[] = [
+    {
+      scope: 'admin_ip',
+      identifier: getRequestClientIp(c),
+      maxAttempts: ADMIN_LOGIN_IP_MAX,
+      windowMs: ADMIN_LOGIN_WINDOW_MS,
+      lockMs: ADMIN_LOGIN_LOCK_MS,
+    },
+    {
+      scope: 'admin_acct',
+      identifier: lower,
+      maxAttempts: ADMIN_LOGIN_ACCOUNT_MAX,
+      windowMs: ADMIN_LOGIN_WINDOW_MS,
+      lockMs: ADMIN_LOGIN_LOCK_MS,
+    },
+  ]
+  const rlState = await inspectRateLimits(c.env.DB, rlDescriptors, now)
 
-  const rlRows = await c.env.DB.prepare(
-    'SELECT key, value_json FROM system_settings WHERE key IN (?, ?)'
-  )
-    .bind(ipKey, acctKey)
-    .all<{ key: string; value_json: string }>()
-
-  const rlMap = new Map((rlRows.results || []).map((r) => [r.key, r.value_json]))
-  const ipBucket = parseRateBucket(rlMap.get(ipKey), now)
-  const acctBucket = parseRateBucket(rlMap.get(acctKey), now)
-  const maxLockedUntil = Math.max(ipBucket.lockedUntil, acctBucket.lockedUntil)
-
-  if (maxLockedUntil > now) {
-    const retryAfterSec = Math.max(1, Math.ceil((maxLockedUntil - now) / 1000))
-    c.header('Retry-After', String(retryAfterSec))
+  if (rlState.blocked) {
+    c.header('Retry-After', String(rlState.retryAfterSec))
     return c.json(
       {
         error: {
-          message: `管理端登录失败次数过多，请 ${formatRetryWait(retryAfterSec)} 后再试`,
+          message: `管理端登录失败次数过多，请 ${formatRetryWait(rlState.retryAfterSec)} 后再试`,
         },
       },
       429
     )
-  }
-
-  const recordFailure = async () => {
-    const nextIpCount = ipBucket.count + 1
-    const nextAcctCount = acctBucket.count + 1
-    const nextIp: AdminLoginRateBucket = {
-      count: nextIpCount,
-      windowStart: ipBucket.windowStart,
-      lockedUntil: nextIpCount >= ADMIN_LOGIN_IP_MAX ? now + ADMIN_LOGIN_LOCK_MS : 0,
-    }
-    const nextAcct: AdminLoginRateBucket = {
-      count: nextAcctCount,
-      windowStart: acctBucket.windowStart,
-      lockedUntil: nextAcctCount >= ADMIN_LOGIN_ACCOUNT_MAX ? now + ADMIN_LOGIN_LOCK_MS : 0,
-    }
-    await c.env.DB.batch([
-      c.env.DB.prepare(
-        `INSERT INTO system_settings (key, value_json, updated_at)
-         VALUES (?, ?, ?)
-         ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at`
-      ).bind(ipKey, JSON.stringify(nextIp), now),
-      c.env.DB.prepare(
-        `INSERT INTO system_settings (key, value_json, updated_at)
-         VALUES (?, ?, ?)
-         ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at`
-      ).bind(acctKey, JSON.stringify(nextAcct), now),
-    ])
   }
 
   const row = await c.env.DB.prepare(
@@ -277,21 +346,19 @@ adminRoutes.post('/login', async (c) => {
     .first<UserRow>()
 
   if (!row || !(await verifyPassword(password, row.password_hash))) {
-    await recordFailure()
+    await recordRateLimitHit(c.env.DB, rlDescriptors, rlState, now)
     return c.json({ error: { message: '账号或密码错误' } }, 401)
   }
   if (row.status !== 'active') {
-    await recordFailure()
+    await recordRateLimitHit(c.env.DB, rlDescriptors, rlState, now)
     return c.json({ error: { message: '该账号已被停用，请联系管理员' } }, 403)
   }
   if (row.role !== 'admin') {
-    await recordFailure()
+    await recordRateLimitHit(c.env.DB, rlDescriptors, rlState, now)
     return c.json({ error: { message: '该账号不具备管理员权限' } }, 403)
   }
 
-  await c.env.DB.prepare('DELETE FROM system_settings WHERE key IN (?, ?)')
-    .bind(ipKey, acctKey)
-    .run()
+  await clearRateLimits(c.env.DB, rlState.keys)
 
   const { rawToken } = await createSession(c.env.DB, row.id, c.req.header('user-agent'))
   setAdminSessionCookie(c, rawToken)
@@ -425,9 +492,16 @@ adminRoutes.get('/overview', async (c) => {
       `SELECT COUNT(*) AS total,
               SUM(CASE WHEN status = 'succeeded' THEN 1 ELSE 0 END) AS succeeded,
               SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed,
-              SUM(CASE WHEN status = 'processing' THEN 1 ELSE 0 END) AS processing
+              SUM(CASE WHEN status = 'processing' THEN 1 ELSE 0 END) AS processing,
+              SUM(CASE WHEN status = 'queued' THEN 1 ELSE 0 END) AS queued
        FROM generation_jobs`
-    ).first<{ total: number; succeeded: number | null; failed: number | null; processing: number | null }>(),
+    ).first<{
+      total: number
+      succeeded: number | null
+      failed: number | null
+      processing: number | null
+      queued: number | null
+    }>(),
     c.env.DB.prepare(`SELECT COUNT(*) AS total FROM redeem_codes`).first<{ total: number }>(),
     c.env.DB.prepare(`SELECT COUNT(*) AS total FROM suppliers`).first<{ total: number }>(),
     c.env.DB.prepare(`SELECT COUNT(*) AS total FROM model_profiles`).first<{ total: number }>(),
@@ -463,7 +537,7 @@ adminRoutes.get('/overview', async (c) => {
       username: string | null
     }>(),
     c.env.DB.prepare(
-      `SELECT COUNT(*) AS cnt FROM generation_jobs WHERE status = 'processing' AND created_at < ?`
+      `SELECT COUNT(*) AS cnt FROM generation_jobs WHERE status = 'processing' AND COALESCE(started_at, created_at) < ?`
     )
       .bind(staleWarningCutoff)
       .first<{ cnt: number }>(),
@@ -502,6 +576,7 @@ adminRoutes.get('/overview', async (c) => {
     jobsSucceeded: jobsStats?.succeeded ?? 0,
     jobsFailed: jobsStats?.failed ?? 0,
     jobsProcessing: jobsStats?.processing ?? 0,
+    jobsQueued: jobsStats?.queued ?? 0,
     redeemCodesTotal: redeemStats?.total ?? 0,
     suppliersTotal: supplierStats?.total ?? 0,
     profilesTotal: profileStats?.total ?? 0,
@@ -520,8 +595,464 @@ adminRoutes.get('/overview', async (c) => {
 })
 
 // ---------------------------------------------------------------------------
-// 供应商管理 (Suppliers)
+// 供应商管理 (Suppliers & Key Pools)
 // ---------------------------------------------------------------------------
+
+interface ParsedKeyInputItem {
+  label: string
+  apiKey: string
+}
+
+function parseBatchApiKeysInput(body: Record<string, unknown>): ParsedKeyInputItem[] {
+  const result: ParsedKeyInputItem[] = []
+  const seen = new Set<string>()
+  const pushKey = (rawKey: unknown, rawLabel?: unknown) => {
+    if (typeof rawKey !== 'string') return
+    const apiKey = rawKey.trim()
+    if (!apiKey || seen.has(apiKey)) return
+    seen.add(apiKey)
+    const label = typeof rawLabel === 'string' ? rawLabel.trim().slice(0, 40) : ''
+    result.push({ label, apiKey })
+  }
+
+  if (Array.isArray(body.keys)) {
+    for (const item of body.keys) {
+      if (typeof item === 'string') {
+        pushKey(item)
+      } else if (item && typeof item === 'object') {
+        const rec = item as { apiKey?: unknown; label?: unknown }
+        pushKey(rec.apiKey, rec.label)
+      }
+    }
+  }
+
+  if (typeof body.rawKeysText === 'string' && body.rawKeysText.trim()) {
+    const lines = body.rawKeysText.split(/\r?\n/)
+    for (const rawLine of lines) {
+      const line = rawLine.trim()
+      if (!line || line.startsWith('#')) continue
+      // 支持 `备注|sk-xxx`、`备注\tsk-xxx`、`备注,sk-xxx` 或纯 `sk-xxx`
+      const sepMatch = line.match(/^([^|\t,]{1,40})[|\t,]\s*(.+)$/)
+      if (sepMatch) {
+        pushKey(sepMatch[2], sepMatch[1])
+      } else {
+        pushKey(line)
+      }
+    }
+  }
+
+  if (typeof body.apiKey === 'string' && body.apiKey.trim()) {
+    pushKey(body.apiKey, body.keyLabel ?? body.label)
+  }
+
+  return result
+}
+
+async function insertSupplierKeysDedup(
+  env: Env,
+  supplierId: string,
+  items: ParsedKeyInputItem[]
+): Promise<{ addedCount: number; skippedCount: number }> {
+  if (items.length === 0) return { addedCount: 0, skippedCount: 0 }
+
+  const existingRows = await env.DB.prepare(
+    `SELECT api_key_encrypted FROM supplier_keys WHERE supplier_id = ?`
+  )
+    .bind(supplierId)
+    .all<{ api_key_encrypted: string }>()
+
+  const existingPlainSet = new Set<string>()
+  for (const row of existingRows.results || []) {
+    const plain = await resolveSupplierSecret(row.api_key_encrypted, env)
+    if (plain) existingPlainSet.add(plain)
+  }
+
+  const now = Date.now()
+  const stmts: D1PreparedStatement[] = []
+  let addedCount = 0
+  let skippedCount = 0
+  let seq = (existingRows.results || []).length
+
+  for (const item of items) {
+    if (existingPlainSet.has(item.apiKey)) {
+      skippedCount += 1
+      continue
+    }
+    existingPlainSet.add(item.apiKey)
+    seq += 1
+    const label = item.label || `密钥 #${seq}`
+    const encrypted = await encryptSecret(item.apiKey, env.APP_ENCRYPTION_KEY)
+    const hint = maskApiKey(item.apiKey)
+    stmts.push(
+      env.DB.prepare(
+        `INSERT INTO supplier_keys (
+          id, supplier_id, label, api_key_encrypted, api_key_hint, enabled,
+          cooldown_until, last_error, last_used_at, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, 1, 0, '', 0, ?, ?)`
+      ).bind(crypto.randomUUID(), supplierId, label, encrypted, hint, now, now)
+    )
+    addedCount += 1
+  }
+
+  if (stmts.length > 0) {
+    await env.DB.batch(stmts)
+    await syncSupplierLegacyKeyMirror(env.DB, supplierId)
+  }
+  return { addedCount, skippedCount }
+}
+
+async function probeSupplierApiKey(
+  baseUrl: string,
+  parsedUrl: URL,
+  apiKey: string,
+  env: Env
+): Promise<{ ok: boolean; status: number | null; latencyMs: number; message: string }> {
+  const cleanBase = baseUrl.trim().replace(/\/+$/, '')
+  const host = parsedUrl.hostname.toLowerCase()
+  const headers: Record<string, string> = { Accept: 'application/json' }
+  let probeUrl: string
+  if (host.includes('generativelanguage.googleapis.com')) {
+    probeUrl = /\/v1(beta|alpha)?$/i.test(cleanBase)
+      ? `${cleanBase}/models`
+      : `${cleanBase}/v1beta/models`
+    headers['x-goog-api-key'] = apiKey
+  } else if (host.includes('wavespeed.ai')) {
+    probeUrl = `${parsedUrl.origin}/api/v3/balance`
+    headers.Authorization = `Bearer ${apiKey}`
+  } else {
+    probeUrl = /\/v\d+(beta\d*)?$/i.test(cleanBase)
+      ? `${cleanBase}/models`
+      : `${cleanBase}/v1/models`
+    headers.Authorization = `Bearer ${apiKey}`
+  }
+
+  const started = Date.now()
+  try {
+    const resp = await devProxyAwareFetch(
+      probeUrl,
+      {
+        method: 'GET',
+        headers,
+        signal: AbortSignal.timeout(12_000),
+      },
+      env,
+      12_000
+    )
+    const latencyMs = Date.now() - started
+    if (resp.ok) {
+      return {
+        ok: true,
+        status: resp.status,
+        latencyMs,
+        message: `连接成功 (HTTP ${resp.status})`,
+      }
+    }
+    if (resp.status === 401 || resp.status === 403) {
+      return {
+        ok: false,
+        status: resp.status,
+        latencyMs,
+        message: `鉴权失败：密钥无效或无权限 (HTTP ${resp.status})`,
+      }
+    }
+    return {
+      ok: false,
+      status: resp.status,
+      latencyMs,
+      message: `上游返回状态 HTTP ${resp.status}`,
+    }
+  } catch (err) {
+    const latencyMs = Date.now() - started
+    const message =
+      err instanceof Error && err.name === 'TimeoutError'
+        ? '连接超时（>8s）'
+        : err instanceof Error
+          ? `网络不可达：${err.message}`
+          : '连通测试失败'
+    return { ok: false, status: null, latencyMs, message }
+  }
+}
+
+function buildModelsQueryCandidates(
+  parsedUrl: URL
+): Array<{ url: string; style: 'gemini' | 'openai' }> {
+  const pathname = parsedUrl.pathname.replace(/\/+$/, '')
+  const baseNoQuery = `${parsedUrl.origin}${pathname}`
+  const search = parsedUrl.search || ''
+  const host = parsedUrl.hostname.toLowerCase()
+
+  if (host.includes('generativelanguage.googleapis.com')) {
+    const url = /\/v\d+(beta\d*|alpha)?$/i.test(pathname)
+      ? `${baseNoQuery}/models${search}`
+      : `${baseNoQuery}/v1beta/models${search}`
+    return [{ url, style: 'gemini' }]
+  }
+
+  if (/\/models$/i.test(pathname)) {
+    return [{ url: `${baseNoQuery}${search}`, style: 'openai' }]
+  }
+
+  const candidates: Array<{ url: string; style: 'gemini' | 'openai' }> = [
+    { url: `${baseNoQuery}/models${search}`, style: 'openai' },
+  ]
+  if (!/\/v\d+(beta\d*|alpha)?$/i.test(pathname)) {
+    candidates.push({ url: `${baseNoQuery}/v1/models${search}`, style: 'openai' })
+  }
+  return candidates
+}
+
+function extractQueriedModelItems(items: unknown[]): SupplierQueriedModel[] {
+  const seen = new Set<string>()
+  const result: SupplierQueriedModel[] = []
+  for (const item of items) {
+    let rawId = ''
+    let ownedBy: string | undefined
+    if (typeof item === 'string') {
+      rawId = item
+    } else if (item && typeof item === 'object') {
+      const obj = item as Record<string, unknown>
+      if (typeof obj.id === 'string') {
+        rawId = obj.id
+      } else if (typeof obj.name === 'string') {
+        rawId = obj.name.replace(/^models\//i, '')
+      }
+      if (typeof obj.owned_by === 'string' && obj.owned_by.trim()) {
+        ownedBy = obj.owned_by.trim().slice(0, 60)
+      }
+    }
+    const id = rawId.trim().slice(0, 160)
+    if (!id || id === 'custom' || seen.has(id)) continue
+    seen.add(id)
+    result.push(ownedBy ? { id, ownedBy } : { id })
+    if (result.length >= 2000) break
+  }
+  result.sort((a, b) => a.id.localeCompare(b.id))
+  return result
+}
+
+function parseQueriedModelsPayload(payload: unknown): SupplierQueriedModel[] | null {
+  if (Array.isArray(payload)) {
+    return extractQueriedModelItems(payload)
+  }
+  if (!payload || typeof payload !== 'object') return null
+  const rec = payload as Record<string, unknown>
+  if (Array.isArray(rec.data)) {
+    return extractQueriedModelItems(rec.data)
+  }
+  if (Array.isArray(rec.models)) {
+    return extractQueriedModelItems(rec.models)
+  }
+  return null
+}
+
+async function querySupplierModelsEndpoint(
+  parsedUrl: URL,
+  apiKey: string,
+  env: Env
+): Promise<{
+  ok: boolean
+  status: number | null
+  latencyMs: number
+  endpointUrl: string
+  models: SupplierQueriedModel[]
+  message: string
+}> {
+  const candidates = buildModelsQueryCandidates(parsedUrl)
+  let lastFailure: {
+    status: number | null
+    latencyMs: number
+    endpointUrl: string
+    message: string
+  } | null = null
+
+  for (let i = 0; i < candidates.length; i += 1) {
+    const candidate = candidates[i]
+    const hasFallback = i < candidates.length - 1
+    const headers: Record<string, string> = { Accept: 'application/json' }
+    if (apiKey) {
+      if (candidate.style === 'gemini') {
+        headers['x-goog-api-key'] = apiKey
+      } else {
+        headers.Authorization = `Bearer ${apiKey}`
+      }
+    }
+
+    const started = Date.now()
+    try {
+      const resp = await devProxyAwareFetch(
+        candidate.url,
+        {
+          method: 'GET',
+          headers,
+          signal: AbortSignal.timeout(15_000),
+        },
+        env,
+        15_000
+      )
+      const latencyMs = Date.now() - started
+
+      if (resp.status === 401 || resp.status === 403) {
+        return {
+          ok: false,
+          status: resp.status,
+          latencyMs,
+          endpointUrl: candidate.url,
+          models: [],
+          message: apiKey
+            ? `鉴权失败：密钥无效或无权限 (HTTP ${resp.status})`
+            : `该供应商需要访问密钥才能查询模型列表 (HTTP ${resp.status})`,
+        }
+      }
+
+      if (!resp.ok) {
+        let upstreamDetail = ''
+        try {
+          const errText = await resp.text()
+          const errJson = JSON.parse(errText) as { error?: { message?: unknown }; message?: unknown }
+          const rawMsg = errJson?.error?.message ?? errJson?.message
+          if (typeof rawMsg === 'string' && rawMsg.trim()) {
+            upstreamDetail = `：${rawMsg.trim().slice(0, 140)}`
+          }
+        } catch {
+          // ignore non-json error body
+        }
+        lastFailure = {
+          status: resp.status,
+          latencyMs,
+          endpointUrl: candidate.url,
+          message: `查询模型接口返回 HTTP ${resp.status}${upstreamDetail}`,
+        }
+        if (hasFallback) continue
+        return { ...lastFailure, ok: false, models: [] }
+      }
+
+      const rawText = await resp.text()
+      let parsedJson: unknown
+      try {
+        parsedJson = JSON.parse(rawText)
+      } catch {
+        lastFailure = {
+          status: resp.status,
+          latencyMs,
+          endpointUrl: candidate.url,
+          message: '上游未返回有效的 JSON 模型列表',
+        }
+        if (hasFallback) continue
+        return { ...lastFailure, ok: false, models: [] }
+      }
+
+      const models = parseQueriedModelsPayload(parsedJson)
+      if (models === null) {
+        lastFailure = {
+          status: resp.status,
+          latencyMs,
+          endpointUrl: candidate.url,
+          message: '上游返回格式不兼容（未识别到 data 或 models 模型数组）',
+        }
+        if (hasFallback) continue
+        return { ...lastFailure, ok: false, models: [] }
+      }
+
+      return {
+        ok: true,
+        status: resp.status,
+        latencyMs,
+        endpointUrl: candidate.url,
+        models,
+        message: `已获取 ${models.length} 个模型`,
+      }
+    } catch (err) {
+      const latencyMs = Date.now() - started
+      lastFailure = {
+        status: null,
+        latencyMs,
+        endpointUrl: candidate.url,
+        message:
+          err instanceof Error && err.name === 'TimeoutError'
+            ? '查询模型超时（>15s）'
+            : err instanceof Error
+              ? `网络不可达：${err.message}`
+              : '查询模型失败',
+      }
+      if (hasFallback) continue
+      return { ...lastFailure, ok: false, models: [] }
+    }
+  }
+
+  return {
+    ok: false,
+    status: lastFailure?.status ?? null,
+    latencyMs: lastFailure?.latencyMs ?? 0,
+    endpointUrl: lastFailure?.endpointUrl ?? '',
+    models: [],
+    message: lastFailure?.message ?? '查询模型失败',
+  }
+}
+
+adminRoutes.post('/suppliers/query-models', async (c) => {
+  let body: Record<string, unknown>
+  try {
+    body = await c.req.json()
+  } catch {
+    return c.json({ error: { message: '请求体格式错误' } }, 400)
+  }
+
+  const supplierId = typeof body.supplierId === 'string' ? body.supplierId.trim() : ''
+  const existingSupplier = supplierId
+    ? await c.env.DB.prepare(`SELECT id, base_url, api_key_encrypted FROM suppliers WHERE id = ?`)
+        .bind(supplierId)
+        .first<{ id: string; base_url: string; api_key_encrypted: string }>()
+    : null
+
+  if (supplierId && !existingSupplier) {
+    return c.json({ error: { message: '供应商不存在' } }, 404)
+  }
+
+  const rawBaseUrl =
+    typeof body.baseUrl === 'string' && body.baseUrl.trim()
+      ? body.baseUrl.trim().replace(/\/+$/, '')
+      : existingSupplier?.base_url?.trim().replace(/\/+$/, '') || ''
+
+  if (!/^https:\/\//i.test(rawBaseUrl)) {
+    return c.json({ error: { message: '接口基础地址必须以 https:// 开头' } }, 400)
+  }
+
+  let parsedUrl: URL
+  try {
+    parsedUrl = new URL(rawBaseUrl)
+  } catch {
+    return c.json({ error: { message: '接口基础地址格式无效' } }, 400)
+  }
+  if (parsedUrl.protocol !== 'https:' || isPrivateOrLocalHostname(parsedUrl.hostname)) {
+    return c.json({ error: { message: '仅支持公网 HTTPS 接口查询模型列表' } }, 400)
+  }
+
+  let apiKey = parseBatchApiKeysInput(body)[0]?.apiKey || ''
+  if (!apiKey && existingSupplier) {
+    const keyRows = await c.env.DB.prepare(
+      `SELECT api_key_encrypted FROM supplier_keys
+       WHERE supplier_id = ?
+       ORDER BY enabled DESC, created_at ASC
+       LIMIT 3`
+    )
+      .bind(existingSupplier.id)
+      .all<{ api_key_encrypted: string }>()
+    for (const row of keyRows.results || []) {
+      const plain = await resolveSupplierSecret(row.api_key_encrypted, c.env)
+      if (plain) {
+        apiKey = plain
+        break
+      }
+    }
+    if (!apiKey && existingSupplier.api_key_encrypted) {
+      apiKey = await resolveSupplierSecret(existingSupplier.api_key_encrypted, c.env)
+    }
+  }
+
+  const res = await querySupplierModelsEndpoint(parsedUrl, apiKey, c.env)
+  c.header('Cache-Control', 'no-store')
+  return c.json(res)
+})
 
 adminRoutes.get('/suppliers', async (c) => {
   const suppliers = await getSuppliers(c.env)
@@ -539,9 +1070,10 @@ adminRoutes.post('/suppliers', async (c) => {
 
   const name = typeof body.name === 'string' ? body.name.trim().slice(0, 60) : ''
   const baseUrl = typeof body.baseUrl === 'string' ? body.baseUrl.trim().replace(/\/+$/, '') : ''
-  const apiKey = typeof body.apiKey === 'string' ? body.apiKey.trim() : ''
   const enabled = typeof body.enabled === 'boolean' ? (body.enabled ? 1 : 0) : 1
   const note = typeof body.note === 'string' ? body.note.trim().slice(0, 200) : ''
+  const modelsJson = JSON.stringify(normalizeSupplierModelIds(body.models))
+  const parsedKeys = parseBatchApiKeysInput(body)
 
   if (!name) {
     return c.json({ error: { message: '请填写供应商名称' } }, 400)
@@ -551,20 +1083,32 @@ adminRoutes.post('/suppliers', async (c) => {
   }
 
   const now = Date.now()
-  const encrypted = apiKey ? await encryptSecret(apiKey, c.env.APP_ENCRYPTION_KEY) : ''
-  const hint = apiKey ? maskApiKey(apiKey) : ''
+  const supplierId = crypto.randomUUID()
+  const firstKey = parsedKeys[0]
+  const encrypted = firstKey
+    ? await encryptSecret(firstKey.apiKey, c.env.APP_ENCRYPTION_KEY)
+    : ''
+  const hint = firstKey ? maskApiKey(firstKey.apiKey) : ''
 
   await c.env.DB.prepare(
     `INSERT INTO suppliers (
-      id, name, base_url, api_key_encrypted, api_key_hint, enabled, note, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      id, name, base_url, api_key_encrypted, api_key_hint, models_json, enabled, note, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   )
-    .bind(crypto.randomUUID(), name, baseUrl, encrypted, hint, enabled, note, now, now)
+    .bind(supplierId, name, baseUrl, encrypted, hint, modelsJson, enabled, note, now, now)
     .run()
+
+  let addedCount = 0
+  let skippedCount = 0
+  if (parsedKeys.length > 0) {
+    const res = await insertSupplierKeysDedup(c.env, supplierId, parsedKeys)
+    addedCount = res.addedCount
+    skippedCount = res.skippedCount
+  }
 
   const suppliers = await getSuppliers(c.env)
   c.header('Cache-Control', 'no-store')
-  return c.json({ suppliers }, 201)
+  return c.json({ suppliers, createdSupplierId: supplierId, addedCount, skippedCount }, 201)
 })
 
 adminRoutes.put('/suppliers/:id', async (c) => {
@@ -597,26 +1141,164 @@ adminRoutes.put('/suppliers/:id', async (c) => {
 
   const enabled = typeof body.enabled === 'boolean' ? (body.enabled ? 1 : 0) : existing.enabled
   const note = typeof body.note === 'string' ? body.note.trim().slice(0, 200) : existing.note
-
-  let nextEncrypted = existing.api_key_encrypted
-  let nextHint = existing.api_key_hint
-  if (body.clearApiKey === true) {
-    nextEncrypted = ''
-    nextHint = ''
-  } else if (typeof body.apiKey === 'string' && body.apiKey.trim()) {
-    const plain = body.apiKey.trim()
-    nextEncrypted = await encryptSecret(plain, c.env.APP_ENCRYPTION_KEY)
-    nextHint = maskApiKey(plain)
-  }
+  const modelsJson =
+    body.models !== undefined
+      ? JSON.stringify(normalizeSupplierModelIds(body.models))
+      : existing.models_json || '[]'
 
   await c.env.DB.prepare(
     `UPDATE suppliers
-     SET name = ?, base_url = ?, api_key_encrypted = ?, api_key_hint = ?, enabled = ?, note = ?, updated_at = ?
+     SET name = ?, base_url = ?, models_json = ?, enabled = ?, note = ?, updated_at = ?
      WHERE id = ?`
   )
-    .bind(name, baseUrl, nextEncrypted, nextHint, enabled, note, Date.now(), id)
+    .bind(name, baseUrl, modelsJson, enabled, note, Date.now(), id)
     .run()
 
+  if (body.clearApiKey === true) {
+    await c.env.DB.prepare(`DELETE FROM supplier_keys WHERE supplier_id = ?`).bind(id).run()
+    await syncSupplierLegacyKeyMirror(c.env.DB, id)
+  } else {
+    const batchKeys = parseBatchApiKeysInput({
+      keys: body.keys,
+      rawKeysText: body.rawKeysText,
+    })
+    if (batchKeys.length > 0) {
+      await insertSupplierKeysDedup(c.env, id, batchKeys)
+    }
+
+    if (typeof body.apiKey === 'string' && body.apiKey.trim()) {
+      const plain = body.apiKey.trim()
+      const currentKeys = await c.env.DB.prepare(
+        `SELECT id FROM supplier_keys WHERE supplier_id = ? ORDER BY created_at ASC`
+      )
+        .bind(id)
+        .all<{ id: string }>()
+      const keyRows = currentKeys.results || []
+      if (keyRows.length === 1) {
+        const encrypted = await encryptSecret(plain, c.env.APP_ENCRYPTION_KEY)
+        const hint = maskApiKey(plain)
+        await c.env.DB.prepare(
+          `UPDATE supplier_keys
+           SET api_key_encrypted = ?, api_key_hint = ?, cooldown_until = 0, last_error = '', updated_at = ?
+           WHERE id = ?`
+        )
+          .bind(encrypted, hint, Date.now(), keyRows[0].id)
+          .run()
+        await syncSupplierLegacyKeyMirror(c.env.DB, id)
+      } else {
+        await insertSupplierKeysDedup(c.env, id, [{ label: '', apiKey: plain }])
+      }
+    }
+  }
+
+  const suppliers = await getSuppliers(c.env)
+  c.header('Cache-Control', 'no-store')
+  return c.json({ suppliers })
+})
+
+adminRoutes.post('/suppliers/:id/keys', async (c) => {
+  const supplierId = c.req.param('id')
+  const existing = await c.env.DB.prepare(`SELECT id FROM suppliers WHERE id = ?`)
+    .bind(supplierId)
+    .first<{ id: string }>()
+  if (!existing) {
+    return c.json({ error: { message: '供应商不存在' } }, 404)
+  }
+
+  let body: Record<string, unknown>
+  try {
+    body = await c.req.json()
+  } catch {
+    return c.json({ error: { message: '请求体格式错误' } }, 400)
+  }
+
+  const items = parseBatchApiKeysInput(body)
+  if (items.length === 0) {
+    return c.json({ error: { message: '请填写或粘贴至少 1 个有效 API 密钥' } }, 400)
+  }
+
+  const { addedCount, skippedCount } = await insertSupplierKeysDedup(c.env, supplierId, items)
+  const suppliers = await getSuppliers(c.env)
+  c.header('Cache-Control', 'no-store')
+  return c.json({ suppliers, addedCount, skippedCount }, addedCount > 0 ? 201 : 200)
+})
+
+adminRoutes.put('/suppliers/:id/keys/:keyId', async (c) => {
+  const supplierId = c.req.param('id')
+  const keyId = c.req.param('keyId')
+  const existing = await c.env.DB.prepare(
+    `SELECT * FROM supplier_keys WHERE id = ? AND supplier_id = ?`
+  )
+    .bind(keyId, supplierId)
+    .first<SupplierKeyRow>()
+  if (!existing) {
+    return c.json({ error: { message: '供应商密钥不存在' } }, 404)
+  }
+
+  let body: Record<string, unknown>
+  try {
+    body = await c.req.json()
+  } catch {
+    return c.json({ error: { message: '请求体格式错误' } }, 400)
+  }
+
+  const label =
+    typeof body.label === 'string' ? body.label.trim().slice(0, 40) : existing.label
+  const enabled = typeof body.enabled === 'boolean' ? (body.enabled ? 1 : 0) : existing.enabled
+  let encrypted = existing.api_key_encrypted
+  let hint = existing.api_key_hint
+  let cooldownUntil = body.clearCooldown === true ? 0 : existing.cooldown_until
+  let lastError = body.clearCooldown === true ? '' : existing.last_error
+
+  if (typeof body.apiKey === 'string' && body.apiKey.trim()) {
+    const plain = body.apiKey.trim()
+    encrypted = await encryptSecret(plain, c.env.APP_ENCRYPTION_KEY)
+    hint = maskApiKey(plain)
+    cooldownUntil = 0
+    lastError = ''
+  }
+
+  await c.env.DB.prepare(
+    `UPDATE supplier_keys
+     SET label = ?, api_key_encrypted = ?, api_key_hint = ?, enabled = ?,
+         cooldown_until = ?, last_error = ?, updated_at = ?
+     WHERE id = ? AND supplier_id = ?`
+  )
+    .bind(label, encrypted, hint, enabled, cooldownUntil, lastError, Date.now(), keyId, supplierId)
+    .run()
+
+  await syncSupplierLegacyKeyMirror(c.env.DB, supplierId)
+  const suppliers = await getSuppliers(c.env)
+  c.header('Cache-Control', 'no-store')
+  return c.json({ suppliers })
+})
+
+adminRoutes.delete('/suppliers/:id/keys/:keyId', async (c) => {
+  const supplierId = c.req.param('id')
+  const keyId = c.req.param('keyId')
+  await c.env.DB.prepare(`DELETE FROM supplier_keys WHERE id = ? AND supplier_id = ?`)
+    .bind(keyId, supplierId)
+    .run()
+
+  // 同时从引用该供应商且绑定了特定 Key 列表的渠道中移除已删除的 keyId
+  const boundChannels = await c.env.DB.prepare(
+    `SELECT id, key_ids_json FROM provider_channels WHERE supplier_id = ? AND key_ids_json != '[]'`
+  )
+    .bind(supplierId)
+    .all<{ id: string; key_ids_json: string }>()
+  for (const ch of boundChannels.results || []) {
+    const parsed = parseKeyIdsJson(ch.key_ids_json)
+    if (parsed.includes(keyId)) {
+      const next = parsed.filter((id) => id !== keyId)
+      await c.env.DB.prepare(
+        `UPDATE provider_channels SET key_ids_json = ?, updated_at = ? WHERE id = ?`
+      )
+        .bind(JSON.stringify(next), Date.now(), ch.id)
+        .run()
+    }
+  }
+
+  await syncSupplierLegacyKeyMirror(c.env.DB, supplierId)
   const suppliers = await getSuppliers(c.env)
   c.header('Cache-Control', 'no-store')
   return c.json({ suppliers })
@@ -624,21 +1306,143 @@ adminRoutes.put('/suppliers/:id', async (c) => {
 
 adminRoutes.delete('/suppliers/:id', async (c) => {
   const id = c.req.param('id')
-  const ref = await c.env.DB.prepare(
-    `SELECT COUNT(*) AS cnt FROM provider_channels WHERE supplier_id = ?`
-  )
-    .bind(id)
-    .first<{ cnt: number }>()
+  const [ref, platform] = await Promise.all([
+    c.env.DB.prepare(`SELECT COUNT(*) AS cnt FROM provider_channels WHERE supplier_id = ?`)
+      .bind(id)
+      .first<{ cnt: number }>(),
+    getPlatformConfig(c.env.DB),
+  ])
   if ((ref?.cnt ?? 0) > 0) {
     return c.json(
       { error: { message: `该供应商正被 ${ref?.cnt} 个模型渠道引用，请先删除或切换对应渠道` } },
       409
     )
   }
-  await c.env.DB.prepare(`DELETE FROM suppliers WHERE id = ?`).bind(id).run()
+  if (platform.visionFallback?.supplierId === id) {
+    return c.json(
+      { error: { message: '该供应商正被「图转文兜底库」引用，请先切换兜底供应商后再删除' } },
+      409
+    )
+  }
+  await c.env.DB.batch([
+    c.env.DB.prepare(`DELETE FROM supplier_keys WHERE supplier_id = ?`).bind(id),
+    c.env.DB.prepare(`DELETE FROM suppliers WHERE id = ?`).bind(id),
+  ])
   const suppliers = await getSuppliers(c.env)
   c.header('Cache-Control', 'no-store')
   return c.json({ suppliers })
+})
+
+adminRoutes.post('/suppliers/:id/test', async (c) => {
+  const id = c.req.param('id')
+  const row = await c.env.DB.prepare(`SELECT * FROM suppliers WHERE id = ?`)
+    .bind(id)
+    .first<SupplierRow>()
+  if (!row) {
+    return c.json({ error: { message: '供应商不存在' } }, 404)
+  }
+
+  let parsedUrl: URL
+  try {
+    parsedUrl = new URL(row.base_url)
+  } catch {
+    return c.json({ error: { message: '供应商接口地址格式无效' } }, 400)
+  }
+  if (parsedUrl.protocol !== 'https:' || isPrivateOrLocalHostname(parsedUrl.hostname)) {
+    return c.json({ error: { message: '仅支持公网 HTTPS 接口的连通性测试' } }, 400)
+  }
+
+  let requestedKeyId = ''
+  try {
+    const body = (await c.req.json()) as { keyId?: unknown }
+    if (typeof body?.keyId === 'string') {
+      requestedKeyId = body.keyId.trim()
+    }
+  } catch {
+    // body optional
+  }
+
+  const keyRowsRes = requestedKeyId
+    ? await c.env.DB.prepare(
+        `SELECT * FROM supplier_keys WHERE supplier_id = ? AND id = ?`
+      )
+        .bind(id, requestedKeyId)
+        .all<SupplierKeyRow>()
+    : await c.env.DB.prepare(
+        `SELECT * FROM supplier_keys WHERE supplier_id = ? AND enabled = 1 ORDER BY created_at ASC`
+      )
+        .bind(id)
+        .all<SupplierKeyRow>()
+
+  const keyRows = keyRowsRes.results || []
+
+  if (keyRows.length === 0) {
+    if (requestedKeyId) {
+      return c.json({ error: { message: '指定的供应商密钥不存在' } }, 404)
+    }
+    const legacyKey = row.api_key_encrypted
+      ? await resolveSupplierSecret(row.api_key_encrypted, c.env)
+      : ''
+    if (!legacyKey) {
+      return c.json({ error: { message: '该供应商尚未配置可用的 API 密钥' } }, 400)
+    }
+    const res = await probeSupplierApiKey(row.base_url, parsedUrl, legacyKey, c.env)
+    return c.json(res)
+  }
+
+  const probeTargets = keyRows.slice(0, 20)
+  const results = await Promise.all(
+    probeTargets.map(async (keyRow) => {
+      const plain = await resolveSupplierSecret(keyRow.api_key_encrypted, c.env)
+      if (!plain) {
+        return {
+          keyId: keyRow.id,
+          label: keyRow.label || keyRow.api_key_hint,
+          apiKeyHint: keyRow.api_key_hint,
+          ok: false,
+          status: null as number | null,
+          latencyMs: 0,
+          message: '密钥解密失败',
+        }
+      }
+      const probe = await probeSupplierApiKey(row.base_url, parsedUrl, plain, c.env)
+      if (probe.ok) {
+        await markSupplierKeySuccess(c.env.DB, keyRow.id).catch(() => {})
+      } else if (probe.status === 401 || probe.status === 402 || probe.status === 403 || probe.status === 429) {
+        const cooldownMs = probe.status === 429 ? 60_000 : 10 * 60_000
+        await markSupplierKeyCooldown(c.env.DB, keyRow.id, cooldownMs, probe.message).catch(() => {})
+      }
+      return {
+        keyId: keyRow.id,
+        label: keyRow.label || keyRow.api_key_hint,
+        apiKeyHint: keyRow.api_key_hint,
+        ...probe,
+      }
+    })
+  )
+
+  if (results.length === 1) {
+    const single = results[0]
+    return c.json({
+      ok: single.ok,
+      status: single.status,
+      latencyMs: single.latencyMs,
+      message: single.message,
+      results,
+    })
+  }
+
+  const passCount = results.filter((r) => r.ok).length
+  const avgLatency = Math.round(
+    results.reduce((sum, r) => sum + r.latencyMs, 0) / Math.max(1, results.length)
+  )
+  return c.json({
+    ok: passCount > 0,
+    status: results.find((r) => r.ok)?.status ?? results[0]?.status ?? null,
+    latencyMs: avgLatency,
+    message: `批量测活完成：${passCount}/${results.length} 个密钥连通正常`,
+    results,
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -703,6 +1507,8 @@ function parseProfileInput(
     displayName: string
     badge: string
     tagline: string
+    defaultModel: string
+    defaultCustomModel: string
     enabled: boolean
     isDefault: boolean
     creditCost: number
@@ -717,6 +1523,8 @@ function parseProfileInput(
         displayName: string
         badge: string
         tagline: string
+        defaultModel: string
+        defaultCustomModel: string
         enabled: boolean
         isDefault: boolean
         creditCost: number
@@ -742,6 +1550,18 @@ function parseProfileInput(
     typeof body.tagline === 'string'
       ? body.tagline.trim().slice(0, 80)
       : fallback?.tagline || ''
+  const defaultModel =
+    typeof body.defaultModel === 'string'
+      ? body.defaultModel.trim().slice(0, 120)
+      : (fallback?.defaultModel || '')
+  const rawDefaultCustomModel =
+    typeof body.defaultCustomModel === 'string'
+      ? body.defaultCustomModel.trim().slice(0, 120)
+      : (fallback?.defaultCustomModel || '')
+  const defaultCustomModel = defaultModel === 'custom' ? rawDefaultCustomModel : ''
+  if (defaultModel === 'custom' && !defaultCustomModel) {
+    return { ok: false, message: '选择自定义模型时请填写标准自定义模型 ID' }
+  }
   const enabled =
     typeof body.enabled === 'boolean' ? body.enabled : (fallback?.enabled ?? true)
   const isDefault =
@@ -807,6 +1627,8 @@ function parseProfileInput(
       displayName,
       badge,
       tagline,
+      defaultModel,
+      defaultCustomModel,
       enabled,
       isDefault,
       creditCost: effectiveCreditCost,
@@ -856,15 +1678,17 @@ adminRoutes.post('/providers/:id/profiles', async (c) => {
   stmts.push(
     c.env.DB.prepare(
       `INSERT INTO model_profiles (
-        id, provider_id, display_name, badge, tagline, enabled, is_default,
-        credit_cost, default_resolution, resolutions_json, sort_order, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        id, provider_id, display_name, badge, tagline, default_model, default_custom_model,
+        enabled, is_default, credit_cost, default_resolution, resolutions_json, sort_order, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).bind(
       newId,
       providerId,
       val.displayName,
       val.badge,
       val.tagline,
+      val.defaultModel,
+      val.defaultCustomModel,
       val.enabled ? 1 : 0,
       shouldBeDefault ? 1 : 0,
       val.creditCost,
@@ -903,6 +1727,8 @@ adminRoutes.put('/profiles/:profileId', async (c) => {
     displayName: existing.display_name,
     badge: existing.badge,
     tagline: existing.tagline,
+    defaultModel: existing.default_model || '',
+    defaultCustomModel: existing.default_custom_model || '',
     enabled: existing.enabled === 1,
     isDefault: existing.is_default === 1,
     creditCost: prevParsed.effectiveCreditCost,
@@ -927,13 +1753,16 @@ adminRoutes.put('/profiles/:profileId', async (c) => {
   stmts.push(
     c.env.DB.prepare(
       `UPDATE model_profiles
-       SET display_name = ?, badge = ?, tagline = ?, enabled = ?, is_default = ?,
-           credit_cost = ?, default_resolution = ?, resolutions_json = ?, sort_order = ?, updated_at = ?
+       SET display_name = ?, badge = ?, tagline = ?, default_model = ?, default_custom_model = ?,
+           enabled = ?, is_default = ?, credit_cost = ?, default_resolution = ?, resolutions_json = ?,
+           sort_order = ?, updated_at = ?
        WHERE id = ?`
     ).bind(
       val.displayName,
       val.badge,
       val.tagline,
+      val.defaultModel,
+      val.defaultCustomModel,
       val.enabled ? 1 : 0,
       val.isDefault ? 1 : 0,
       val.creditCost,
@@ -1006,6 +1835,44 @@ adminRoutes.delete('/profiles/:profileId', async (c) => {
   return c.json({ slots })
 })
 
+async function validateSupplierKeysBinding(
+  db: D1Database,
+  supplierId: string,
+  supplierLegacyEncrypted: string,
+  rawKeyIds: unknown
+): Promise<{ ok: true; keyIds: string[]; hasUsableKey: boolean } | { ok: false; message: string }> {
+  const keysRes = await db
+    .prepare(`SELECT id, enabled FROM supplier_keys WHERE supplier_id = ?`)
+    .bind(supplierId)
+    .all<{ id: string; enabled: number }>()
+  const supKeys = keysRes.results || []
+  const supKeyMap = new Map(supKeys.map((k) => [k.id, k.enabled === 1]))
+
+  let keyIds: string[] = []
+  if (Array.isArray(rawKeyIds)) {
+    const cleaned = Array.from(
+      new Set(
+        rawKeyIds
+          .filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+          .map((s) => s.trim())
+      )
+    )
+    for (const id of cleaned) {
+      if (!supKeyMap.has(id)) {
+        return { ok: false, message: '所选指定密钥不属于当前供应商或已删除' }
+      }
+    }
+    keyIds = cleaned
+  }
+
+  const hasUsableKey =
+    supKeys.length > 0
+      ? supKeys.some((k) => k.enabled === 1 && (keyIds.length === 0 || keyIds.includes(k.id)))
+      : Boolean(supplierLegacyEncrypted)
+
+  return { ok: true, keyIds, hasUsableKey }
+}
+
 adminRoutes.post('/providers/:id/channels', async (c) => {
   const providerId = c.req.param('id') as ImageProviderId
   if (!PROVIDER_ORDER.includes(providerId)) {
@@ -1020,11 +1887,11 @@ adminRoutes.post('/providers/:id/channels', async (c) => {
   }
 
   const requestedProfileId = typeof body.profileId === 'string' ? body.profileId.trim() : ''
-  const targetProfile = await resolveProfileForGeneration(
-    c.env.DB,
-    providerId,
-    requestedProfileId || null
-  )
+  const targetProfile = requestedProfileId
+    ? await c.env.DB.prepare(`SELECT * FROM model_profiles WHERE id = ? AND provider_id = ?`)
+        .bind(requestedProfileId, providerId)
+        .first<ModelProfileRow>()
+    : await resolveProfileForGeneration(c.env.DB, providerId, null)
   if (!targetProfile) {
     return c.json({ error: { message: '请选择有效的模型档位' } }, 400)
   }
@@ -1039,6 +1906,16 @@ adminRoutes.post('/providers/:id/channels', async (c) => {
     return c.json({ error: { message: '请选择有效的供应商' } }, 400)
   }
 
+  const keyBinding = await validateSupplierKeysBinding(
+    c.env.DB,
+    supplierId,
+    supplier.api_key_encrypted,
+    body.keyIds
+  )
+  if (!keyBinding.ok) {
+    return c.json({ error: { message: keyBinding.message } }, 400)
+  }
+
   const rawName = typeof body.name === 'string' ? body.name.trim().slice(0, 60) : ''
   const name = rawName || supplier.name.trim().slice(0, 60)
   if (!name) {
@@ -1046,12 +1923,14 @@ adminRoutes.post('/providers/:id/channels', async (c) => {
   }
 
   const enabled = typeof body.enabled === 'boolean' ? (body.enabled ? 1 : 0) : 1
-  if (enabled === 1 && (supplier.enabled !== 1 || !supplier.api_key_encrypted)) {
+  if (enabled === 1 && (supplier.enabled !== 1 || !keyBinding.hasUsableKey)) {
     return c.json(
       {
         error: {
           message:
-            '所选供应商已停用或尚未配置 API Key，请先在「03. 供应商凭证」完善后再启用渠道（或取消勾选启用）',
+            keyBinding.keyIds.length > 0
+              ? '所选供应商已停用或绑定的指定密钥未启用，请先调整密钥状态后再启用渠道'
+              : '所选供应商已停用或尚未配置可用 API Key，请先在「03. 供应商凭证」完善后再启用渠道（或取消勾选启用）',
         },
       },
       400
@@ -1073,15 +1952,15 @@ adminRoutes.post('/providers/:id/channels', async (c) => {
 
   const mergedParams = {
     ...DEFAULT_PROVIDER_PARAMS[providerId],
-    ...(body.params && typeof body.params === 'object' ? (body.params as Record<string, unknown>) : {}),
+    ...sanitizeChannelParams(providerId, body.params),
   }
 
   const now = Date.now()
   await c.env.DB.prepare(
     `INSERT INTO provider_channels (
       id, provider_id, profile_id, supplier_id, name, enabled, model, custom_model,
-      priority, weight, params_json, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 100, ?, ?, ?)`
+      priority, weight, key_ids_json, params_json, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 100, ?, ?, ?, ?)`
   )
     .bind(
       crypto.randomUUID(),
@@ -1093,6 +1972,7 @@ adminRoutes.post('/providers/:id/channels', async (c) => {
       model,
       customModel,
       priority,
+      JSON.stringify(keyBinding.keyIds),
       JSON.stringify(mergedParams),
       now,
       now
@@ -1146,17 +2026,35 @@ adminRoutes.put('/channels/:channelId', async (c) => {
     return c.json({ error: { message: '所选供应商不存在' } }, 400)
   }
 
+  const rawKeyIds =
+    body.keyIds !== undefined
+      ? body.keyIds
+      : supplierId === existing.supplier_id
+        ? parseKeyIdsJson(existing.key_ids_json)
+        : []
+  const keyBinding = await validateSupplierKeysBinding(
+    c.env.DB,
+    supplierId,
+    supplier.api_key_encrypted,
+    rawKeyIds
+  )
+  if (!keyBinding.ok) {
+    return c.json({ error: { message: keyBinding.message } }, 400)
+  }
+
   const name =
     typeof body.name === 'string'
       ? body.name.trim().slice(0, 60) || supplier.name.trim().slice(0, 60)
       : existing.name
   const enabled = typeof body.enabled === 'boolean' ? (body.enabled ? 1 : 0) : existing.enabled
-  if (enabled === 1 && (supplier.enabled !== 1 || !supplier.api_key_encrypted)) {
+  if (enabled === 1 && (supplier.enabled !== 1 || !keyBinding.hasUsableKey)) {
     return c.json(
       {
         error: {
           message:
-            '所选供应商已停用或尚未配置 API Key，请先在「03. 供应商凭证」完善后再启用渠道（或取消勾选启用）',
+            keyBinding.keyIds.length > 0
+              ? '所选供应商已停用或绑定的指定密钥未启用，请先调整密钥状态后再启用渠道'
+              : '所选供应商已停用或尚未配置可用 API Key，请先在「03. 供应商凭证」完善后再启用渠道（或取消勾选启用）',
         },
       },
       400
@@ -1176,31 +2074,43 @@ adminRoutes.put('/channels/:channelId', async (c) => {
     return c.json({ error: { message: '优先级参数无效' } }, 400)
   }
 
+  if (!nextProfileId) {
+    const fallbackProf = await resolveProfileForGeneration(c.env.DB, existing.provider_id, null)
+    if (!fallbackProf) {
+      return c.json({ error: { message: '当前画师尚无可用画笔档位' } }, 400)
+    }
+    nextProfileId = fallbackProf.id
+  }
+
   let baseParams = { ...DEFAULT_PROVIDER_PARAMS[existing.provider_id] }
   try {
-    baseParams = { ...baseParams, ...JSON.parse(existing.params_json) }
+    baseParams = {
+      ...baseParams,
+      ...sanitizeChannelParams(existing.provider_id, JSON.parse(existing.params_json)),
+    }
   } catch {
     // ignore
   }
   const mergedParams = {
     ...baseParams,
-    ...(body.params && typeof body.params === 'object' ? (body.params as Record<string, unknown>) : {}),
+    ...sanitizeChannelParams(existing.provider_id, body.params),
   }
 
   await c.env.DB.prepare(
     `UPDATE provider_channels
      SET profile_id = ?, supplier_id = ?, name = ?, enabled = ?, model = ?, custom_model = ?,
-         priority = ?, params_json = ?, updated_at = ?
+         priority = ?, key_ids_json = ?, params_json = ?, updated_at = ?
      WHERE id = ?`
   )
     .bind(
-      nextProfileId || `prof_${existing.provider_id}_default`,
+      nextProfileId,
       supplierId,
       name,
       enabled,
       model,
       customModel,
       priority,
+      JSON.stringify(keyBinding.keyIds),
       JSON.stringify(mergedParams),
       Date.now(),
       channelId
@@ -1372,6 +2282,13 @@ adminRoutes.put('/settings', async (c) => {
     return c.json({ error: { message: '敏感词屏蔽配置格式错误' } }, 400)
   }
 
+  if (typeof body.defaultPromptPrefix === 'string' && body.defaultPromptPrefix.length > 2000) {
+    return c.json({ error: { message: '默认前置提示词不能超过 2000 个字符' } }, 400)
+  }
+  if (typeof body.defaultPromptSuffix === 'string' && body.defaultPromptSuffix.length > 2000) {
+    return c.json({ error: { message: '默认后置提示词不能超过 2000 个字符' } }, 400)
+  }
+
   const next: PlatformConfig = {
     registerBonusCredits: bonus,
     allowRegistration:
@@ -1395,6 +2312,14 @@ adminRoutes.put('/settings', async (c) => {
         : current.promptTemplate ?? mergePromptTemplate(null),
     poseSanitize:
       validatedPoseSanitize ?? current.poseSanitize ?? mergePoseSanitizeConfig(null),
+    visionFallback:
+      body.visionFallback !== undefined
+        ? mergeVisionFallbackConfig(body.visionFallback)
+        : current.visionFallback ?? mergeVisionFallbackConfig(null),
+    queueConfig:
+      body.queueConfig !== undefined
+        ? mergeGenerationQueueConfig(body.queueConfig)
+        : current.queueConfig ?? mergeGenerationQueueConfig(null),
     styleCategories: nextStyleCategories,
     styleSubcategories: nextStyleSubcategories,
     stylePresets: nextStylePresets,
@@ -1407,6 +2332,14 @@ adminRoutes.put('/settings', async (c) => {
   }
 
   await savePlatformConfig(c.env.DB, next)
+
+  if (body.queueConfig !== undefined) {
+    try {
+      c.executionCtx.waitUntil(reconcileQueueViaCoordinator(c.env))
+    } catch {
+      // non-worker environment
+    }
+  }
 
   // 自动清理已从画风预设中删除或替换掉的 R2 示意图孤儿对象
   const nextStyleKeys = new Set(
@@ -1428,9 +2361,9 @@ adminRoutes.put('/settings', async (c) => {
 })
 
 adminRoutes.get('/r2-cleanup', async (c) => {
-  const [platform, styleList, stitchedStats, expiredStats] = await Promise.all([
+  const [platform, styleObjects, stitchedStats, expiredStats] = await Promise.all([
     getPlatformConfig(c.env.DB),
-    c.env.BUCKET.list({ prefix: 'styles/', limit: 1000 }),
+    listAllR2Objects(c.env.BUCKET, 'styles/'),
     c.env.DB.prepare(
       `SELECT COUNT(*) AS cnt, COALESCE(SUM(bytes), 0) AS bytes
        FROM uploaded_assets
@@ -1453,10 +2386,10 @@ adminRoutes.get('/r2-cleanup', async (c) => {
 
   let orphanStyleKeysCount = 0
   let orphanStyleBytes = 0
-  for (const obj of styleList.objects || []) {
+  for (const obj of styleObjects) {
     if (!activeStyleKeys.has(obj.key)) {
       orphanStyleKeysCount += 1
-      orphanStyleBytes += obj.size || 0
+      orphanStyleBytes += obj.size
     }
   }
 
@@ -1473,9 +2406,9 @@ adminRoutes.get('/r2-cleanup', async (c) => {
 
 adminRoutes.post('/r2-cleanup', async (c) => {
   const cutoff = Date.now() - 24 * 60 * 60 * 1000
-  const [platform, styleList, expiredRowsRes] = await Promise.all([
+  const [platform, styleObjects, expiredRowsRes] = await Promise.all([
     getPlatformConfig(c.env.DB),
-    c.env.BUCKET.list({ prefix: 'styles/', limit: 1000 }),
+    listAllR2Objects(c.env.BUCKET, 'styles/'),
     c.env.DB.prepare(
       `SELECT id, r2_key, bytes
        FROM uploaded_assets
@@ -1492,13 +2425,13 @@ adminRoutes.post('/r2-cleanup', async (c) => {
       .filter((k): k is string => Boolean(k))
   )
 
-  const orphanStyleObjs = (styleList.objects || []).filter((obj) => !activeStyleKeys.has(obj.key))
+  const orphanStyleObjs = styleObjects.filter((obj) => !activeStyleKeys.has(obj.key))
   const expiredStitched = expiredRowsRes.results || []
 
   let freedBytes = 0
   if (orphanStyleObjs.length > 0) {
     await Promise.allSettled(orphanStyleObjs.map((obj) => c.env.BUCKET.delete(obj.key)))
-    for (const obj of orphanStyleObjs) freedBytes += obj.size || 0
+    for (const obj of orphanStyleObjs) freedBytes += obj.size
   }
 
   if (expiredStitched.length > 0) {
@@ -2051,6 +2984,84 @@ adminRoutes.patch('/redeem-codes/:id', async (c) => {
   return c.json({ ok: true })
 })
 
+adminRoutes.delete('/redeem-codes/:id', async (c) => {
+  const id = c.req.param('id')
+  const res = await c.env.DB.prepare(
+    `DELETE FROM redeem_codes WHERE id = ? AND used_count = 0`
+  )
+    .bind(id)
+    .run()
+  if ((res.meta?.changes ?? 0) === 0) {
+    return c.json(
+      { error: { message: '兑换码不存在或已被领取使用，无法删除（可改为停用）' } },
+      409
+    )
+  }
+  return c.json({ ok: true })
+})
+
+adminRoutes.get('/queue', async (c) => {
+  const snapshot = await fetchQueueSnapshotViaCoordinator(c.env)
+  c.header('Cache-Control', 'no-store')
+  return c.json(snapshot)
+})
+
+adminRoutes.post('/queue/reconcile', async (c) => {
+  const res = await reconcileQueueViaCoordinator(c.env)
+  c.header('Cache-Control', 'no-store')
+  return c.json(res)
+})
+
+adminRoutes.post('/queue/:id/cancel', async (c) => {
+  const id = c.req.param('id')
+  let body: { forceProcessing?: boolean; reason?: string } = {}
+  try {
+    body = await c.req.json()
+  } catch {
+    body = {}
+  }
+
+  const forceProcessing = body.forceProcessing === true
+  const existing = await c.env.DB.prepare(`SELECT id, status FROM generation_jobs WHERE id = ?`)
+    .bind(id)
+    .first<{ id: string; status: string }>()
+  if (!existing) {
+    return c.json({ error: { message: '任务不存在' } }, 404)
+  }
+
+  if (existing.status === 'queued') {
+    const res = await cancelQueuedJobViaCoordinator(c.env, {
+      jobId: id,
+      reason: body.reason?.trim() || '管理员已取消排队，积分已全额退还',
+      ledgerNote: '管理员取消排队退还',
+    })
+    if (!res.cancelled) {
+      return c.json({ error: { message: '该任务状态已变化，无法取消排队' } }, 409)
+    }
+    return c.json({ ok: true, refunded: res.refunded, mode: 'cancelled_queued' })
+  }
+
+  if (existing.status === 'processing' && forceProcessing) {
+    const res = await forceCancelProcessingJobViaCoordinator(c.env, {
+      jobId: id,
+      reason: body.reason?.trim() || '管理员强制中止绘制任务并全额退还积分',
+    })
+    return c.json({ ok: true, refunded: res.refunded, mode: 'aborted_processing' })
+  }
+
+  return c.json(
+    {
+      error: {
+        message:
+          existing.status === 'processing'
+            ? '任务正在绘制中，如需强行中止请勾选强制中止操作'
+            : '该任务已完结，无需取消',
+      },
+    },
+    409
+  )
+})
+
 adminRoutes.get('/generations', async (c) => {
   await reapStaleProcessingJobs(c.env.DB)
   const limit = Math.min(100, Math.max(1, Number(c.req.query('limit') || '50') || 50))
@@ -2061,7 +3072,7 @@ adminRoutes.get('/generations', async (c) => {
 
   const clauses: string[] = []
   const bindings: unknown[] = []
-  if (status && ['processing', 'succeeded', 'failed'].includes(status)) {
+  if (status && ['queued', 'processing', 'succeeded', 'failed', 'cancelled'].includes(status)) {
     clauses.push('j.status = ?')
     bindings.push(status)
   }
@@ -2095,6 +3106,8 @@ adminRoutes.get('/generations', async (c) => {
          SUM(CASE WHEN j.status = 'succeeded' THEN 1 ELSE 0 END) AS succeeded,
          SUM(CASE WHEN j.status = 'failed' THEN 1 ELSE 0 END) AS failed,
          SUM(CASE WHEN j.status = 'processing' THEN 1 ELSE 0 END) AS processing,
+         SUM(CASE WHEN j.status = 'queued' THEN 1 ELSE 0 END) AS queued,
+         SUM(CASE WHEN j.status = 'cancelled' THEN 1 ELSE 0 END) AS cancelled,
          SUM(
            CASE
              WHEN j.trace_json IS NOT NULL
@@ -2113,6 +3126,8 @@ adminRoutes.get('/generations', async (c) => {
         succeeded: number | null
         failed: number | null
         processing: number | null
+        queued: number | null
+        cancelled: number | null
         retried: number | null
       }>(),
   ])
@@ -2122,12 +3137,29 @@ adminRoutes.get('/generations', async (c) => {
     succeeded: statsRow?.succeeded ?? 0,
     failed: statsRow?.failed ?? 0,
     processing: statsRow?.processing ?? 0,
+    queued: statsRow?.queued ?? 0,
+    cancelled: statsRow?.cancelled ?? 0,
     retried: statsRow?.retried ?? 0,
+  }
+
+  const rows = res.results || []
+  let queueMap = new Map<string, ReturnType<typeof computeQueuePositions> extends Map<string, infer V> ? V : never>()
+  if (rows.some((r) => r.status === 'queued')) {
+    const [activeRows, platform] = await Promise.all([
+      listActiveQueueRows(c.env.DB),
+      getPlatformConfig(c.env.DB),
+    ])
+    queueMap = computeQueuePositions(activeRows, mergeGenerationQueueConfig(platform.queueConfig))
   }
 
   c.header('Cache-Control', 'no-store')
   return c.json({
-    items: (res.results || []).map((row) => mapJobRow(row, { isAdmin: true })),
+    items: rows.map((row) =>
+      mapJobRow(row, {
+        isAdmin: true,
+        queueInfo: row.status === 'queued' ? queueMap.get(row.id) ?? null : null,
+      })
+    ),
     total: stats.total,
     stats,
   })
@@ -2149,6 +3181,209 @@ adminRoutes.get('/generations/:id', async (c) => {
     return c.json({ error: { message: '生成记录不存在' } }, 404)
   }
 
+  let queueInfo = null
+  if (row.status === 'queued') {
+    const [activeRows, platform] = await Promise.all([
+      listActiveQueueRows(c.env.DB),
+      getPlatformConfig(c.env.DB),
+    ])
+    queueInfo =
+      computeQueuePositions(activeRows, mergeGenerationQueueConfig(platform.queueConfig)).get(row.id) ??
+      null
+  }
+
   c.header('Cache-Control', 'no-store')
-  return c.json({ job: mapJobRow(row, { isAdmin: true }) })
+  return c.json({ job: mapJobRow(row, { isAdmin: true, queueInfo }) })
+})
+
+adminRoutes.get('/sync/mio', async (c) => {
+  const status = await getMioSyncStatus(c.env.BUCKET)
+  c.header('Cache-Control', 'no-store')
+  return c.json(status)
+})
+
+adminRoutes.post('/sync/mio', async (c) => {
+  try {
+    const status = await syncMioArchive(c.env, { throwOnError: true })
+    c.header('Cache-Control', 'no-store')
+    return c.json(status)
+  } catch (err) {
+    const message = err instanceof Error ? err.message : '同步上游档案失败'
+    return c.json({ error: { message } }, 502)
+  }
+})
+
+const VALID_DESC_KINDS = new Set<ReferenceDescriptionKind>([
+  'pose',
+  'costume',
+  'portrait',
+  'extra',
+])
+
+adminRoutes.get('/reference-descriptions', async (c) => {
+  const rawKind = (c.req.query('kind') || 'all').toLowerCase()
+  const kind: 'all' | ReferenceDescriptionKind = VALID_DESC_KINDS.has(
+    rawKind as ReferenceDescriptionKind
+  )
+    ? (rawKind as ReferenceDescriptionKind)
+    : 'all'
+  const q = c.req.query('q') || ''
+  const limit = Math.min(100, Math.max(1, Number(c.req.query('limit') || '20') || 20))
+  const offset = Math.max(0, Number(c.req.query('offset') || '0') || 0)
+
+  const data = await listReferenceDescriptions(c.env.DB, { kind, q, limit, offset })
+  c.header('Cache-Control', 'no-store')
+  return c.json(data)
+})
+
+adminRoutes.get('/reference-descriptions/preview', async (c) => {
+  const key = (c.req.query('key') || '').trim()
+  if (!key || !key.startsWith('uploads/') || key.includes('..')) {
+    return c.json({ error: { message: '无效的图片键' } }, 400)
+  }
+  const obj = await c.env.BUCKET.get(key)
+  if (!obj) {
+    return c.json({ error: { message: '图片不存在' } }, 404)
+  }
+  const headers = new Headers()
+  headers.set('Content-Type', obj.httpMetadata?.contentType || 'image/jpeg')
+  headers.set('Cache-Control', 'private, max-age=300')
+  return new Response(obj.body, { status: 200, headers })
+})
+
+adminRoutes.post('/reference-descriptions/transcribe', async (c) => {
+  let body: Record<string, unknown>
+  try {
+    body = await c.req.json()
+  } catch {
+    return c.json({ error: { message: '请求体格式错误' } }, 400)
+  }
+  const kind = VALID_DESC_KINDS.has(body.kind as ReferenceDescriptionKind)
+    ? (body.kind as ReferenceDescriptionKind)
+    : null
+  const previewPath = typeof body.previewPath === 'string' ? body.previewPath.trim() : ''
+  const sourceLabel = typeof body.sourceLabel === 'string' ? body.sourceLabel.trim() : ''
+  const manualDescription = typeof body.description === 'string' ? body.description.trim() : ''
+  if (!kind || !previewPath) {
+    return c.json(
+      { error: { message: '请指定有效类型 (pose/costume/portrait/extra) 与参考图路径' } },
+      400
+    )
+  }
+
+  const source = buildSourceFromPreviewPath(kind, previewPath, sourceLabel)
+  if (!source) {
+    return c.json({ error: { message: '参考图路径不合法或不受支持' } }, 400)
+  }
+
+  if (manualDescription) {
+    if (manualDescription.length > 2000) {
+      return c.json({ error: { message: '描述文本不能超过 2000 字符' } }, 400)
+    }
+    try {
+      const item = await saveManualReferenceDescriptionFromSource({
+        env: c.env,
+        kind,
+        source,
+        description: manualDescription,
+      })
+      c.header('Cache-Control', 'no-store')
+      return c.json({ item, cacheHit: false }, 201)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '保存手动参考图描述失败'
+      return c.json({ error: { message } }, 400)
+    }
+  }
+
+  try {
+    const platform = await getPlatformConfig(c.env.DB)
+    const visionCfg = mergeVisionFallbackConfig(platform.visionFallback)
+    const targets = await resolveVisionFallbackTargets(c.env, visionCfg)
+    const res = await resolveOrTranscribeReferenceDescription({
+      env: c.env,
+      kind,
+      source,
+      visionConfig: visionCfg,
+      targets,
+    })
+    c.header('Cache-Control', 'no-store')
+    return c.json({
+      description: res.description,
+      cacheHit: res.cacheHit,
+      visionModel: res.visionModel,
+      item: res.item,
+    })
+  } catch (err) {
+    const message = err instanceof Error ? err.message : '即时视觉转译失败'
+    return c.json({ error: { message } }, 502)
+  }
+})
+
+adminRoutes.patch('/reference-descriptions/:id', async (c) => {
+  const id = c.req.param('id')
+  let body: Record<string, unknown>
+  try {
+    body = await c.req.json()
+  } catch {
+    return c.json({ error: { message: '请求体格式错误' } }, 400)
+  }
+  const description = typeof body.description === 'string' ? body.description.trim() : ''
+  const sourceLabel = typeof body.sourceLabel === 'string' ? body.sourceLabel : undefined
+  if (!description) {
+    return c.json({ error: { message: '描述文本不能为空' } }, 400)
+  }
+  if (description.length > 2000) {
+    return c.json({ error: { message: '描述文本不能超过 2000 字符' } }, 400)
+  }
+
+  const updated = await updateReferenceDescriptionManual(c.env.DB, id, {
+    description,
+    sourceLabel,
+  })
+  if (!updated) {
+    return c.json({ error: { message: '未找到该参考图描述记录' } }, 404)
+  }
+  c.header('Cache-Control', 'no-store')
+  return c.json({ item: updated })
+})
+
+adminRoutes.post('/reference-descriptions/:id/regenerate', async (c) => {
+  const id = c.req.param('id')
+  const existing = await findReferenceDescriptionById(c.env.DB, id)
+  if (!existing) {
+    return c.json({ error: { message: '未找到该参考图描述记录' } }, 404)
+  }
+  const previewPath =
+    existing.previewPath ||
+    existing.refKey.replace(/^(?:gallery|https):/, '')
+
+  try {
+    const platform = await getPlatformConfig(c.env.DB)
+    const visionCfg = mergeVisionFallbackConfig(platform.visionFallback)
+    const targets = await resolveVisionFallbackTargets(c.env, visionCfg)
+    const regenerated = await regenerateReferenceDescriptionFromPreview({
+      env: c.env,
+      kind: existing.kind,
+      previewPath,
+      label: existing.sourceLabel,
+      visionConfig: visionCfg,
+      targets,
+    })
+    const updated = await updateReferenceDescriptionRegenerated(c.env.DB, id, regenerated)
+    c.header('Cache-Control', 'no-store')
+    return c.json({ item: updated })
+  } catch (err) {
+    const message = err instanceof Error ? err.message : '重新识图生成失败'
+    return c.json({ error: { message } }, 502)
+  }
+})
+
+adminRoutes.delete('/reference-descriptions/:id', async (c) => {
+  const id = c.req.param('id')
+  const ok = await deleteReferenceDescription(c.env.DB, id)
+  if (!ok) {
+    return c.json({ error: { message: '未找到该参考图描述记录' } }, 404)
+  }
+  c.header('Cache-Control', 'no-store')
+  return c.json({ ok: true })
 })

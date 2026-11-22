@@ -17,22 +17,55 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { ANGLES, posesQuery } from '@/api/gallery'
 import Stack from '@/components/cards/Stack'
 import { EmptyState } from '@/components/common/EmptyState'
+import { GalleryDensityControl } from '@/components/common/GalleryDensityControl'
 import { HorizontalFilterStrip } from '@/components/common/HorizontalFilterStrip'
 import { ScrollToTopButton } from '@/components/common/ScrollToTopButton'
 import { ShowcaseDialog, ShowcaseStageTabs, type ShowcaseStageTabItem } from '@/components/common/ShowcaseDialog'
 import { GlowCard3D } from '@/components/costumes/GlowCard3D'
 import { GalleryHoloCard } from '@/components/cards/GalleryHoloCard'
-import { PoseFilterModal } from '@/components/poses/PoseFilterModal'
+import { PoseFilterModal, type PoseSourceFilter } from '@/components/poses/PoseFilterModal'
 import { Skeleton } from '@/components/ui/skeleton'
 import { getPoseAccent } from '@/lib/cardAccents'
+import { type GalleryDesktopCols, galleryGridClassName, useGalleryDesktopCols } from '@/lib/galleryDensity'
 import { getPoseFrameBounds, POSE_THUMB_HEIGHT, POSE_THUMB_WIDTH } from '@/lib/poseBounds'
-import { poseImagePath, poseThumbPath } from '@/lib/recipeImages'
+import { hasPoseDepthMap, poseImagePath, poseThumbPath, referenceImageUrl, downloadFileName } from '@/lib/recipeImages'
 import { cn } from '@/lib/utils'
 import { useStudio } from '@/store/studioStore'
 import type { PoseGroup, PoseItem } from '@/types/gallery'
+import {
+  MIO_ARCHIVE_ORIGIN,
+  MIO_COPYRIGHT_NOTICE,
+  MIO_POSE_SYSTEM,
+  MIO_SOURCE_LABEL,
+} from '../../shared/mioArchive'
+
+export interface PosesSearchParams {
+  line?: string
+  source?: PoseSourceFilter
+  category?: string
+  angle?: string
+  q?: string
+}
+
+const POSE_SOURCE_LABELS: Array<{ id: PoseSourceFilter; label: string }> = [
+  { id: 'all', label: '全部来源' },
+  { id: 'gia', label: 'ギア · 素体白模与深度图' },
+  { id: 'mio', label: MIO_SOURCE_LABEL },
+]
 
 export const Route = createFileRoute('/poses')({
   staticData: { title: '动作姿势库' },
+  validateSearch: (raw: Record<string, unknown>): PosesSearchParams => {
+    const out: PosesSearchParams = {}
+    if (typeof raw.line === 'string' && raw.line.trim()) out.line = raw.line.trim()
+    if (raw.source === 'gia' || raw.source === 'mio') out.source = raw.source
+    if (typeof raw.category === 'string' && raw.category.trim() && raw.category !== 'all') {
+      out.category = raw.category.trim()
+    }
+    if (typeof raw.angle === 'string' && raw.angle.trim()) out.angle = raw.angle.trim()
+    if (typeof raw.q === 'string' && raw.q) out.q = raw.q
+    return out
+  },
   loader: ({ context }) => context.queryClient.ensureQueryData(posesQuery),
   pendingComponent: () => (
     <div className="space-y-5">
@@ -55,33 +88,62 @@ export const Route = createFileRoute('/poses')({
   component: PosesPage,
 })
 
-function useMasonryColumns() {
-  const [cols, setCols] = useState(() => {
-    if (typeof window === 'undefined') return 2
-    if (window.innerWidth >= 1024) return 5
-    if (window.innerWidth >= 768) return 4
-    if (window.innerWidth >= 640) return 3
-    return 2
-  })
+function computeMasonryColumns(w: number, desktopCols: GalleryDesktopCols) {
+  if (w >= 1024) return desktopCols
+  if (w >= 768) return 4
+  if (w >= 640) return 3
+  return 2
+}
+
+function useMasonryColumns(desktopCols: GalleryDesktopCols) {
+  const [cols, setCols] = useState(() =>
+    typeof window === 'undefined' ? 2 : computeMasonryColumns(window.innerWidth, desktopCols)
+  )
   useEffect(() => {
-    const update = () => {
-      const w = window.innerWidth
-      setCols(w >= 1024 ? 5 : w >= 768 ? 4 : w >= 640 ? 3 : 2)
-    }
+    const update = () => setCols(computeMasonryColumns(window.innerWidth, desktopCols))
+    update()
     window.addEventListener('resize', update, { passive: true })
     return () => window.removeEventListener('resize', update)
-  }, [])
+  }, [desktopCols])
   return cols
 }
 
 function PosesPage() {
   const { data } = useSuspenseQuery(posesQuery)
   const { recipe, togglePose, poseDepthMode, setPoseDepthMode } = useStudio()
+  const search = Route.useSearch()
+  const navigate = Route.useNavigate()
 
-  const [line, setLine] = useState('')
-  const [category, setCategory] = useState('all')
-  const [angle, setAngle] = useState('')
-  const [query, setQuery] = useState('')
+  const line = search.line ?? ''
+  const sourceFilter: PoseSourceFilter = search.source ?? 'all'
+  const category = search.category ?? 'all'
+  const angle = search.angle ?? ''
+  const query = search.q ?? ''
+
+  const updateSearch = (patch: Partial<PosesSearchParams>) => {
+    void navigate({
+      search: (prev) => {
+        const next: PosesSearchParams = { ...prev, ...patch }
+        if (!next.line) delete next.line
+        if (!next.source || next.source === 'all') delete next.source
+        if (!next.category || next.category === 'all') delete next.category
+        if (!next.angle) delete next.angle
+        if (!next.q) delete next.q
+        return next
+      },
+      replace: true,
+    })
+  }
+
+  const setLine = (next: string) => updateSearch({ line: next || undefined })
+  const setSourceFilter = (next: PoseSourceFilter) =>
+    updateSearch({ source: next === 'all' ? undefined : next })
+  const setCategory = (next: string) =>
+    updateSearch({ category: next === 'all' ? undefined : next })
+  const setAngle = (next: string) => updateSearch({ angle: next || undefined })
+  const setQuery = (next: string) => updateSearch({ q: next || undefined })
+
+  const [desktopCols, setDesktopCols] = useGalleryDesktopCols()
   const [shown, setShown] = useState(60)
   const [filterOpen, setFilterOpen] = useState(false)
   const [flippedIds, setFlippedIds] = useState<Record<string, boolean>>({})
@@ -108,79 +170,104 @@ function PosesPage() {
     [visibleLines, baseGroups]
   )
 
+  const sourceOptions = useMemo(() => {
+    const scoped = activeLine ? baseGroups.filter((g) => g.system === activeLine) : baseGroups
+    return POSE_SOURCE_LABELS.map((entry) => ({
+      id: entry.id,
+      label: entry.label,
+      count:
+        entry.id === 'all'
+          ? scoped.length
+          : scoped.filter((g) => {
+              const isMio = g.items.some((it) => it.source === 'mio')
+              return entry.id === 'mio' ? isMio : !isMio
+            }).length,
+    })).filter((entry) => entry.id === 'all' || entry.count > 0)
+  }, [baseGroups, activeLine])
+
   const categoryOptions = useMemo(() => {
     const map = new Map<string, number>()
     for (const g of baseGroups) {
       if (activeLine && g.system !== activeLine) continue
+      const isMio = g.items.some((it) => it.source === 'mio')
+      if (sourceFilter === 'mio' && !isMio) continue
+      if (sourceFilter === 'gia' && isMio) continue
       if (g.category) map.set(g.category, (map.get(g.category) || 0) + 1)
     }
     return [...map.entries()]
       .sort((a, b) => a[0].localeCompare(b[0], 'zh-CN'))
       .map(([label, count]) => ({ label, count }))
-  }, [baseGroups, activeLine])
+  }, [baseGroups, activeLine, sourceFilter])
 
   const angleCounts = useMemo(() => {
     const map: Record<string, number> = {}
     for (const a of ANGLES) map[a] = 0
     for (const g of baseGroups) {
       if (activeLine && g.system !== activeLine) continue
+      const isMio = g.items.some((it) => it.source === 'mio')
+      if (sourceFilter === 'mio' && !isMio) continue
+      if (sourceFilter === 'gia' && isMio) continue
       if (category !== 'all' && g.category !== category) continue
       for (const a of ANGLES) {
         if (g.angles[a]) map[a] = (map[a] || 0) + 1
       }
     }
     return map
-  }, [baseGroups, activeLine, category])
+  }, [baseGroups, activeLine, sourceFilter, category])
 
   const q = query.trim().toLowerCase()
 
   const filteredGroups = useMemo(() => {
     return baseGroups.filter((g) => {
       if (activeLine && g.system !== activeLine) return false
+      const isMio = g.items.some((it) => it.source === 'mio')
+      if (sourceFilter === 'mio' && !isMio) return false
+      if (sourceFilter === 'gia' && isMio) return false
       if (category !== 'all' && g.category !== category) return false
       return g.items.some((it) => {
         if (angle && it.角度 !== angle) return false
-        if (q && !`${it.姿势名称} ${it.id} ${it.分类} ${it.姿势编号} ${it.体系}`.toLowerCase().includes(q)) return false
+        if (q && !(it.检索 || `${it.姿势名称} ${it.id} ${it.分类} ${it.姿势编号} ${it.体系}`).toLowerCase().includes(q)) return false
         return true
       })
     })
-  }, [baseGroups, activeLine, category, angle, q])
+  }, [baseGroups, activeLine, sourceFilter, category, angle, q])
 
   const activeFilterCount =
     (activeLine ? 1 : 0) +
+    (sourceFilter !== 'all' ? 1 : 0) +
     (category !== 'all' ? 1 : 0) +
     (angle ? 1 : 0)
 
   const hasActiveFilters = Boolean(activeFilterCount > 0 || query.trim())
 
   const resetFilters = () => {
-    setLine('')
-    setCategory('all')
-    setAngle('')
-    setQuery('')
+    void navigate({ search: {}, replace: true })
     setShown(60)
   }
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (viewer && viewerOpen) {
+        if (viewerStageMode === 'zoom') return
         const grp = filteredGroups[viewer.groupIndex]
         if (grp) {
           if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+            if (filteredGroups.length <= 1) return
+            e.preventDefault()
             const dir: 1 | -1 = e.key === 'ArrowRight' ? 1 : -1
-            const idx = grp.order.findIndex((x) => x.id === viewer.item.id)
-            const nextItem = grp.order[(idx + dir + grp.order.length) % grp.order.length]
-            if (nextItem) setViewer((prev) => ({ groupIndex: viewer.groupIndex, item: nextItem, dir, depth: prev?.depth }))
+            const nextIdx = (viewer.groupIndex + dir + filteredGroups.length) % filteredGroups.length
+            const nextGrp = filteredGroups[nextIdx]
+            const nextItem = nextGrp.angles[viewer.item.角度] || nextGrp.order[0]
+            setViewer((prev) => ({ groupIndex: nextIdx, item: nextItem, dir, depth: prev?.depth }))
             return
           }
-          if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+          if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && grp.order.length > 1) {
             e.preventDefault()
             const dir: 1 | -1 = e.key === 'ArrowDown' ? 1 : -1
-            const nextIdx = viewer.groupIndex + dir
-            if (nextIdx >= 0 && nextIdx < filteredGroups.length) {
-              const nextGrp = filteredGroups[nextIdx]
-              const nextItem = nextGrp.angles[viewer.item.角度] || nextGrp.order[0]
-              setViewer((prev) => ({ groupIndex: nextIdx, item: nextItem, dir, depth: prev?.depth }))
+            const idx = grp.order.findIndex((x) => x.id === viewer.item.id)
+            const nextItem = grp.order[(idx + dir + grp.order.length) % grp.order.length]
+            if (nextItem) {
+              setViewer((prev) => ({ groupIndex: viewer.groupIndex, item: nextItem, dir, depth: prev?.depth }))
             }
             return
           }
@@ -205,7 +292,7 @@ function PosesPage() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [viewer, viewerOpen, filteredGroups])
+  }, [viewer, viewerOpen, viewerStageMode, filteredGroups])
 
   const getActiveGroupItem = (group: PoseGroup): PoseItem => {
     if (angle && group.angles[angle]) return group.angles[angle]
@@ -217,7 +304,7 @@ function PosesPage() {
     () => filteredGroups.reduce((sum, g) => sum + g.order.length, 0),
     [filteredGroups]
   )
-  const masonryCols = useMasonryColumns()
+  const masonryCols = useMasonryColumns(desktopCols)
   const distributedCols = useMemo(() => {
     const columns: Array<Array<{ group: PoseGroup; gIdx: number }>> = Array.from(
       { length: masonryCols },
@@ -229,7 +316,7 @@ function PosesPage() {
       const group = visible[gIdx]
       const item = angle && group.angles[angle] ? group.angles[angle] : group.order[0]
       const bounds = getPoseFrameBounds(item.id)
-      const ratio = bounds.cropH / POSE_THUMB_WIDTH + 0.34
+      const ratio = item.source === 'mio' ? 1 + 0.34 : bounds.cropH / POSE_THUMB_WIDTH + 0.34
       let minCol = 0
       for (let c = 1; c < masonryCols; c++) {
         if (heights[c] < heights[minCol]) minCol = c
@@ -245,6 +332,7 @@ function PosesPage() {
       .replace('全身单人・标准系', '全身标准')
       .replace('全身单人・性感系', '全身性感')
       .replace('上半身单人', '上半身')
+      .replace(MIO_POSE_SYSTEM, '霧島澪')
 
   return (
     <div className="space-y-5">
@@ -410,6 +498,8 @@ function PosesPage() {
             </button>
           </div>
 
+          <GalleryDensityControl value={desktopCols} onChange={setDesktopCols} />
+
           {hasActiveFilters && (
             <button
               type="button"
@@ -424,6 +514,20 @@ function PosesPage() {
 
         {/* 单行横向轻盈动作分类胶囊 */}
         <HorizontalFilterStrip>
+          {sourceFilter !== 'all' && (
+            <button
+              type="button"
+              onClick={() => {
+                setSourceFilter('all')
+                setShown(60)
+              }}
+              className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90"
+            >
+              <span>来源：{POSE_SOURCE_LABELS.find((s) => s.id === sourceFilter)?.label}</span>
+              <XIcon className="size-3" />
+            </button>
+          )}
+
           {angle && (
             <button
               type="button"
@@ -485,13 +589,15 @@ function PosesPage() {
       {totalCount === 0 ? (
         <EmptyState title="没有找到匹配的姿势" description="试试更换搜索词或重置筛选条件" />
       ) : (
-        <div className="grid grid-cols-2 items-start gap-5 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
+        <div className={cn(galleryGridClassName(desktopCols), 'items-start gap-5')}>
           {distributedCols.map((colItems, colIdx) => (
             <div key={colIdx} className="flex flex-col gap-6">
               {colItems.map(({ group, gIdx }) => {
                 const item = getActiveGroupItem(group)
+                const isMio = item.source === 'mio'
+                const hasDepth = hasPoseDepthMap(item)
                 const isFlipped = Boolean(flippedIds[group.key])
-                const activeLayerIsDepth = isFlipped ? !poseDepthMode : poseDepthMode
+                const activeLayerIsDepth = hasDepth && (isFlipped ? !poseDepthMode : poseDepthMode)
                 const picked = recipe.pose?.id === item.id && Boolean(recipe.pose?.useDepth) === activeLayerIsDepth
                 const accent = getPoseAccent(group.category, group.system, gIdx)
                 const bounds = getPoseFrameBounds(item.id)
@@ -502,34 +608,47 @@ function PosesPage() {
                     index={gIdx % 60}
                     picked={picked}
                     flipped={isFlipped}
+                    hideFlip={!hasDepth}
                     accent={accent}
                     flipAriaLabel="翻转查看深度图"
                     onFlipToggle={() => setFlippedIds((prev) => ({ ...prev, [group.key]: !prev[group.key] }))}
                     onPickToggle={() => togglePose({ ...item, useDepth: activeLayerIsDepth })}
                     onOpenViewer={() => openViewer({ groupIndex: gIdx, item, depth: activeLayerIsDepth })}
                     media={
-                      <div
-                        style={{ aspectRatio: `${POSE_THUMB_WIDTH} / ${bounds.cropH}` }}
-                        className={cn(
-                          'relative w-full overflow-hidden transition-[aspect-ratio] duration-300',
-                          poseDepthMode ? 'bg-[#2B2B32]' : 'bg-white'
-                        )}
-                      >
-                        <img
-                          src={`/${poseThumbPath(item, poseDepthMode)}`}
-                          alt={group.name}
-                          loading="lazy"
-                          style={{
-                            position: 'absolute',
-                            left: 0,
-                            top: `${-(bounds.y1 / bounds.cropH) * 100}%`,
-                            width: '100%',
-                            height: `${(POSE_THUMB_HEIGHT / bounds.cropH) * 100}%`,
-                            maxWidth: 'none',
-                          }}
-                          className="pointer-events-none block select-none object-cover"
-                        />
-                      </div>
+                      isMio ? (
+                        <div className="relative aspect-square w-full overflow-hidden bg-[#F4F1EA] dark:bg-[#232328]">
+                          <img
+                            src={referenceImageUrl(poseThumbPath(item, false))}
+                            alt={group.name}
+                            loading="lazy"
+                            decoding="async"
+                            className="pointer-events-none block size-full select-none object-contain"
+                          />
+                        </div>
+                      ) : (
+                        <div
+                          style={{ aspectRatio: `${POSE_THUMB_WIDTH} / ${bounds.cropH}` }}
+                          className={cn(
+                            'relative w-full overflow-hidden transition-[aspect-ratio] duration-300',
+                            poseDepthMode ? 'bg-[#2B2B32]' : 'bg-white'
+                          )}
+                        >
+                          <img
+                            src={referenceImageUrl(poseThumbPath(item, poseDepthMode))}
+                            alt={group.name}
+                            loading="lazy"
+                            style={{
+                              position: 'absolute',
+                              left: 0,
+                              top: `${-(bounds.y1 / bounds.cropH) * 100}%`,
+                              width: '100%',
+                              height: `${(POSE_THUMB_HEIGHT / bounds.cropH) * 100}%`,
+                              maxWidth: 'none',
+                            }}
+                            className="pointer-events-none block select-none object-cover"
+                          />
+                        </div>
+                      )
                     }
                     backMedia={
                       <div
@@ -539,7 +658,7 @@ function PosesPage() {
                         )}
                       >
                         <img
-                          src={`/${poseThumbPath(item, !poseDepthMode)}`}
+                          src={referenceImageUrl(poseThumbPath(item, !poseDepthMode))}
                           alt={group.name}
                           className="h-full w-full object-contain"
                         />
@@ -573,9 +692,12 @@ function PosesPage() {
       {viewer && (() => {
         const grp = filteredGroups[viewer.groupIndex]
         const it = viewer.item
-        const viewerDepth = viewer.depth ?? poseDepthMode
+        const isMio = it.source === 'mio'
+        const hasDepth = hasPoseDepthMap(it)
+        const viewerDepth = hasDepth ? (viewer.depth ?? poseDepthMode) : false
         const picked = recipe.pose?.id === it.id && Boolean(recipe.pose?.useDepth) === viewerDepth
         const activeImgPath = poseImagePath(it, viewerDepth)
+        const activeImgUrl = referenceImageUrl(activeImgPath)
         const accent = getPoseAccent(it.分类, it.体系)
         const stackItems = grp ? ANGLES.map((a) => grp.angles[a]).filter(Boolean) : [it]
         const hasMultiAngles = stackItems.length > 1
@@ -606,13 +728,20 @@ function PosesPage() {
             secondaryTag={it.角度}
             title={it.姿势名称}
             picked={picked}
-            pickLabel={picked ? '已在配方中（点击移除）' : `锁入角色配方（${viewerDepth ? '深度图' : '白模'}）`}
+            pickLabel={
+              picked
+                ? '已在配方中（点击移除）'
+                : hasDepth
+                  ? `锁入角色配方（${viewerDepth ? '深度图' : '白模'}）`
+                  : '锁入角色配方'
+            }
             onTogglePick={() => togglePose({ ...it, useDepth: viewerDepth })}
-            downloadHref={`/${activeImgPath}`}
-            downloadName={`${it.id}${viewerDepth ? '_depth.webp' : '.png'}`}
-            downloadLabel="下载高清原图"
-            externalHref={`/${activeImgPath}`}
-            externalLabel="新窗口打开"
+            downloadHref={activeImgUrl}
+            downloadName={downloadFileName(it.id, activeImgUrl, isMio ? 'jpg' : viewerDepth ? 'webp' : 'png')}
+            downloadExternal={isMio}
+            downloadLabel={isMio ? '前往来源原图' : '下载高清原图'}
+            externalHref={isMio ? it.来源地址 || activeImgUrl : activeImgUrl}
+            externalLabel={isMio ? '原作者站点' : '新窗口打开'}
             stageTopLeft={
               <ShowcaseStageTabs
                 layoutId="pose-stage-tab"
@@ -625,7 +754,7 @@ function PosesPage() {
               effectiveStageMode === 'zoom' ? (
                 <div className="w-full pt-2">
                   <ZoomViewport
-                    imageUrl={`/${activeImgPath}`}
+                    imageUrl={activeImgUrl}
                     alt={it.姿势名称}
                     className="min-h-0 h-[56dvh] rounded-2xl border border-border bg-card dark:border-white/12 dark:bg-[#161620] p-3"
                   />
@@ -662,7 +791,7 @@ function PosesPage() {
                         )}
                       >
                         <img
-                          src={`/${poseImagePath(angleItem, viewerDepth)}`}
+                          src={referenceImageUrl(poseImagePath(angleItem, viewerDepth))}
                           alt={`${angleItem.姿势名称} · ${angleItem.角度}`}
                           draggable={false}
                           className="h-full w-full object-contain"
@@ -671,7 +800,7 @@ function PosesPage() {
                           <span className="rounded-full bg-black/75 px-2.5 py-0.5 text-xs font-medium text-white ring-1 ring-white/15 backdrop-blur-md">
                             {angleItem.角度}
                           </span>
-                          <span className="rounded-full bg-black/60 px-2 py-0.5 font-mono text-xs text-foreground backdrop-blur-md">
+                          <span className="rounded-full bg-black/75 px-2 py-0.5 font-mono text-xs text-white/95 ring-1 ring-white/15 backdrop-blur-md">
                             {idx + 1}/{stackItems.length}
                           </span>
                         </div>
@@ -712,7 +841,7 @@ function PosesPage() {
                     </>
                   )}
                   <GlowCard3D
-                    imageUrl={`/${activeImgPath}`}
+                    imageUrl={activeImgUrl}
                     alt={`${it.姿势名称} · ${it.角度}`}
                     direction={viewer.dir || 1}
                   />
@@ -752,46 +881,48 @@ function PosesPage() {
                   <p className="text-xs text-muted-foreground">
                     {effectiveStageMode === 'stack'
                       ? '点击或拖拽牌面丝滑切换多视角'
-                      : '悬停倾斜 · 按住拖拽旋转 · ←/→ 切视角 · ↑/↓ 换姿势'}
+                      : '悬停倾斜 · 按住拖拽旋转 · ←/→ 换姿势 · ↑/↓ 切视角'}
                   </p>
                 </>
               ) : null
             }
             sidebarBody={
               <div className="space-y-5">
-                <div className="space-y-2.5">
-                  <div className="text-xs font-medium tracking-wide text-muted-foreground">参考底图类型</div>
-                  <div className="grid grid-cols-2 gap-1.5 rounded-2xl border border-border bg-muted/45 p-1">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setPoseDepthMode(false)
-                        setViewer((v) => (v ? { ...v, depth: false } : v))
-                        if (grp) setFlippedIds((prev) => ({ ...prev, [grp.key]: false }))
-                      }}
-                      className={cn(
-                        'rounded-xl py-2 text-xs font-medium transition-all',
-                        !viewerDepth ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:text-white'
-                      )}
-                    >
-                      3D 素体白模
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setPoseDepthMode(true)
-                        setViewer((v) => (v ? { ...v, depth: true } : v))
-                        if (grp) setFlippedIds((prev) => ({ ...prev, [grp.key]: false }))
-                      }}
-                      className={cn(
-                        'rounded-xl py-2 text-xs font-medium transition-all',
-                        viewerDepth ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:text-white'
-                      )}
-                    >
-                      深度图
-                    </button>
+                {hasDepth && (
+                  <div className="space-y-2.5">
+                    <div className="text-xs font-medium tracking-wide text-muted-foreground">参考底图类型</div>
+                    <div className="grid grid-cols-2 gap-1.5 rounded-2xl border border-border bg-muted/45 p-1">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPoseDepthMode(false)
+                          setViewer((v) => (v ? { ...v, depth: false } : v))
+                          if (grp) setFlippedIds((prev) => ({ ...prev, [grp.key]: false }))
+                        }}
+                        className={cn(
+                          'rounded-xl py-2 text-xs font-medium transition-all',
+                          !viewerDepth ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
+                        )}
+                      >
+                        3D 素体白模
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPoseDepthMode(true)
+                          setViewer((v) => (v ? { ...v, depth: true } : v))
+                          if (grp) setFlippedIds((prev) => ({ ...prev, [grp.key]: false }))
+                        }}
+                        className={cn(
+                          'rounded-xl py-2 text-xs font-medium transition-all',
+                          viewerDepth ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
+                        )}
+                      >
+                        深度图
+                      </button>
+                    </div>
                   </div>
-                </div>
+                )}
 
                 {hasMultiAngles && (
                   <div className="space-y-2.5">
@@ -866,9 +997,13 @@ function PosesPage() {
                     <dt className="text-muted-foreground">当前视角</dt>
                     <dd className="text-foreground">{it.角度}</dd>
                     <dt className="text-muted-foreground">底图模式</dt>
-                    <dd className="text-foreground">{viewerDepth ? '深度图' : '素体白模'}</dd>
+                    <dd className="text-foreground">
+                      {isMio ? '素体人偶' : viewerDepth ? '深度图' : '素体白模'}
+                    </dd>
                     <dt className="text-muted-foreground">可用视角</dt>
                     <dd className="font-mono text-foreground">{stackItems.length} 视角</dd>
+                    <dt className="text-muted-foreground">来源</dt>
+                    <dd className="truncate text-foreground">{it.来源 || 'ギア（@giaaibusi）'}</dd>
                   </dl>
                 </div>
               </div>
@@ -876,6 +1011,23 @@ function PosesPage() {
           />
         )
       })()}
+
+      {/* 底部来源说明 */}
+      <footer className="space-y-1 rounded-2xl border border-border bg-card px-4 py-3 text-xs text-muted-foreground">
+        <p>
+          <a href="https://ai-pose-gallery.pages.dev/" target="_blank" rel="noopener noreferrer" className="font-medium text-foreground underline hover:opacity-80">
+            ギア · 素体白模与深度图
+          </a>
+          ：ギア（@giaaibusi）基础人体动态与 5 视角深度图参考，源自原作者公开图集并作中文本地化整理。
+        </p>
+        <p>
+          <a href={MIO_ARCHIVE_ORIGIN} target="_blank" rel="noopener noreferrer" className="font-medium text-foreground underline hover:opacity-80">
+            {MIO_SOURCE_LABEL}
+          </a>
+          ：{MIO_COPYRIGHT_NOTICE}
+        </p>
+      </footer>
+
       <PoseFilterModal
         open={filterOpen}
         onOpenChange={setFilterOpen}
@@ -885,6 +1037,13 @@ function PosesPage() {
           setCategory('all')
           setShown(60)
         }}
+        sourceFilter={sourceFilter}
+        onSelectSource={(next) => {
+          setSourceFilter(next)
+          setCategory('all')
+          setShown(60)
+        }}
+        sourceOptions={sourceOptions}
         category={category}
         onSelectCategory={(next) => {
           setCategory(next)

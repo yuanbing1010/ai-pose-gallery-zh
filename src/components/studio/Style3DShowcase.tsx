@@ -4,7 +4,6 @@ import {
   useRef,
   useState,
   type PointerEvent as ReactPointerEvent,
-  type WheelEvent as ReactWheelEvent,
 } from 'react'
 import { useReducedMotion } from 'motion/react'
 import {
@@ -24,7 +23,7 @@ interface OrbitCarouselProps {
   onHoverChange?: (key: string | null) => void
 }
 
-const TARGET_CENTER_PITCH_PX = 76
+const TARGET_CENTER_PITCH_PX = 96
 const MIN_WINDOWED_ARC_RAD = Math.PI * 1.04
 const CYLINDER_CAMERA_RATIO = 3.25
 
@@ -70,25 +69,37 @@ export function StyleOrbitCarousel({
   const initialCenterIdx = Math.max(0, items.findIndex((it) => it.key === value))
   const [centerIdx, setCenterIdx] = useState(initialCenterIdx)
   const [prevValue, setPrevValue] = useState(value)
+  const [snappingKey, setSnappingKey] = useState<string | null>(null)
 
   const scrollIdxRef = useRef(initialCenterIdx)
   const centerIdxRef = useRef(initialCenterIdx)
   const velocityRef = useRef(0)
   const snapTargetRef = useRef<number | null>(null)
+  const isSnappingRef = useRef(false)
   const draggingRef = useRef(false)
   const dragMovedRef = useRef(false)
   const lastPointerXRef = useRef(0)
   const pointerDownXRef = useRef(0)
+  const lastPointerPosRef = useRef<{ x: number; y: number } | null>(null)
+  const suppressHoverUntilMoveRef = useRef(false)
   const lastSnappedValueRef = useRef<string | null>(null)
   const hasInitializedRef = useRef(false)
   const ensureRafRef = useRef<(() => void) | null>(null)
 
   if (value !== prevValue) {
     setPrevValue(value)
-    if (prefersReducedMotion && count > 0) {
+    setHoveredKey(null)
+    if (count > 0) {
       const nextIdx = items.findIndex((it) => it.key === value)
-      if (nextIdx >= 0 && nextIdx !== centerIdx) {
-        setCenterIdx(nextIdx)
+      if (nextIdx >= 0) {
+        if (prefersReducedMotion) {
+          if (nextIdx !== centerIdx) setCenterIdx(nextIdx)
+          setSnappingKey(null)
+        } else {
+          setSnappingKey(value)
+        }
+      } else {
+        setSnappingKey(null)
       }
     }
   }
@@ -112,23 +123,28 @@ export function StyleOrbitCarousel({
   }, [])
 
   useEffect(() => {
+    if (count === 0) return
     const firstRun = !hasInitializedRef.current
     hasInitializedRef.current = true
-    if (count === 0) return
-    if (lastSnappedValueRef.current === value) return
     const idx = items.findIndex((it) => it.key === value)
-    if (idx < 0) return
+    if (idx < 0) {
+      lastSnappedValueRef.current = null
+      return
+    }
+    if (lastSnappedValueRef.current === value) return
 
     lastSnappedValueRef.current = value
     velocityRef.current = 0
 
     if (firstRun || prefersReducedMotion) {
       scrollIdxRef.current = idx
-      centerIdxRef.current = idx
       snapTargetRef.current = null
+      isSnappingRef.current = false
     } else {
       const delta = wrapIndexDelta(idx - scrollIdxRef.current, count)
       snapTargetRef.current = scrollIdxRef.current + delta
+      isSnappingRef.current = true
+      suppressHoverUntilMoveRef.current = true
     }
     ensureRafRef.current?.()
   }, [value, items, count, prefersReducedMotion])
@@ -139,7 +155,7 @@ export function StyleOrbitCarousel({
   const projectCards = useCallback(() => {
     if (count === 0) return
     const { radius, horizonAngle, frontFactor } = computeCylinderMetrics(stageWidth)
-    const baseStepRad = Math.asin(Math.min(0.45, TARGET_CENTER_PITCH_PX / (radius * frontFactor)))
+    const baseStepRad = Math.asin(Math.min(0.48, TARGET_CENTER_PITCH_PX / (radius * frontFactor)))
     const spanRad = count * baseStepRad
     const windowed = spanRad >= MIN_WINDOWED_ARC_RAD
     const stepRad = windowed ? baseStepRad : (Math.PI * 2) / count
@@ -253,6 +269,8 @@ export function StyleOrbitCarousel({
           if (Math.abs(diff) < 0.006) {
             scrollIdxRef.current = ((snapTargetRef.current % count) + count) % count
             snapTargetRef.current = null
+            isSnappingRef.current = false
+            setSnappingKey(null)
           } else {
             scrollIdxRef.current += diff * Math.min(1, dt * 0.012)
             needsMore = true
@@ -264,6 +282,7 @@ export function StyleOrbitCarousel({
             velocityRef.current = 0
             if (count > 1) {
               snapTargetRef.current = Math.round(scrollIdxRef.current)
+              isSnappingRef.current = true
               needsMore = true
             }
           } else {
@@ -273,6 +292,7 @@ export function StyleOrbitCarousel({
           velocityRef.current = 0
           if (count > 1) {
             snapTargetRef.current = Math.round(scrollIdxRef.current)
+            isSnappingRef.current = true
             needsMore = true
           }
         }
@@ -287,6 +307,7 @@ export function StyleOrbitCarousel({
 
     const ensureLoop = () => {
       if (!inView || document.visibilityState === 'hidden') return
+      syncCenterIdx()
       projectCards()
       if (
         !rafId &&
@@ -332,6 +353,10 @@ export function StyleOrbitCarousel({
   const stepOrbit = (dir: -1 | 1) => {
     if (count <= 1) return
     velocityRef.current = 0
+    lastSnappedValueRef.current = null
+    suppressHoverUntilMoveRef.current = true
+    setHoveredKey(null)
+    setSnappingKey(null)
     const anchor =
       snapTargetRef.current !== null
         ? Math.round(snapTargetRef.current)
@@ -343,8 +368,10 @@ export function StyleOrbitCarousel({
       centerIdxRef.current = wrapped
       setCenterIdx(wrapped)
       snapTargetRef.current = null
+      isSnappingRef.current = false
     } else {
       snapTargetRef.current = next
+      isSnappingRef.current = true
     }
     ensureRafRef.current?.()
   }
@@ -355,33 +382,79 @@ export function StyleOrbitCarousel({
     dragMovedRef.current = false
     setIsDragging(true)
     snapTargetRef.current = null
+    isSnappingRef.current = false
+    setSnappingKey(null)
     velocityRef.current = 0
     pointerDownXRef.current = e.clientX
     lastPointerXRef.current = e.clientX
+    lastPointerPosRef.current = { x: e.clientX, y: e.clientY }
+    suppressHoverUntilMoveRef.current = true
+    setHoveredKey(null)
     ensureRafRef.current?.()
   }
 
   const handlePointerMove = (e: ReactPointerEvent<HTMLDivElement>) => {
-    if (!draggingRef.current) return
-    const totalDx = Math.abs(e.clientX - pointerDownXRef.current)
-    if (totalDx > 5) {
-      dragMovedRef.current = true
+    if (draggingRef.current) {
+      lastSnappedValueRef.current = null
+      const totalDx = Math.abs(e.clientX - pointerDownXRef.current)
+      if (totalDx > 5) {
+        dragMovedRef.current = true
+        if (!e.currentTarget.hasPointerCapture(e.pointerId)) {
+          try {
+            e.currentTarget.setPointerCapture(e.pointerId)
+          } catch {
+            // ignore unsupported pointer capture
+          }
+        }
+      }
+      const dx = e.clientX - lastPointerXRef.current
+      lastPointerXRef.current = e.clientX
+      const deltaIdx = -dx / TARGET_CENTER_PITCH_PX
+      scrollIdxRef.current += deltaIdx
+      velocityRef.current = Math.max(-0.9, Math.min(0.9, deltaIdx * 0.9))
+      ensureRafRef.current?.()
+      return
     }
-    const dx = e.clientX - lastPointerXRef.current
-    lastPointerXRef.current = e.clientX
-    const deltaIdx = -dx / TARGET_CENTER_PITCH_PX
-    scrollIdxRef.current += deltaIdx
-    velocityRef.current = Math.max(-0.9, Math.min(0.9, deltaIdx * 0.9))
-    ensureRafRef.current?.()
+
+    if (isSnappingRef.current || Math.abs(velocityRef.current) > 0.014) {
+      return
+    }
+
+    const lastPos = lastPointerPosRef.current
+    if (!lastPos) {
+      lastPointerPosRef.current = { x: e.clientX, y: e.clientY }
+      return
+    }
+
+    const dist = Math.hypot(e.clientX - lastPos.x, e.clientY - lastPos.y)
+    if (dist <= 4) return
+
+    lastPointerPosRef.current = { x: e.clientX, y: e.clientY }
+    if (suppressHoverUntilMoveRef.current) {
+      suppressHoverUntilMoveRef.current = false
+      const cardEl = (e.target as HTMLElement | null)?.closest<HTMLElement>('[data-orbit-card="true"]')
+      const key = cardEl?.dataset.styleKey
+      if (key) {
+        setHoveredKey(key)
+      }
+    }
   }
 
-  const handlePointerUp = () => {
+  const handlePointerUp = (e?: ReactPointerEvent<HTMLDivElement>) => {
+    if (e && e.currentTarget.hasPointerCapture(e.pointerId)) {
+      try {
+        e.currentTarget.releasePointerCapture(e.pointerId)
+      } catch {
+        // ignore
+      }
+    }
     if (!draggingRef.current) return
     draggingRef.current = false
     setIsDragging(false)
     if (Math.abs(velocityRef.current) <= 0.02 && count > 1) {
       velocityRef.current = 0
       snapTargetRef.current = Math.round(scrollIdxRef.current)
+      isSnappingRef.current = true
     }
     ensureRafRef.current?.()
     window.setTimeout(() => {
@@ -389,20 +462,31 @@ export function StyleOrbitCarousel({
     }, 60)
   }
 
-  const handleWheel = (e: ReactWheelEvent<HTMLDivElement>) => {
-    if (count <= 1) return
-    if (Math.abs(e.deltaX) > Math.abs(e.deltaY) && Math.abs(e.deltaX) > 3) {
-      e.preventDefault()
-      snapTargetRef.current = null
-      scrollIdxRef.current += e.deltaX / TARGET_CENTER_PITCH_PX
-      velocityRef.current = Math.max(-0.6, Math.min(0.6, e.deltaX * 0.01))
-      ensureRafRef.current?.()
+  useEffect(() => {
+    const el = stageRef.current
+    if (!el || count <= 1) return
+    const onWheel = (e: WheelEvent) => {
+      if (Math.abs(e.deltaX) > Math.abs(e.deltaY) && Math.abs(e.deltaX) > 3) {
+        e.preventDefault()
+        snapTargetRef.current = null
+        isSnappingRef.current = false
+        lastSnappedValueRef.current = null
+        suppressHoverUntilMoveRef.current = true
+        setHoveredKey(null)
+        setSnappingKey(null)
+        scrollIdxRef.current += e.deltaX / TARGET_CENTER_PITCH_PX
+        velocityRef.current = Math.max(-0.6, Math.min(0.6, e.deltaX * 0.01))
+        ensureRafRef.current?.()
+      }
     }
-  }
+    el.addEventListener('wheel', onWheel, { passive: false })
+    return () => el.removeEventListener('wheel', onWheel)
+  }, [count])
 
   const hoveredItem = hoveredKey ? items.find((it) => it.key === hoveredKey) ?? null : null
+  const snappingItem = snappingKey ? items.find((it) => it.key === snappingKey) ?? null : null
   const centeredItem = count > 0 ? items[((centerIdx % count) + count) % count] ?? items[0] : null
-  const focalItem = hoveredItem ?? centeredItem
+  const focalItem = hoveredItem ?? snappingItem ?? centeredItem
   const focalIsSelected = Boolean(focalItem && value === focalItem.key)
   const { perspectivePx, projectedHalfSpan } = computeCylinderMetrics(stageWidth)
   const outerTrackWidthPx = Math.round(projectedHalfSpan * 2)
@@ -417,9 +501,13 @@ export function StyleOrbitCarousel({
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
       onPointerCancel={handlePointerUp}
-      onWheel={handleWheel}
+      onLostPointerCapture={handlePointerUp}
+      onPointerLeave={() => {
+        lastPointerPosRef.current = null
+        setHoveredKey(null)
+      }}
       className={cn(
-        'relative h-[128px] w-full overflow-hidden rounded-xl border border-black/15 bg-gradient-to-b from-[#1A1815] via-[#141210] to-[#0B0A09] shadow-[inset_0_1px_0_rgba(255,255,255,0.12)] select-none dark:border-white/15',
+        'relative h-[128px] w-full touch-pan-y overflow-hidden rounded-xl border border-black/15 bg-gradient-to-b from-[#1A1815] via-[#141210] to-[#0B0A09] shadow-[inset_0_1px_0_rgba(255,255,255,0.12)] select-none dark:border-white/15',
         isDragging ? 'cursor-grabbing' : 'cursor-grab'
       )}
     >
@@ -498,15 +586,39 @@ export function StyleOrbitCarousel({
                 }}
                 type="button"
                 data-orbit-card="true"
+                data-style-key={item.key}
                 data-hovered={isHovered ? 'true' : 'false'}
                 aria-label={`${item.label}（${item.categoryLabel}）`}
                 aria-pressed={isSelected}
-                onMouseEnter={() => setHoveredKey(item.key)}
+                onMouseEnter={() => {
+                  if (suppressHoverUntilMoveRef.current || draggingRef.current || isSnappingRef.current) {
+                    return
+                  }
+                  setHoveredKey(item.key)
+                }}
                 onMouseLeave={() => setHoveredKey((k) => (k === item.key ? null : k))}
                 onFocus={() => setHoveredKey(item.key)}
                 onBlur={() => setHoveredKey((k) => (k === item.key ? null : k))}
                 onClick={() => {
                   if (dragMovedRef.current) return
+                  suppressHoverUntilMoveRef.current = true
+                  setHoveredKey(null)
+                  if (prefersReducedMotion) {
+                    scrollIdxRef.current = idx
+                    centerIdxRef.current = idx
+                    setCenterIdx(idx)
+                    snapTargetRef.current = null
+                    isSnappingRef.current = false
+                    setSnappingKey(null)
+                  } else {
+                    const delta = wrapIndexDelta(idx - scrollIdxRef.current, count)
+                    snapTargetRef.current = scrollIdxRef.current + delta
+                    isSnappingRef.current = true
+                    setSnappingKey(item.key)
+                  }
+                  lastSnappedValueRef.current = item.key
+                  velocityRef.current = 0
+                  ensureRafRef.current?.()
                   onSelect(item.key)
                 }}
                 style={{ backfaceVisibility: 'hidden' }}
@@ -531,6 +643,7 @@ export function StyleOrbitCarousel({
                       src={item.preview}
                       alt={item.label}
                       draggable={false}
+                      loading={isSelected ? 'eager' : 'lazy'}
                       decoding="async"
                       onLoad={() => {
                         const url = item.preview
@@ -596,7 +709,7 @@ export function StyleOrbitCarousel({
           data-style-focal-nameplate="true"
           onPointerDown={(e) => e.stopPropagation()}
           onClick={() => onSelect(focalItem.key)}
-          title={`${focalItem.label} · ${focalItem.categoryLabel}${focalIsSelected ? '（当前已启用）' : '（点击锁定画风）'}`}
+          title={`${focalItem.label} · ${focalItem.categoryLabel}${focalIsSelected ? '（当前已启用）' : '（点击选用风格）'}`}
           className="absolute bottom-1.5 left-1/2 z-40 inline-flex h-6 max-w-[calc(100%-32px)] -translate-x-1/2 cursor-pointer items-center gap-1.5 rounded-full border border-white/20 bg-[#141210]/90 px-3 text-xs font-bold whitespace-nowrap text-white shadow-[0_6px_16px_rgba(0,0,0,0.58)] backdrop-blur-sm transition-colors hover:border-[#E5A918]/75 hover:bg-[#1E1A16]"
         >
           <span

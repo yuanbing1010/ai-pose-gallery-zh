@@ -28,7 +28,7 @@ export function ScrollToTopButton() {
           whileHover={{ y: -2 }}
           whileTap={{ scale: 0.94 }}
           onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
-          className="md-glass fixed right-4 bottom-28 z-25 flex size-10 items-center justify-center rounded-full border border-border text-foreground shadow-md transition-colors hover:bg-card sm:right-6 sm:bottom-6"
+          className="md-glass fixed right-4 bottom-28 z-25 flex size-10 items-center justify-center rounded-full border border-border text-foreground shadow-md transition-colors hover:bg-card sm:right-6 sm:bottom-24 lg:bottom-6"
         >
           <ArrowUpIcon className="size-4" />
         </motion.button>

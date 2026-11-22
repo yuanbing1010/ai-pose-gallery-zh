@@ -1,9 +1,6 @@
 import type { PoseSanitizeConfig, RecipeState } from '@/types/gallery'
-import { poseImagePath, referenceImageUrl } from '@/lib/recipeImages'
-import {
-  sanitizeCloudTextSegment,
-  sanitizePoseTitleForCloud,
-} from '../../shared/studio'
+import { referenceImageUrl } from '@/lib/recipeImages'
+import { buildStitchedPanelLayout } from '../../shared/studio'
 export {
   NONE_STYLE_PRESET,
   PROVIDER_META,
@@ -58,66 +55,19 @@ export async function stitchRecipeCanvas(
   recipe: RecipeState,
   options?: { sanitizeForCloud?: boolean; poseSanitize?: Partial<PoseSanitizeConfig> | null }
 ): Promise<string> {
-  const sanitizeForCloud = Boolean(options?.sanitizeForCloud)
-  const poseSanitize = options?.poseSanitize
-  const list: Array<{ tag: string; sub: string; src: string }> = []
-  let idx = 1
+  const panels = buildStitchedPanelLayout(recipe, options)
 
-  if (recipe.pose) {
-    const poseName = sanitizeForCloud
-      ? sanitizePoseTitleForCloud(recipe.pose, poseSanitize) || '姿势参考'
-      : recipe.pose.姿势名称
-    list.push({
-      tag: `图${idx++} · 姿势`,
-      sub: `${poseName}（${recipe.pose.角度}${recipe.pose.useDepth ? ' · 深度图' : ''}）`,
-      src: poseImagePath(recipe.pose),
-    })
-  }
-  if (recipe.costume) {
-    const cat = sanitizeForCloud
-      ? sanitizeCloudTextSegment(recipe.costume.分类, poseSanitize)
-      : recipe.costume.分类
-    const name = sanitizeForCloud
-      ? sanitizeCloudTextSegment(recipe.costume.服装名称, poseSanitize) || '服装参考'
-      : recipe.costume.服装名称
-    list.push({
-      tag: `图${idx++} · 服装`,
-      sub: cat ? `${cat} · ${name}` : name,
-      src: recipe.costume.预览图 || recipe.costume.原图 || recipe.costume.缩略图,
-    })
-  }
-  if (recipe.portrait) {
-    const title = sanitizeForCloud
-      ? sanitizeCloudTextSegment(recipe.portrait.标题, poseSanitize) || '人像参考'
-      : recipe.portrait.标题
-    list.push({
-      tag: `图${idx++} · 人像`,
-      sub: title,
-      src: recipe.portrait.原图 || recipe.portrait.缩略图,
-    })
-  }
-  for (const extra of recipe.extraImages || []) {
-    const extraName = sanitizeForCloud
-      ? sanitizeCloudTextSegment(extra.name, poseSanitize) || '附加参考图'
-      : extra.name || '自定义参考图'
-    list.push({
-      tag: `图${idx++} · 附加`,
-      sub: extraName,
-      src: extra.url,
-    })
-  }
-
-  if (!list.length) {
+  if (!panels.length) {
     throw new Error('请至少选择或上传 1 张参考图')
   }
 
-  const imgs = await Promise.all(list.map((x) => loadImage(x.src)))
-  const cardW = 480
-  const cardH = 640
-  const pad = 20
-  const headH = 62
+  const imgs = await Promise.all(panels.map((p) => loadImage(p.src)))
+  const cardW = 512
+  const cardH = 680
+  const pad = 16
+  const headH = 58
   const canvas = document.createElement('canvas')
-  canvas.width = list.length * cardW + (list.length + 1) * pad
+  canvas.width = panels.length * cardW + (panels.length + 1) * pad
   canvas.height = cardH + headH + pad * 2
   const ctx = canvas.getContext('2d')!
 
@@ -137,13 +87,13 @@ export async function stitchRecipeCanvas(
     const dh = img.height * scale
     ctx.drawImage(img, x + (cardW - dw) / 2, y + headH + (cardH - dh) / 2, dw, dh)
 
-    ctx.fillStyle = '#a1a1aa'
-    ctx.font = '600 12px Inter, -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif'
-    ctx.fillText(list[i].tag, x + 14, y + 23)
+    ctx.fillStyle = '#d4d4d8'
+    ctx.font = '700 14px Inter, -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif'
+    ctx.fillText(panels[i].canvasTag, x + 14, y + 23)
 
     ctx.fillStyle = '#ffffff'
-    ctx.font = '700 15px Inter, -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif'
-    ctx.fillText(list[i].sub.slice(0, 26), x + 14, y + 46)
+    ctx.font = '600 14px Inter, -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif'
+    ctx.fillText(panels[i].canvasSub.slice(0, 28), x + 14, y + 45)
   })
 
   return canvas.toDataURL('image/jpeg', 0.92)

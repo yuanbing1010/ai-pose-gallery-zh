@@ -1,8 +1,8 @@
 import { useMemo, useState } from 'react'
 import { motion } from 'motion/react'
 import {
-  CheckIcon,
   EyeIcon,
+  GlobeIcon,
   LayersIcon,
   PersonStandingIcon,
   SearchIcon,
@@ -13,13 +13,18 @@ import { ANGLES } from '@/api/gallery'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import { cn } from '@/lib/utils'
 
-type SectionKey = 'all' | 'line' | 'category' | 'angle' | 'depth'
+export type PoseSourceFilter = 'all' | 'gia' | 'mio'
+
+type SectionKey = 'all' | 'line' | 'source' | 'category' | 'angle' | 'depth'
 
 export interface PoseFilterModalProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   line: string
   onSelectLine: (line: string) => void
+  sourceFilter: PoseSourceFilter
+  onSelectSource: (src: PoseSourceFilter) => void
+  sourceOptions: Array<{ id: PoseSourceFilter; label: string; count: number }>
   category: string
   onSelectCategory: (cat: string) => void
   angle: string
@@ -37,6 +42,7 @@ export interface PoseFilterModalProps {
 const RAIL_ITEMS: Array<{ id: SectionKey; label: string; icon: typeof LayersIcon }> = [
   { id: 'all', label: '全部维度', icon: SparklesIcon },
   { id: 'line', label: '姿势体系', icon: PersonStandingIcon },
+  { id: 'source', label: '素材来源', icon: GlobeIcon },
   { id: 'category', label: '动作分类', icon: TagIcon },
   { id: 'angle', label: '拍摄视角', icon: EyeIcon },
   { id: 'depth', label: '参考底图', icon: LayersIcon },
@@ -47,6 +53,9 @@ export function PoseFilterModal({
   onOpenChange,
   line,
   onSelectLine,
+  sourceFilter,
+  onSelectSource,
+  sourceOptions,
   category,
   onSelectCategory,
   angle,
@@ -70,17 +79,24 @@ export function PoseFilterModal({
     [lineOptions, q]
   )
 
+  const filteredSources = useMemo(
+    () => (q ? sourceOptions.filter((s) => s.label.toLowerCase().includes(q)) : sourceOptions),
+    [sourceOptions, q]
+  )
+
   const filteredCategories = useMemo(
     () => (q ? categoryOptions.filter((c) => c.label.toLowerCase().includes(q)) : categoryOptions),
     [categoryOptions, q]
   )
 
   const filteredAngles = useMemo(
-    () => (q ? ANGLES.filter((a) => a.toLowerCase().includes(q)) : [...ANGLES]),
-    [q]
+    () =>
+      ANGLES.filter((a) => ((angleCounts[a] || 0) > 0 || angle === a) && (!q || a.toLowerCase().includes(q))),
+    [angleCounts, angle, q]
   )
 
   const showLine = (section === 'all' || section === 'line') && (filteredLines.length > 0 || !q)
+  const showSource = (section === 'all' || section === 'source') && filteredSources.length > 0
   const showCategory = (section === 'all' || section === 'category') && filteredCategories.length > 0
   const showAngle = (section === 'all' || section === 'angle') && filteredAngles.length > 0
   const showDepth =
@@ -98,11 +114,10 @@ export function PoseFilterModal({
         <div className="flex items-center gap-3 border-b border-border px-4 py-3.5">
           <SearchIcon className="size-4 shrink-0 text-muted-foreground" />
           <input
-            autoFocus
             type="text"
             value={filterSearch}
             onChange={(e) => setFilterSearch(e.target.value)}
-            placeholder="搜索姿势体系、动作分类或视角…"
+            placeholder="搜索姿势体系、素材来源、动作分类或视角…"
             className="h-6 w-full bg-transparent text-sm text-foreground placeholder:text-muted-foreground focus:outline-none"
           />
           <button
@@ -150,23 +165,25 @@ export function PoseFilterModal({
                 <div className="px-2 text-xs font-medium tracking-wider text-muted-foreground uppercase">
                   姿势体系
                 </div>
-                <div className="space-y-0.5">
+                <div className="space-y-0.5" role="radiogroup" aria-label="姿势体系">
                   {!q && (
                     <button
                       type="button"
+                      role="radio"
+                      aria-checked={line === ''}
                       onClick={() => onSelectLine('')}
                       className="flex w-full items-center justify-between rounded-[10px] px-2.5 py-2 text-[13px] transition-colors hover:bg-muted/70"
                     >
                       <span className="flex items-center gap-2.5">
                         <span
                           className={cn(
-                            'flex size-4 items-center justify-center rounded-[5px] border transition-colors',
+                            'flex size-4 items-center justify-center rounded-full border transition-colors',
                             line === ''
                               ? 'border-primary bg-primary text-primary-foreground'
                               : 'border-border bg-transparent'
                           )}
                         >
-                          {line === '' && <CheckIcon className="size-3 stroke-[2.5]" />}
+                          {line === '' && <span className="size-1.5 rounded-full bg-current" />}
                         </span>
                         <span className={line === '' ? 'font-medium text-foreground' : 'text-muted-foreground'}>
                           全部姿势
@@ -183,19 +200,21 @@ export function PoseFilterModal({
                       <button
                         key={l.label}
                         type="button"
+                        role="radio"
+                        aria-checked={checked}
                         onClick={() => onSelectLine(checked ? '' : l.label)}
                         className="flex w-full items-center justify-between rounded-[10px] px-2.5 py-2 text-[13px] transition-colors hover:bg-muted/70"
                       >
                         <span className="flex items-center gap-2.5">
                           <span
                             className={cn(
-                              'flex size-4 items-center justify-center rounded-[5px] border transition-colors',
+                              'flex size-4 items-center justify-center rounded-full border transition-colors',
                               checked
                                 ? 'border-primary bg-primary text-primary-foreground'
                                 : 'border-border bg-transparent'
                             )}
                           >
-                            {checked && <CheckIcon className="size-3 stroke-[2.5]" />}
+                            {checked && <span className="size-1.5 rounded-full bg-current" />}
                           </span>
                           <span className={checked ? 'font-medium text-foreground' : 'text-muted-foreground'}>
                             {l.label}
@@ -211,31 +230,100 @@ export function PoseFilterModal({
               </section>
             )}
 
+            {showSource && (
+              <section className="space-y-1.5">
+                <div className="px-2 text-xs font-medium tracking-wider text-muted-foreground uppercase">
+                  素材来源
+                </div>
+                <div className="space-y-0.5" role="radiogroup" aria-label="素材来源">
+                  {filteredSources.map((s) => {
+                    const checked = sourceFilter === s.id
+                    return (
+                      <button
+                        key={s.id}
+                        type="button"
+                        role="radio"
+                        aria-checked={checked}
+                        onClick={() => onSelectSource(checked && s.id !== 'all' ? 'all' : s.id)}
+                        className="flex w-full items-center justify-between rounded-[10px] px-2.5 py-2 text-[13px] transition-colors hover:bg-muted/70"
+                      >
+                        <span className="flex items-center gap-2.5">
+                          <span
+                            className={cn(
+                              'flex size-4 items-center justify-center rounded-full border transition-colors',
+                              checked
+                                ? 'border-primary bg-primary text-primary-foreground'
+                                : 'border-border bg-transparent'
+                            )}
+                          >
+                            {checked && <span className="size-1.5 rounded-full bg-current" />}
+                          </span>
+                          <span className={checked ? 'font-medium text-foreground' : 'text-muted-foreground'}>
+                            {s.label}
+                          </span>
+                        </span>
+                        <span className="font-mono text-xs tabular-nums text-muted-foreground">
+                          {s.count}
+                        </span>
+                      </button>
+                    )
+                  })}
+                </div>
+              </section>
+            )}
+
             {showCategory && (
               <section className="space-y-1.5">
                 <div className="px-2 text-xs font-medium tracking-wider text-muted-foreground uppercase">
                   动作分类
                 </div>
-                <div className="space-y-0.5">
+                <div className="space-y-0.5" role="radiogroup" aria-label="动作分类">
+                  {!q && (
+                    <button
+                      type="button"
+                      role="radio"
+                      aria-checked={category === 'all'}
+                      onClick={() => onSelectCategory('all')}
+                      className="flex w-full items-center justify-between rounded-[10px] px-2.5 py-2 text-[13px] transition-colors hover:bg-muted/70"
+                    >
+                      <span className="flex items-center gap-2.5">
+                        <span
+                          className={cn(
+                            'flex size-4 items-center justify-center rounded-full border transition-colors',
+                            category === 'all'
+                              ? 'border-primary bg-primary text-primary-foreground'
+                              : 'border-border bg-transparent'
+                          )}
+                        >
+                          {category === 'all' && <span className="size-1.5 rounded-full bg-current" />}
+                        </span>
+                        <span className={category === 'all' ? 'font-medium text-foreground' : 'text-muted-foreground'}>
+                          全部分类
+                        </span>
+                      </span>
+                    </button>
+                  )}
                   {filteredCategories.map((c) => {
                     const checked = category === c.label
                     return (
                       <button
                         key={c.label}
                         type="button"
+                        role="radio"
+                        aria-checked={checked}
                         onClick={() => onSelectCategory(checked ? 'all' : c.label)}
                         className="flex w-full items-center justify-between rounded-[10px] px-2.5 py-2 text-[13px] transition-colors hover:bg-muted/70"
                       >
                         <span className="flex items-center gap-2.5">
                           <span
                             className={cn(
-                              'flex size-4 items-center justify-center rounded-[5px] border transition-colors',
+                              'flex size-4 items-center justify-center rounded-full border transition-colors',
                               checked
                                 ? 'border-primary bg-primary text-primary-foreground'
                                 : 'border-border bg-transparent'
                             )}
                           >
-                            {checked && <CheckIcon className="size-3 stroke-[2.5]" />}
+                            {checked && <span className="size-1.5 rounded-full bg-current" />}
                           </span>
                           <span className={checked ? 'font-medium text-foreground' : 'text-muted-foreground'}>
                             {c.label}
@@ -256,26 +344,53 @@ export function PoseFilterModal({
                 <div className="px-2 text-xs font-medium tracking-wider text-muted-foreground uppercase">
                   拍摄视角
                 </div>
-                <div className="space-y-0.5">
+                <div className="space-y-0.5" role="radiogroup" aria-label="拍摄视角">
+                  {!q && (
+                    <button
+                      type="button"
+                      role="radio"
+                      aria-checked={angle === ''}
+                      onClick={() => onSelectAngle('')}
+                      className="flex w-full items-center justify-between rounded-[10px] px-2.5 py-2 text-[13px] transition-colors hover:bg-muted/70"
+                    >
+                      <span className="flex items-center gap-2.5">
+                        <span
+                          className={cn(
+                            'flex size-4 items-center justify-center rounded-full border transition-colors',
+                            angle === ''
+                              ? 'border-primary bg-primary text-primary-foreground'
+                              : 'border-border bg-transparent'
+                          )}
+                        >
+                          {angle === '' && <span className="size-1.5 rounded-full bg-current" />}
+                        </span>
+                        <span className={angle === '' ? 'font-medium text-foreground' : 'text-muted-foreground'}>
+                          全部视角
+                        </span>
+                      </span>
+                    </button>
+                  )}
                   {filteredAngles.map((a) => {
                     const checked = angle === a
                     return (
                       <button
                         key={a}
                         type="button"
+                        role="radio"
+                        aria-checked={checked}
                         onClick={() => onSelectAngle(checked ? '' : a)}
                         className="flex w-full items-center justify-between rounded-[10px] px-2.5 py-2 text-[13px] transition-colors hover:bg-muted/70"
                       >
                         <span className="flex items-center gap-2.5">
                           <span
                             className={cn(
-                              'flex size-4 items-center justify-center rounded-[5px] border transition-colors',
+                              'flex size-4 items-center justify-center rounded-full border transition-colors',
                               checked
                                 ? 'border-primary bg-primary text-primary-foreground'
                                 : 'border-border bg-transparent'
                             )}
                           >
-                            {checked && <CheckIcon className="size-3 stroke-[2.5]" />}
+                            {checked && <span className="size-1.5 rounded-full bg-current" />}
                           </span>
                           <span className={checked ? 'font-medium text-foreground' : 'text-muted-foreground'}>
                             {a}
@@ -296,7 +411,7 @@ export function PoseFilterModal({
                 <div className="px-2 text-xs font-medium tracking-wider text-muted-foreground uppercase">
                   参考底图类型
                 </div>
-                <div className="space-y-0.5">
+                <div className="space-y-0.5" role="radiogroup" aria-label="参考底图类型">
                   {[
                     { id: false, label: '3D 素体白模' },
                     { id: true, label: '深度图' },
@@ -306,19 +421,21 @@ export function PoseFilterModal({
                       <button
                         key={String(opt.id)}
                         type="button"
+                        role="radio"
+                        aria-checked={checked}
                         onClick={() => onSetDepthMode(opt.id)}
                         className="flex w-full items-center justify-between rounded-[10px] px-2.5 py-2 text-[13px] transition-colors hover:bg-muted/70"
                       >
                         <span className="flex items-center gap-2.5">
                           <span
                             className={cn(
-                              'flex size-4 items-center justify-center rounded-[5px] border transition-colors',
+                              'flex size-4 items-center justify-center rounded-full border transition-colors',
                               checked
                                 ? 'border-primary bg-primary text-primary-foreground'
                                 : 'border-border bg-transparent'
                             )}
                           >
-                            {checked && <CheckIcon className="size-3 stroke-[2.5]" />}
+                            {checked && <span className="size-1.5 rounded-full bg-current" />}
                           </span>
                           <span className={checked ? 'font-medium text-foreground' : 'text-muted-foreground'}>
                             {opt.label}
@@ -331,7 +448,7 @@ export function PoseFilterModal({
               </section>
             )}
 
-            {!showLine && !showCategory && !showAngle && !showDepth && (
+            {!showLine && !showSource && !showCategory && !showAngle && !showDepth && (
               <div className="flex h-48 items-center justify-center text-xs text-muted-foreground">
                 没有匹配“{filterSearch}”的筛选项
               </div>

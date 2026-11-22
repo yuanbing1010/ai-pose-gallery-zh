@@ -33,6 +33,9 @@ const AdminProvidersTab = lazy(() =>
 const AdminJobsTab = lazy(() =>
   import('@/components/admin/tabs/AdminJobsTab').then((m) => ({ default: m.AdminJobsTab }))
 )
+const AdminQueueTab = lazy(() =>
+  import('@/components/admin/tabs/AdminQueueTab').then((m) => ({ default: m.AdminQueueTab }))
+)
 const AdminStylesTab = lazy(() =>
   import('@/components/admin/tabs/AdminStylesTab').then((m) => ({ default: m.AdminStylesTab }))
 )
@@ -45,6 +48,11 @@ const AdminPromptsTab = lazy(() =>
 const AdminSanitizeTab = lazy(() =>
   import('@/components/admin/tabs/AdminSanitizeTab').then((m) => ({
     default: m.AdminSanitizeTab,
+  }))
+)
+const AdminDescriptionsTab = lazy(() =>
+  import('@/components/admin/tabs/AdminDescriptionsTab').then((m) => ({
+    default: m.AdminDescriptionsTab,
   }))
 )
 
@@ -72,7 +80,6 @@ function AdminHomePage() {
       void navigate({
         to: '/admin',
         search: nextTab === 'overview' ? {} : { tab: nextTab },
-        replace: true,
       })
     },
     [navigate]
@@ -180,13 +187,17 @@ function AdminHomePage() {
     : '00. 系统总览'
 
   const handleQuickCreateUser = () => {
-    setAutoOpenCreateUser(true)
-    commitSwitchTab('users')
+    handleBeforeLeave(() => {
+      setAutoOpenCreateUser(true)
+      commitSwitchTab('users')
+    })
   }
 
   const handleOpenProviderChannel = (providerId: ImageProviderId) => {
-    setApiFocusProvider(providerId)
-    commitSwitchTab('api')
+    handleBeforeLeave(() => {
+      setApiFocusProvider(providerId)
+      commitSwitchTab('api')
+    })
   }
 
   const tabFallback = (
@@ -256,11 +267,22 @@ function AdminHomePage() {
               onConfirm={setConfirmAction}
               onSelectTab={handleSelectTab}
               onRefreshBootstrap={refreshBootstrap}
+              onDirtyChange={setTabDirty}
             />
           )}
 
           {tab === 'jobs' && (
             <AdminJobsTab reloadTick={reloadTick} onLoadingChange={setLoading} />
+          )}
+
+          {tab === 'queue' && (
+            <AdminQueueTab
+              reloadTick={reloadTick}
+              onLoadingChange={setLoading}
+              onConfirm={setConfirmAction}
+              onDirtyChange={setTabDirty}
+              onRefreshBootstrap={refreshBootstrap}
+            />
           )}
 
           {tab === 'styles' && (
@@ -269,6 +291,7 @@ function AdminHomePage() {
               onLoadingChange={setLoading}
               onConfirm={setConfirmAction}
               onRefreshBootstrap={refreshBootstrap}
+              onDirtyChange={setTabDirty}
             />
           )}
 
@@ -276,6 +299,7 @@ function AdminHomePage() {
             <AdminAccessTab
               reloadTick={reloadTick}
               onLoadingChange={setLoading}
+              onConfirm={setConfirmAction}
               onRefreshBootstrap={refreshBootstrap}
               onDirtyChange={setTabDirty}
             />
@@ -285,6 +309,7 @@ function AdminHomePage() {
             <AdminPromptsTab
               reloadTick={reloadTick}
               onLoadingChange={setLoading}
+              onConfirm={setConfirmAction}
               onRefreshBootstrap={refreshBootstrap}
               onDirtyChange={setTabDirty}
             />
@@ -296,6 +321,17 @@ function AdminHomePage() {
               onLoadingChange={setLoading}
               onConfirm={setConfirmAction}
               onRefreshBootstrap={refreshBootstrap}
+              onDirtyChange={setTabDirty}
+            />
+          )}
+
+          {tab === 'descriptions' && (
+            <AdminDescriptionsTab
+              reloadTick={reloadTick}
+              onLoadingChange={setLoading}
+              onConfirm={setConfirmAction}
+              onRefreshBootstrap={refreshBootstrap}
+              onDirtyChange={setTabDirty}
             />
           )}
         </Suspense>

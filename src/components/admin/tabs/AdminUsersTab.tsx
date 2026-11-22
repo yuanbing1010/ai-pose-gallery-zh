@@ -1,8 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import {
   CheckIcon,
-  ChevronLeftIcon,
-  ChevronRightIcon,
   CoinsIcon,
   CopyIcon,
   DicesIcon,
@@ -23,6 +21,7 @@ import {
   adjustUserCreditsApi,
   createAdminUserApi,
   fetchAdminLedgerApi,
+  fetchAdminSettingsApi,
   fetchAdminUsersApi,
   updateAdminUserApi,
   updateUserStatusApi,
@@ -35,6 +34,7 @@ import {
   AdminField,
   AdminFilterBar,
   AdminPageHeader,
+  AdminPagination,
   AdminPanel,
 } from '../AdminPrimitives'
 import {
@@ -73,7 +73,10 @@ export function AdminUsersTab({
   onRefreshBootstrap,
 }: AdminUsersTabProps) {
   const { platform } = useStudio()
-  const defaultBonusCredits = String(platform.registerBonusCredits ?? 50)
+  const [liveBonusCredits, setLiveBonusCredits] = useState<number>(
+    () => platform.registerBonusCredits ?? 50
+  )
+  const defaultBonusCredits = String(liveBonusCredits)
   const [subView, setSubView] = useState<UsersSubView>('members')
   const [userQuery, setUserQuery] = useState('')
   const [appliedUserQuery, setAppliedUserQuery] = useState('')
@@ -129,14 +132,15 @@ export function AdminUsersTab({
     onLoadingChange(true)
     try {
       if (subView === 'members') {
-        const uRes = await fetchAdminUsersApi(
-          appliedUserQuery.trim(),
-          60,
-          usersOffset,
-          userFilter
-        )
+        const [uRes, settingsRes] = await Promise.all([
+          fetchAdminUsersApi(appliedUserQuery.trim(), 60, usersOffset, userFilter),
+          fetchAdminSettingsApi().catch(() => null),
+        ])
         setUsers(uRes.users)
         setUsersTotal(uRes.total)
+        if (settingsRes?.platform) {
+          setLiveBonusCredits(settingsRes.platform.registerBonusCredits)
+        }
       } else {
         const lRes = await fetchAdminLedgerApi({
           limit: 50,
@@ -405,7 +409,7 @@ export function AdminUsersTab({
                 <SelectTrigger className={`w-32 font-mono ${ADMIN_SELECT_CLS}`}>
                   <SelectValue />
                 </SelectTrigger>
-                <SelectContent>
+                <SelectContent className="rounded-none">
                   <SelectItem value="all">全部类型</SelectItem>
                   <SelectItem value="register_bonus">注册赠送</SelectItem>
                   <SelectItem value="redeem_code">卡密兑换</SelectItem>
@@ -582,40 +586,16 @@ export function AdminUsersTab({
             </table>
           </div>
 
-          {usersTotal > 0 && (
-            <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-zinc-600 dark:text-zinc-400">
-              <span className="font-mono">
-                第 {usersOffset + 1}–{Math.min(usersTotal, usersOffset + users.length)} 位 · 共{' '}
-                {usersTotal} 位成员
-              </span>
-              {usersTotal > 60 && (
-                <div className="flex items-center gap-1.5">
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    className={ADMIN_BTN_SM_CLS}
-                    disabled={usersOffset === 0 || busyList}
-                    onClick={() => setUsersOffset((o) => Math.max(0, o - 60))}
-                  >
-                    <ChevronLeftIcon className="size-3.5" />
-                    上一页
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    className={ADMIN_BTN_SM_CLS}
-                    disabled={usersOffset + 60 >= usersTotal || busyList}
-                    onClick={() => setUsersOffset((o) => o + 60)}
-                  >
-                    下一页
-                    <ChevronRightIcon className="size-3.5" />
-                  </Button>
-                </div>
-              )}
-            </div>
-          )}
+          <AdminPagination
+            offset={usersOffset}
+            limit={60}
+            total={usersTotal}
+            loading={busyList}
+            unitLabel="位成员"
+            alwaysShowSummary
+            onPageChange={setUsersOffset}
+            className="border-0 px-0 py-0"
+          />
         </div>
       ) : (
         <div className="space-y-4">
@@ -675,37 +655,14 @@ export function AdminUsersTab({
             )}
           </AdminPanel>
 
-          {ledgerTotal !== null && ledgerTotal > 50 && (
-            <div className="flex items-center justify-between border border-zinc-200 px-4 py-2.5 font-mono text-xs text-zinc-500 dark:border-zinc-800">
-              <span>
-                第 {Math.floor(ledgerOffset / 50) + 1} / {Math.ceil(ledgerTotal / 50)} 页 · 共 {ledgerTotal} 条
-              </span>
-              <div className="flex items-center gap-1.5">
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  className={ADMIN_BTN_SM_CLS}
-                  disabled={ledgerOffset === 0 || busyList}
-                  onClick={() => setLedgerOffset((o) => Math.max(0, o - 50))}
-                >
-                  <ChevronLeftIcon className="size-3.5" />
-                  上一页
-                </Button>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  className={ADMIN_BTN_SM_CLS}
-                  disabled={ledgerOffset + 50 >= ledgerTotal || busyList}
-                  onClick={() => setLedgerOffset((o) => o + 50)}
-                >
-                  下一页
-                  <ChevronRightIcon className="size-3.5" />
-                </Button>
-              </div>
-            </div>
-          )}
+          <AdminPagination
+            offset={ledgerOffset}
+            limit={50}
+            total={ledgerTotal ?? 0}
+            loading={busyList}
+            unitLabel="条"
+            onPageChange={setLedgerOffset}
+          />
         </div>
       )}
 
@@ -863,7 +820,10 @@ export function AdminUsersTab({
                   />
                 </AdminField>
 
-                <AdminField label="初始积分">
+                <AdminField
+                  label="初始积分"
+                  hint={`默认采用全站注册赠分（${liveBonusCredits}）`}
+                >
                   <div className="space-y-1.5">
                     <Input
                       type="number"
@@ -908,7 +868,7 @@ export function AdminUsersTab({
                     <SelectTrigger className={`w-full ${ADMIN_SELECT_CLS}`}>
                       <SelectValue />
                     </SelectTrigger>
-                    <SelectContent>
+                    <SelectContent className="rounded-none">
                       <SelectItem value="user">普通成员</SelectItem>
                       <SelectItem value="admin">管理员</SelectItem>
                     </SelectContent>
@@ -1038,7 +998,7 @@ export function AdminUsersTab({
                       <SelectTrigger className={`w-full ${ADMIN_SELECT_CLS}`}>
                         <SelectValue />
                       </SelectTrigger>
-                      <SelectContent>
+                      <SelectContent className="rounded-none">
                         <SelectItem value="user">普通成员</SelectItem>
                         <SelectItem value="admin">管理员</SelectItem>
                       </SelectContent>
@@ -1050,6 +1010,7 @@ export function AdminUsersTab({
                         {editStatus === 'active' ? '正常启用' : '已禁用'}
                       </span>
                       <Switch
+                        className="rounded-none"
                         checked={editStatus === 'active'}
                         onCheckedChange={(v) => setEditStatus(v ? 'active' : 'disabled')}
                       />

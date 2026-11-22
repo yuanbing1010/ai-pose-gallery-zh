@@ -1,5 +1,6 @@
 export {
   buildAspectRatioPatches,
+  getEstimatedOutputDimensions,
   getStudioArtist,
   STUDIO_ARTISTS,
   STUDIO_ASPECT_RATIOS,

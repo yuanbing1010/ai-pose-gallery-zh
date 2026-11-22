@@ -5,6 +5,8 @@ export interface Env {
   BUCKET: R2Bucket
   ASSETS: Fetcher
   US_RELAY?: DurableObjectNamespace
+  GENERATION_QUEUE?: DurableObjectNamespace
+  GENERATION_RUNNER?: DurableObjectNamespace
   APP_ENCRYPTION_KEY?: string
   DEV_ASSETS_ORIGIN?: string
   BOOTSTRAP_ADMIN_USERNAME?: string
@@ -13,6 +15,7 @@ export interface Env {
   GEMINI_API_KEY?: string
   OPENAI_API_KEY?: string
   XAI_API_KEY?: string
+  MUSE_API_KEY?: string
   WECHAT_APP_ID?: string
   WECHAT_APP_SECRET?: string
 }

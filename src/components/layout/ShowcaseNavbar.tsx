@@ -1,13 +1,9 @@
 import { Link, useLocation } from '@tanstack/react-router'
 import {
-  BookOpenIcon,
   CoinsIcon,
-  LayoutDashboardIcon,
   LogInIcon,
   MenuIcon,
   MoonIcon,
-  PersonStandingIcon,
-  ShirtIcon,
   SparklesIcon,
   SunIcon,
   TerminalSquareIcon,
@@ -17,43 +13,32 @@ import { useState } from 'react'
 import { useTheme } from '@/components/theme/ThemeProvider'
 import { BrandMark } from '@/components/common/BrandMark'
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet'
-import { activeNavTo } from './nav'
-import { useStudio } from '@/store/studioStore'
-
-const SHOWCASE_NAV_ITEMS = [
-  { title: '盲盒抽卡', to: '/' as const, icon: LayoutDashboardIcon },
-  { title: '动作姿势', to: '/poses' as const, icon: PersonStandingIcon },
-  { title: '服装穿搭', to: '/costumes' as const, icon: ShirtIcon },
-  { title: '人像颜值', to: '/portraits' as const, icon: UserRoundIcon },
-  { title: '使用指南', to: '/guide' as const, icon: BookOpenIcon },
-]
+import { NAV_ITEMS, activeNavTo } from './nav'
+import { useStudioActions, useStudioShallow } from '@/store/studioStore'
 
 export function ShowcaseNavbar() {
   const pathname = useLocation({ select: (l) => l.pathname })
   const active = activeNavTo(pathname)
-  const {
-    user,
-    platform,
-    recipe,
-    isGenerating,
-    history,
-    openAuthModal,
-    openAccountModal,
-  } = useStudio()
-  const { theme, setTheme } = useTheme()
+  const { user, allowRegistration, selectedCount, hasRunningJob } = useStudioShallow((s) => ({
+    user: s.user,
+    allowRegistration: s.platform.allowRegistration,
+    selectedCount:
+      (s.recipe.portrait ? 1 : 0) + (s.recipe.costume ? 1 : 0) + (s.recipe.pose ? 1 : 0),
+    hasRunningJob:
+      s.isSubmitting ||
+      s.history.some((item) => item.status === 'processing' || item.status === 'queued'),
+  }))
+  const { openAuthModal, openAccountModal } = useStudioActions()
+  const { resolvedTheme, setTheme } = useTheme()
   const [mobileOpen, setMobileOpen] = useState(false)
   const [avatarErrorUrl, setAvatarErrorUrl] = useState<string | null>(null)
   const showAvatar = Boolean(user?.avatarUrl && avatarErrorUrl !== user.avatarUrl)
 
-  const selectedCount = [recipe.portrait, recipe.costume, recipe.pose].filter(Boolean).length
-  const hasRunningJob = isGenerating || history.some((item) => item.status === 'processing')
   const isStudio = active === '/studio'
-  const isDark =
-    theme === 'dark' ||
-    (theme === 'system' && typeof window !== 'undefined' && window.matchMedia('(prefers-color-scheme: dark)').matches)
+  const isDark = resolvedTheme === 'dark'
 
   return (
-    <header className="sticky top-0 z-40 w-full border-b border-black/[0.06] bg-[#f7f6f2]/82 backdrop-blur-xl dark:border-white/[0.08] dark:bg-[#14141a]/80">
+    <header className="sticky top-0 z-40 w-full border-b border-black/[0.06] bg-[#f7f6f2]/82 backdrop-blur-xl dark:border-white/[0.08] dark:bg-[#151412]/84">
       <div className="mx-auto flex h-14 w-full max-w-[1440px] items-center justify-between gap-2 px-3 sm:h-15 sm:gap-3 sm:px-6">
         {/* 左侧：品牌标识 + 桌面端纯文字导航 */}
         <div className="flex min-w-0 items-center gap-4 lg:gap-6">
@@ -81,7 +66,7 @@ export function ShowcaseNavbar() {
                   </SheetTitle>
                 </SheetHeader>
                 <nav className="mt-6 flex flex-col gap-1 px-2">
-                  {[...SHOWCASE_NAV_ITEMS, { title: 'AI 合成台', to: '/studio' as const, icon: SparklesIcon }].map((item) => {
+                  {NAV_ITEMS.map((item) => {
                     const isActive = item.to === active
                     return (
                       <Link
@@ -147,7 +132,7 @@ export function ShowcaseNavbar() {
                       className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-3.5 py-2.5 text-xs font-semibold text-primary-foreground"
                     >
                       <LogInIcon className="size-3.5" />
-                      <span>{platform.allowRegistration ? '登录 / 注册' : '登录账号'}</span>
+                      <span>{allowRegistration ? '登录 / 注册' : '登录账号'}</span>
                     </button>
                   )}
                 </div>
@@ -163,7 +148,7 @@ export function ShowcaseNavbar() {
           </div>
 
           <nav aria-label="主导航" className="hidden items-center gap-1 lg:flex">
-            {SHOWCASE_NAV_ITEMS.map((item) => {
+            {NAV_ITEMS.filter((item) => item.to !== '/studio').map((item) => {
               const isActive = item.to === active
               return (
                 <Link

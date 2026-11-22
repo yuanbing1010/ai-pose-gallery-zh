@@ -1,5 +1,5 @@
 import type { CostumeItem, PortraitItem, PoseItem, RecipeState } from '@/types/gallery'
-export { poseImagePath, poseThumbPath, referenceImageUrl } from '../../shared/studio'
+export { hasPoseDepthMap, poseImagePath, poseThumbPath, referenceImageUrl } from '../../shared/studio'
 
 export function uploadedReferences(
   name: string,
@@ -46,6 +46,29 @@ export function uploadedReferences(
     角度: '',
   }
   return { portrait, costume, pose }
+}
+
+export function downloadFileName(baseName: string, url: string, fallbackExt = 'png'): string {
+  const safeBase =
+    baseName
+      .trim()
+      .replace(/[\\/:*?"<>|]+/g, '_')
+      .slice(0, 80) || 'image'
+  let ext = fallbackExt
+  if (/^data:image\/([a-z0-9+.-]+);/i.test(url)) {
+    const raw = RegExp.$1.toLowerCase()
+    ext = raw === 'jpeg' ? 'jpg' : raw
+  } else if (url) {
+    const cleanPath = url.split('?')[0].split('#')[0]
+    const match = cleanPath.match(/\.([a-z0-9]{2,5})$/i)
+    if (match) {
+      const candidate = match[1].toLowerCase()
+      if (['png', 'jpg', 'jpeg', 'webp', 'gif', 'avif'].includes(candidate)) {
+        ext = candidate === 'jpeg' ? 'jpg' : candidate
+      }
+    }
+  }
+  return `${safeBase}.${ext}`
 }
 
 export function recipeBackup(recipe: RecipeState): RecipeState {

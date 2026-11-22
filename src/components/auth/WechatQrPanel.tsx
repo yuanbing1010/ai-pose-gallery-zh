@@ -134,8 +134,7 @@ export function WechatQrPanel({
               key={session.iframeUrl}
               title="微信扫码授权"
               src={session.iframeUrl}
-              className="h-[385px] w-[300px] max-w-full border-0 bg-white"
-              scrolling="no"
+              className="h-[385px] w-[min(300px,calc(100vw-4rem))] max-w-full overflow-hidden border-0 bg-white"
             />
             {expired && (
               <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-white/92 p-4 text-center backdrop-blur-xs">

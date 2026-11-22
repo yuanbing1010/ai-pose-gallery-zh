@@ -1,0 +1,41 @@
+name: Sync Mio Design Archive
+
+on:
+  schedule:
+    # 每日 20:30 CST (12:30 UTC)，紧随 sleepyzone.online 20:00 CST 更新后同步静态快照
+    - cron: '30 12 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Sync mio-design-archive metadata
+        run: python scripts/import_mio.py --sync
+
+      - name: Verify snapshot rebuild
+        run: python scripts/import_mio.py
+
+      - name: Commit updated snapshots if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/mio/data.json data/mio/source.json data/pose-mio-zh.json data/costume-mio-zh.json
+          if ! git diff --cached --quiet; then
+            GENERATED=$(python -c "import json; print(json.load(open('data/mio/source.json', encoding='utf-8')).get('generated', 'unknown'))")
+            git commit -m "chore(data): sync mio-design-archive (${GENERATED})"
+            git push
+          else
+            echo "No changes from sleepyzone.online/mio-design-archive/"
+          fi

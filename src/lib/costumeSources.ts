@@ -1,3 +1,4 @@
+import { MIO_ARCHIVE_ORIGIN, MIO_COPYRIGHT_NOTICE, MIO_SOURCE_LABEL } from '../../shared/mioArchive'
 import type { CostumeItem } from '@/types/gallery'
 
 const SHISEI_REPOSITORY = 'https://github.com/wquguru/shisei'
@@ -13,6 +14,7 @@ export const COSTUME_SOURCES = [
   { id: 'gia-anime', label: 'ギア · 动漫', url: 'https://ai-costume-anime-gallery.pages.dev/', notice: '图片由ギア原站提供，使用请遵守原站说明。' },
   { id: 'charadb', label: 'たき AI · CharaDB', url: 'https://github.com/taki-ttt/charadb/blob/main/LICENSE', notice: '仅供参考，须遵守原作者限制，详见来源条款。' },
   { id: 'shisei', label: 'Shisei · 中国历代', url: 'https://github.com/wquguru/shisei', notice: 'wquguru 历代服饰参考（并非专业历史服饰复原），使用请标注来源。' },
+  { id: 'mio', label: MIO_SOURCE_LABEL, url: MIO_ARCHIVE_ORIGIN, notice: MIO_COPYRIGHT_NOTICE },
 ] as const
 
 export function costumeSourceId(item: CostumeItem): string {

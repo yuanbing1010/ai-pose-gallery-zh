@@ -19,6 +19,7 @@ import {
   fetchAdminBootstrapStatusApi,
   fetchAdminMeApi,
 } from '@/lib/apiClient'
+import { ThemeToggle } from '@/components/theme/ThemeToggle'
 import { toast } from '@/lib/notifications'
 import type { PublicUser } from '@/types/gallery'
 
@@ -154,13 +155,16 @@ function AdminLoginPage() {
           </span>
           <span className="hidden text-zinc-500 sm:inline">全站运维与资产管理中心</span>
         </div>
-        <Link
-          to="/"
-          className="inline-flex items-center gap-1.5 border border-zinc-300 px-3 py-1 text-xs transition-colors hover:border-zinc-950 hover:bg-zinc-100 dark:border-zinc-800 dark:hover:border-zinc-200 dark:hover:bg-zinc-900"
-        >
-          <ArrowLeftIcon className="size-3.5" />
-          <span>返回用户前端</span>
-        </Link>
+        <div className="flex items-center gap-2">
+          <ThemeToggle square />
+          <Link
+            to="/"
+            className="inline-flex items-center gap-1.5 border border-zinc-300 px-3 py-1 text-xs transition-colors hover:border-zinc-950 hover:bg-zinc-100 dark:border-zinc-800 dark:hover:border-zinc-200 dark:hover:bg-zinc-900"
+          >
+            <ArrowLeftIcon className="size-3.5" />
+            <span>返回用户前端</span>
+          </Link>
+        </div>
       </header>
 
       <main className="mx-auto flex w-full max-w-md flex-1 flex-col justify-center px-4 py-12">
@@ -378,7 +382,13 @@ function AdminLoginPage() {
       </main>
 
       <footer className="flex h-10 items-center justify-between border-t border-zinc-200 px-6 text-xs text-zinc-500 dark:border-zinc-800">
-        <span>系统状态：在线</span>
+        <span>
+          {checking
+            ? '系统状态：检测中…'
+            : connectError
+              ? '系统状态：离线 / 连接异常'
+              : '系统状态：在线'}
+        </span>
         <span>CASTDECK 管理后台</span>
       </footer>
     </div>

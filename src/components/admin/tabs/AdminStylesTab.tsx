@@ -34,6 +34,7 @@ import type {
   StyleSubcategoryItem,
 } from '@/types/gallery'
 import {
+  NONE_STYLE_PRESET,
   getEffectiveStyleCatalog,
   getEffectiveStyleCategories,
   getEffectiveStyleSubcategories,
@@ -87,6 +88,7 @@ interface AdminStylesTabProps {
   onLoadingChange: (loading: boolean) => void
   onConfirm: (action: AdminConfirmAction) => void
   onRefreshBootstrap: () => Promise<void>
+  onDirtyChange?: (dirty: boolean) => void
 }
 
 export function AdminStylesTab({
@@ -94,8 +96,10 @@ export function AdminStylesTab({
   onLoadingChange,
   onConfirm,
   onRefreshBootstrap,
+  onDirtyChange,
 }: AdminStylesTabProps) {
   const [platformCfg, setPlatformCfg] = useState<PlatformConfig | null>(null)
+  const [defaultStyleDraft, setDefaultStyleDraft] = useState<string>('none')
 
   const [focusedCategoryId, setFocusedCategoryId] = useState<'all' | string>('all')
   const [adminStyleCategoryFilter, setAdminStyleCategoryFilter] = useState<string>('all')
@@ -119,6 +123,7 @@ export function AdminStylesTab({
     try {
       const res = await fetchAdminSettingsApi()
       setPlatformCfg(res.platform)
+      setDefaultStyleDraft(res.platform.defaultStylePreset || 'none')
     } catch (err) {
       toast.error(err instanceof Error ? err.message : '加载画风图鉴数据失败')
     } finally {
@@ -132,6 +137,15 @@ export function AdminStylesTab({
     }, 0)
     return () => window.clearTimeout(timer)
   }, [loadData, reloadTick])
+
+  const defaultStyleDirty = Boolean(
+    platformCfg && defaultStyleDraft !== (platformCfg.defaultStylePreset || 'none')
+  )
+
+  useEffect(() => {
+    onDirtyChange?.(defaultStyleDirty)
+    return () => onDirtyChange?.(false)
+  }, [defaultStyleDirty, onDirtyChange])
 
   if (!platformCfg) {
     return (
@@ -191,6 +205,7 @@ export function AdminStylesTab({
   })
 
   const syncSavedTaxonomyState = (nextPlatform: PlatformConfig) => {
+    setDefaultStyleDraft(nextPlatform.defaultStylePreset || 'none')
     setPlatformCfg((prev) =>
       prev
         ? {
@@ -619,6 +634,62 @@ export function AdminStylesTab({
       />
 
       <AdminPanel
+        title="全站默认画风预设"
+        subtitle="新访客与未自选画风的会话默认加载此画风；已在本地修改过偏好的用户不受影响。"
+      >
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="min-w-[240px] flex-1">
+            <AdminField label="默认选用画风">
+              <Select
+                value={defaultStyleDraft}
+                onValueChange={setDefaultStyleDraft}
+              >
+                <SelectTrigger className={`w-full ${ADMIN_SELECT_CLS}`}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent className="rounded-none">
+                  <SelectItem value="none">{NONE_STYLE_PRESET.label}</SelectItem>
+                  {styleCatalog.map((item) => {
+                    const catLabel = styleCategoryMap.get(item.categoryId)?.label
+                    const subLabel = styleSubcategoryMap.get(item.subcategoryId)?.label
+                    return (
+                      <SelectItem key={item.id} value={item.id}>
+                        {catLabel && subLabel
+                          ? `[${catLabel} · ${subLabel}] ${item.label}`
+                          : item.label}
+                      </SelectItem>
+                    )
+                  })}
+                </SelectContent>
+              </Select>
+            </AdminField>
+          </div>
+
+          <div className="flex items-center gap-2">
+            {defaultStyleDirty && <AdminBadge tone="warning">有未保存更改</AdminBadge>}
+            <Button
+              type="button"
+              size="sm"
+              className={ADMIN_BTN_CLS}
+              disabled={savingStyle || !defaultStyleDirty}
+              onClick={() =>
+                void persistStyleCatalog(styleCatalog, '全站默认画风预设已保存', {
+                  defaultStylePreset: defaultStyleDraft,
+                })
+              }
+            >
+              {savingStyle ? (
+                <LoaderCircleIcon className="size-3.5 animate-spin" />
+              ) : (
+                <CheckIcon className="size-3.5" />
+              )}
+              保存默认画风
+            </Button>
+          </div>
+        </div>
+      </AdminPanel>
+
+      <AdminPanel
         title={`画风大类与小类配置（共 ${styleCategories.length} 大类 · ${styleSubcategories.length} 小类）`}
         subtitle="统一定义画风层级；下方画风预设与前端图鉴均按 ID 引用。点选左侧大类可筛选右侧小类。"
         icon={<FolderTreeIcon className="size-3.5" />}
@@ -906,7 +977,7 @@ export function AdminStylesTab({
             <SelectTrigger className={`w-40 ${ADMIN_SELECT_CLS}`}>
               <SelectValue placeholder="全部大类" />
             </SelectTrigger>
-            <SelectContent>
+            <SelectContent className="rounded-none">
               <SelectItem value="all">全部大类 ({styleCategories.length})</SelectItem>
               {styleCategories.map((cat) => (
                 <SelectItem key={cat.id} value={cat.id}>
@@ -923,7 +994,7 @@ export function AdminStylesTab({
             <SelectTrigger className={`w-44 ${ADMIN_SELECT_CLS}`}>
               <SelectValue placeholder="全部小类" />
             </SelectTrigger>
-            <SelectContent>
+            <SelectContent className="rounded-none">
               <SelectItem value="all">全部小类 ({adminFilterSubcategories.length})</SelectItem>
               {adminFilterSubcategories.map((sub) => {
                 const catLabel = styleCategoryMap.get(sub.categoryId)?.label
@@ -1138,7 +1209,7 @@ export function AdminStylesTab({
                     <SelectTrigger className={`w-full ${ADMIN_SELECT_CLS}`}>
                       <SelectValue placeholder="选择大类" />
                     </SelectTrigger>
-                    <SelectContent>
+                    <SelectContent className="rounded-none">
                       {styleCategories.map((cat) => (
                         <SelectItem key={cat.id} value={cat.id}>
                           {cat.label}
@@ -1173,7 +1244,7 @@ export function AdminStylesTab({
                     <SelectTrigger className={`w-full ${ADMIN_SELECT_CLS}`}>
                       <SelectValue placeholder="选择小类" />
                     </SelectTrigger>
-                    <SelectContent>
+                    <SelectContent className="rounded-none">
                       {styleSubcategories
                         .filter((s) => s.categoryId === styleForm.categoryId)
                         .map((sub) => (
@@ -1229,7 +1300,7 @@ export function AdminStylesTab({
                     <SelectTrigger className={`w-full ${ADMIN_SELECT_CLS}`}>
                       <SelectValue />
                     </SelectTrigger>
-                    <SelectContent>
+                    <SelectContent className="rounded-none">
                       <SelectItem value="strict">
                         严格锁定（默认）— 动作、头部朝向与镜头景别严格以姿势图为准
                       </SelectItem>
@@ -1444,7 +1515,7 @@ export function AdminStylesTab({
                   <SelectTrigger className={`w-full ${ADMIN_SELECT_CLS}`}>
                     <SelectValue placeholder="选择所属大类" />
                   </SelectTrigger>
-                  <SelectContent>
+                  <SelectContent className="rounded-none">
                     {styleCategories.map((cat) => (
                       <SelectItem key={cat.id} value={cat.id}>
                         {cat.label}

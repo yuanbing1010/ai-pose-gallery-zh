@@ -2,8 +2,6 @@
 import { useQuery } from '@tanstack/react-query'
 import {
   CheckIcon,
-  ChevronLeftIcon,
-  ChevronRightIcon,
   CopyIcon,
   FileTextIcon,
   FlaskConicalIcon,
@@ -43,6 +41,7 @@ import {
   AdminFilterBar,
   AdminMetricGrid,
   AdminPageHeader,
+  AdminPagination,
   AdminPanel,
 } from '../AdminPrimitives'
 import {
@@ -97,6 +96,7 @@ interface AdminSanitizeTabProps {
   onLoadingChange: (loading: boolean) => void
   onConfirm: (action: AdminConfirmAction) => void
   onRefreshBootstrap: () => Promise<void>
+  onDirtyChange?: (dirty: boolean) => void
 }
 
 function isAsciiTerm(term: string): boolean {
@@ -142,6 +142,7 @@ export function AdminSanitizeTab({
   onLoadingChange,
   onConfirm,
   onRefreshBootstrap,
+  onDirtyChange,
 }: AdminSanitizeTabProps) {
   const [subView, setSubView] = useState<SanitizeSubView>('rules')
   const [platformCfg, setPlatformCfg] = useState<PlatformConfig | null>(null)
@@ -202,6 +203,10 @@ export function AdminSanitizeTab({
   }, [loadData, reloadTick])
 
   const dirty = Boolean(cfg && savedJson && JSON.stringify(cfg) !== savedJson)
+  useEffect(() => {
+    onDirtyChange?.(dirty)
+    return () => onDirtyChange?.(false)
+  }, [dirty, onDirtyChange])
 
   const updateCfg = useCallback((updater: (prev: PoseSanitizeConfig) => PoseSanitizeConfig) => {
     setCfg((prev) => (prev ? updater(prev) : prev))
@@ -702,6 +707,7 @@ export function AdminSanitizeTab({
                       : '已关闭：向云端发送原始姿势名称（慎用，可能触发上游审核）'}
                   </span>
                   <Switch
+                    className="rounded-none"
                     checked={cfg.enabled}
                     onCheckedChange={(v) => updateCfg((prev) => ({ ...prev, enabled: v }))}
                   />
@@ -1359,7 +1365,7 @@ export function AdminSanitizeTab({
                   <SelectTrigger className={`w-44 ${ADMIN_SELECT_CLS}`}>
                     <SelectValue />
                   </SelectTrigger>
-                  <SelectContent>
+                  <SelectContent className="rounded-none">
                     <SelectItem value="all">全部体系</SelectItem>
                     {knownSystems.map((sys) => (
                       <SelectItem key={sys} value={sys}>
@@ -1501,37 +1507,16 @@ export function AdminSanitizeTab({
               </div>
             )}
 
-            {totalAuditPages > 1 && (
-              <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs">
-                <span className="font-mono text-xs text-zinc-500">
-                  第 {safeAuditPage} / {totalAuditPages} 页
-                </span>
-                <div className="flex items-center gap-1.5">
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    className={ADMIN_BTN_SM_CLS}
-                    disabled={safeAuditPage <= 1}
-                    onClick={() => setAuditPage((p) => Math.max(1, p - 1))}
-                  >
-                    <ChevronLeftIcon className="size-3.5" />
-                    上一页
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    className={ADMIN_BTN_SM_CLS}
-                    disabled={safeAuditPage >= totalAuditPages}
-                    onClick={() => setAuditPage((p) => Math.min(totalAuditPages, p + 1))}
-                  >
-                    下一页
-                    <ChevronRightIcon className="size-3.5" />
-                  </Button>
-                </div>
-              </div>
-            )}
+            <AdminPagination
+              offset={(safeAuditPage - 1) * AUDIT_PAGE_SIZE}
+              limit={AUDIT_PAGE_SIZE}
+              total={filteredAuditRows.length}
+              unitLabel="组姿势"
+              onPageChange={(nextOffset) =>
+                setAuditPage(Math.floor(nextOffset / AUDIT_PAGE_SIZE) + 1)
+              }
+              className="mt-3"
+            />
           </AdminPanel>
         </div>
       )}

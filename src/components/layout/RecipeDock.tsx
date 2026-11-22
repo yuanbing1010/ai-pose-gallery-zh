@@ -26,9 +26,10 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { selectCostumeView } from '@/lib/costumeSources'
-import { poseThumbPath, referenceImageUrl } from '@/lib/recipeImages'
+import { toast } from '@/lib/notifications'
+import { hasPoseDepthMap, poseThumbPath, referenceImageUrl } from '@/lib/recipeImages'
 import { cn } from '@/lib/utils'
-import { useStudio } from '@/store/studioStore'
+import { useStudioActions, useStudioShallow } from '@/store/studioStore'
 
 type CoreSlot = 'portrait' | 'costume' | 'pose'
 
@@ -65,10 +66,13 @@ function SlotSparkBurst({ slot, burstKey }: { slot: CoreSlot; burstKey: number }
 
 export function RecipeDock() {
   const { pathname } = useLocation()
+  const { recipe, hasRunningJob } = useStudioShallow((s) => ({
+    recipe: s.recipe,
+    hasRunningJob:
+      s.isSubmitting ||
+      s.history.some((item) => item.status === 'processing' || item.status === 'queued'),
+  }))
   const {
-    recipe,
-    isGenerating,
-    history,
     setPortrait,
     setCostume,
     setPose,
@@ -76,7 +80,7 @@ export function RecipeDock() {
     toggleRecipePoseDepth,
     clearRecipe,
     randomizeRecipe,
-  } = useStudio()
+  } = useStudioActions()
   const qc = useQueryClient()
 
   const dockGlassRef = useRef<HTMLDivElement | null>(null)
@@ -91,13 +95,13 @@ export function RecipeDock() {
   })
   const [ctaIgniteKey, setCtaIgniteKey] = useState(0)
   const [diceSpin, setDiceSpin] = useState(0)
+  const [randomizing, setRandomizing] = useState(false)
   const [minimized, setMinimized] = useState(false)
 
   const extraImages = recipe.extraImages || []
   const extraCount = extraImages.length
   const coreSlotsFilled = [recipe.portrait, recipe.costume, recipe.pose].filter(Boolean).length
   const hasAnyItem = coreSlotsFilled > 0 || extraCount > 0
-  const hasRunningJob = isGenerating || history.some((item) => item.status === 'processing')
   const isFullReady = coreSlotsFilled === 3
   const isHome = pathname === '/'
 
@@ -173,17 +177,25 @@ export function RecipeDock() {
   }
 
   const handleRandom = async () => {
+    if (randomizing) return
+    setRandomizing(true)
     setDiceSpin((s) => s + 1)
-    const [posesRes, costumes, portraits] = await Promise.all([
-      qc.ensureQueryData(posesQuery),
-      qc.ensureQueryData(costumesQuery),
-      qc.ensureQueryData(portraitsQuery),
-    ])
-    randomizeRecipe({
-      poses: posesRes.items,
-      costumes,
-      portraits,
-    })
+    try {
+      const [posesRes, costumes, portraits] = await Promise.all([
+        qc.ensureQueryData(posesQuery),
+        qc.ensureQueryData(costumesQuery),
+        qc.ensureQueryData(portraitsQuery),
+      ])
+      randomizeRecipe({
+        poses: posesRes.items,
+        costumes,
+        portraits,
+      })
+    } catch {
+      toast.error('素材库加载失败，请稍后重试')
+    } finally {
+      setRandomizing(false)
+    }
   }
 
   if (!isHome && minimized) {
@@ -210,12 +222,13 @@ export function RecipeDock() {
 
           <button
             type="button"
+            disabled={randomizing}
             onClick={handleRandom}
             aria-label="随机抽一套配方"
             title="随机抽一套配方"
-            className="inline-flex size-8 items-center justify-center rounded-full border border-border bg-card text-foreground transition-colors hover:bg-muted"
+            className="inline-flex size-8 items-center justify-center rounded-full border border-border bg-card text-foreground transition-colors hover:bg-muted disabled:cursor-wait disabled:opacity-50"
           >
-            <DicesIcon className="size-3.5 text-[#E5A918]" />
+            <DicesIcon className={cn('size-3.5 text-[#E5A918]', randomizing && 'animate-spin')} />
           </button>
 
           <Link
@@ -333,7 +346,7 @@ export function RecipeDock() {
                       </div>
                       <DropdownMenuSeparator className="my-2.5" />
                       <div className="flex flex-col gap-1.5">
-                        {recipe.pose.source !== 'upload' && (
+                        {hasPoseDepthMap(recipe.pose) && (
                           <button
                             type="button"
                             onClick={toggleRecipePoseDepth}
@@ -364,7 +377,7 @@ export function RecipeDock() {
                     </DropdownMenuContent>
                   </DropdownMenu>
 
-                  {recipe.pose.source !== 'upload' && (
+                  {hasPoseDepthMap(recipe.pose) && (
                     <button
                       type="button"
                       onClick={toggleRecipePoseDepth}
@@ -425,7 +438,12 @@ export function RecipeDock() {
                         <img
                           src={referenceImageUrl(recipe.costume.缩略图)}
                           alt={recipe.costume.服装名称}
-                          className="size-full object-cover object-[50%_15%]"
+                          className={cn(
+                            'size-full',
+                            recipe.costume.source === 'mio' || recipe.costume.source === 'shisei'
+                              ? 'bg-[#DFDFE2] object-contain dark:bg-[#232328]'
+                              : 'object-cover object-[50%_15%]'
+                          )}
                         />
                       </button>
                     </DropdownMenuTrigger>
@@ -434,7 +452,12 @@ export function RecipeDock() {
                         <img
                           src={referenceImageUrl(recipe.costume.缩略图)}
                           alt={recipe.costume.服装名称}
-                          className="h-20 w-15 shrink-0 rounded-xl border border-border bg-muted/30 object-cover object-top"
+                          className={cn(
+                            'h-20 w-15 shrink-0 rounded-xl border border-border bg-muted/30',
+                            recipe.costume.source === 'mio' || recipe.costume.source === 'shisei'
+                              ? 'object-contain'
+                              : 'object-cover object-top'
+                          )}
                         />
                         <div className="min-w-0 flex-1 space-y-1">
                           <div className="text-xs font-semibold text-[#116E65] dark:text-[#4FD1C5]">服装穿搭</div>
@@ -667,8 +690,9 @@ export function RecipeDock() {
             <div className="flex items-center gap-1.5">
               <button
                 type="button"
+                disabled={randomizing}
                 onClick={handleRandom}
-                className="inline-flex h-7 flex-1 items-center justify-center gap-1 rounded-full border border-border bg-card px-2.5 text-xs font-semibold whitespace-nowrap text-foreground transition-colors hover:bg-muted active:scale-[0.97] sm:h-10 sm:gap-1.5 sm:px-3.5"
+                className="inline-flex h-7 flex-1 items-center justify-center gap-1 rounded-full border border-border bg-card px-2.5 text-xs font-semibold whitespace-nowrap text-foreground transition-colors hover:bg-muted active:scale-[0.97] disabled:cursor-wait disabled:opacity-50 sm:h-10 sm:gap-1.5 sm:px-3.5"
               >
                 <motion.span
                   key={diceSpin}

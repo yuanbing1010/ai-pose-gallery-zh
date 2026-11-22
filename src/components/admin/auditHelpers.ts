@@ -14,10 +14,12 @@ export type AdminTab =
   | 'suppliers'
   | 'api'
   | 'jobs'
+  | 'queue'
   | 'styles'
   | 'access'
   | 'prompts'
   | 'sanitize'
+  | 'descriptions'
 
 export const ADMIN_TABS: readonly AdminTab[] = [
   'overview',
@@ -26,21 +28,23 @@ export const ADMIN_TABS: readonly AdminTab[] = [
   'suppliers',
   'api',
   'jobs',
+  'queue',
   'styles',
   'access',
   'prompts',
   'sanitize',
+  'descriptions',
 ]
 
 export interface AdminNavItemMeta {
   id: AdminTab
   code: string
   label: string
-  group: 'operations' | 'models' | 'policy'
+  group: 'operations' | 'models' | 'policy' | 'audit'
 }
 
 export interface AdminNavGroupMeta {
-  id: 'operations' | 'models' | 'policy'
+  id: 'operations' | 'models' | 'policy' | 'audit'
   label: string
   items: AdminNavItemMeta[]
 }
@@ -67,11 +71,13 @@ export function getAdminNavItems(): AdminNavItemMeta[] {
     { id: 'redeem', code: '02', label: '兑换码卡密', group: 'operations' },
     { id: 'suppliers', code: '03', label: '供应商凭证', group: 'models' },
     { id: 'api', code: '04', label: '画笔档位与路由', group: 'models' },
-    { id: 'jobs', code: '05', label: '生成记录审计', group: 'models' },
-    { id: 'styles', code: '06', label: '画风图鉴管理', group: 'policy' },
-    { id: 'access', code: '07', label: '准入与生图链路', group: 'policy' },
-    { id: 'prompts', code: '08', label: '提示词模板', group: 'policy' },
-    { id: 'sanitize', code: '09', label: '姿势敏感词屏蔽', group: 'policy' },
+    { id: 'styles', code: '05', label: '画风图鉴管理', group: 'policy' },
+    { id: 'access', code: '06', label: '准入与全局配置', group: 'policy' },
+    { id: 'prompts', code: '07', label: '提示词模板', group: 'policy' },
+    { id: 'sanitize', code: '08', label: '姿势敏感词屏蔽', group: 'policy' },
+    { id: 'descriptions', code: '09', label: '图转文描述库', group: 'policy' },
+    { id: 'jobs', code: '10', label: '生成记录审计', group: 'audit' },
+    { id: 'queue', code: '11', label: '任务队列与并发', group: 'audit' },
   ]
 }
 
@@ -85,13 +91,18 @@ export function getAdminNavGroups(): AdminNavGroupMeta[] {
     },
     {
       id: 'models',
-      label: '画笔与链路',
+      label: '模型与通道',
       items: items.filter((i) => i.group === 'models'),
     },
     {
       id: 'policy',
       label: '画风与策略',
       items: items.filter((i) => i.group === 'policy'),
+    },
+    {
+      id: 'audit',
+      label: '审计与监控',
+      items: items.filter((i) => i.group === 'audit'),
     },
   ]
 }
@@ -145,6 +156,16 @@ export const AUDIT_STATUS_META: Record<
     badgeClass:
       'border-amber-600/40 bg-amber-500/10 text-amber-800 dark:border-amber-500/40 dark:text-amber-300',
   },
+  queued: {
+    label: '排队等待',
+    badgeClass:
+      'border-sky-600/40 bg-sky-500/10 text-sky-800 dark:border-sky-500/40 dark:text-sky-300',
+  },
+  cancelled: {
+    label: '已取消排队',
+    badgeClass:
+      'border-zinc-400/50 bg-zinc-500/10 text-zinc-700 dark:border-zinc-600 dark:text-zinc-300',
+  },
 }
 
 export const TRIGGER_TYPE_META: Record<
@@ -175,6 +196,11 @@ export const TRIGGER_TYPE_META: Record<
     label: '首渠道兜底重试',
     badgeClass:
       'border-orange-600/50 bg-orange-500/15 text-orange-800 dark:border-orange-500/40 dark:text-orange-300',
+  },
+  text_fallback: {
+    label: '全图转文·文生图',
+    badgeClass:
+      'border-teal-600/50 bg-teal-500/15 text-teal-800 dark:border-teal-500/40 dark:text-teal-300',
   },
 }
 
@@ -251,7 +277,12 @@ export function buildFallbackReferences(job: GenerationHistoryItem): GenerationT
       index: idx++,
       slot: 'pose',
       label: recipe.pose.姿势名称 || '姿势参考',
-      sourceKind: recipe.pose.r2Key || recipe.pose.source === 'upload' ? 'r2' : 'gallery',
+      sourceKind:
+        recipe.pose.r2Key || recipe.pose.source === 'upload'
+          ? 'r2'
+          : /^https?:\/\//i.test(raw)
+            ? 'https'
+            : 'gallery',
       rawPath: raw,
     })
   }
@@ -281,7 +312,12 @@ export function buildFallbackReferences(job: GenerationHistoryItem): GenerationT
       index: idx++,
       slot: 'portrait',
       label: recipe.portrait.发型名称 || recipe.portrait.标题 || '人像参考',
-      sourceKind: recipe.portrait.r2Key || recipe.portrait.source === 'upload' ? 'r2' : 'gallery',
+      sourceKind:
+        recipe.portrait.r2Key || recipe.portrait.source === 'upload'
+          ? 'r2'
+          : /^https?:\/\//i.test(raw)
+            ? 'https'
+            : 'gallery',
       rawPath: raw,
     })
   }

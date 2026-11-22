@@ -24,17 +24,24 @@ import {
   ArrowUpRightIcon,
   CheckCircle2Icon,
   CircleAlertIcon,
+  ClockIcon,
   CoinsIcon,
+  CopyIcon,
   DicesIcon,
   DownloadIcon,
   EyeIcon,
+  FileTextIcon,
   GripVerticalIcon,
+  ImageIcon,
   ImagesIcon,
   ImagePlusIcon,
+  InfoIcon,
   LayersIcon,
   LayoutGridIcon,
   LinkIcon,
   LoaderCircleIcon,
+  LockIcon,
+  LockOpenIcon,
   LogInIcon,
   MonitorIcon,
   PersonStandingIcon,
@@ -48,6 +55,7 @@ import {
   Volume2Icon,
   VolumeXIcon,
   WandSparklesIcon,
+  WrenchIcon,
   XIcon,
   ZoomInIcon,
 } from 'lucide-react'
@@ -57,8 +65,6 @@ import { costumesQuery, portraitsQuery, posesQuery } from '@/api/gallery'
 import {
   ArtistStageSelector,
   GeneratingSpriteStage,
-  type AutoGrabBrushTrigger,
-  type HoveredBrushInfo,
 } from '@/components/studio/ArtistSprite3D'
 import {
   type HomeworkThrowTask,
@@ -66,30 +72,53 @@ import {
   SpriteTravelPortal,
 } from '@/components/studio/SpriteTravelPortal'
 import { AspectRatioLogo } from '@/components/studio/StudioEmblems'
+import { CloudWorksDialog } from '@/components/studio/CloudWorksDialog'
+import { LocalImageToolsDialog } from '@/components/studio/LocalImageToolsDialog'
 import { StyleBrowserPanel } from '@/components/studio/StyleBrowserPanel'
 import { StylePresetSelector } from '@/components/studio/StylePresetSelector'
+import { WorkDetailDialog } from '@/components/studio/WorkDetailDialog'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import { Textarea } from '@/components/ui/textarea'
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { uploadReferenceFileApi } from '@/lib/apiClient'
 import {
+  getEstimatedOutputDimensions,
   getStudioArtist,
   STUDIO_ARTISTS,
   STUDIO_ASPECT_RATIOS,
   type StudioAspectRatio,
 } from '@/lib/artists'
+import { STUDIO_PROMPT_CHIP_GROUPS, toggleSceneNoteChip } from '@/lib/studioPromptChips'
 import { getBrushPalette } from '@/lib/brushPalettes'
 import { selectCostumeView } from '@/lib/costumeSources'
 import type { RandomScope, ReferenceSlot } from '@/lib/randomRecipe'
-import { poseImagePath, poseThumbPath, referenceImageUrl, uploadedReferences } from '@/lib/recipeImages'
-import { getStudioMuted, playHomeworkThrow, playMonitorReveal, playSpriteTravel, setStudioMuted, unlockStudioAudio } from '@/lib/studioAudio'
+import { downloadFileName, hasPoseDepthMap, poseImagePath, poseThumbPath, referenceImageUrl, uploadedReferences } from '@/lib/recipeImages'
+import {
+  getStudioMuted,
+  playHomeworkThrow,
+  playMonitorReveal,
+  playSpriteSelect,
+  playSpriteTravel,
+  setStudioMuted,
+  unlockStudioAudio,
+} from '@/lib/studioAudio'
 import { getStyleVisualMeta } from '@/lib/stylePresets'
 import { cn } from '@/lib/utils'
 import {
@@ -99,8 +128,10 @@ import {
 } from '@/services/aiGenerator'
 import {
   NONE_STYLE_PRESET,
+  buildRecipePrompt,
   getEffectiveProfileCreditCost,
   getEffectiveStyleCatalog,
+  mergeGenerationQueueConfig,
   STUDIO_RESOLUTION_META,
   type GenerationLiveStage,
   type ImageProviderId,
@@ -430,20 +461,30 @@ function StudioPage() {
     history,
     previewUrl,
     setPreviewUrl,
-    isGenerating,
-    generatingProvider,
-    generatingProfileId,
-    generationProgress,
+    isSubmitting,
+    submittingProvider,
+    submittingProfileId,
+    submittingProgress,
+    foregroundJobId,
+    cancellingJobIds,
+    sendForegroundToBackground,
+    focusJobInMonitor,
+    cancelQueuedJob,
     generationError,
     setGenerationError,
+    failedGenerationMeta,
+    textToImageMode,
+    setTextToImageMode,
     refreshBootstrap,
     refreshHistory,
     startGeneration,
+    cancelGeneration,
     openAuthModal,
     openAccountModal,
     setPortrait,
     setCostume,
     setPose,
+    applyRecipe,
     clearRecipe,
     poseFrontOnly,
     setPoseFrontOnly,
@@ -457,6 +498,7 @@ function StudioPage() {
     randomizeRecipe,
     randomizeSlot,
     removeHistoryItem,
+    removeHistoryItems,
   } = useStudio()
 
   const isMobile = useIsMobile()
@@ -472,6 +514,12 @@ function StudioPage() {
   }
 
   const [comparisonResult, setComparisonResult] = useState<GenerationHistoryItem | null>(null)
+  const [detailWorkItem, setDetailWorkItem] = useState<GenerationHistoryItem | null>(null)
+  const [pendingDeleteHistoryItem, setPendingDeleteHistoryItem] = useState<GenerationHistoryItem | null>(null)
+  const [deletingHistoryId, setDeletingHistoryId] = useState<string | null>(null)
+  const [promptChipsOpen, setPromptChipsOpen] = useState(false)
+  const [localToolsOpen, setLocalToolsOpen] = useState(false)
+  const [promptPreviewOpen, setPromptPreviewOpen] = useState(false)
   const previewResult = history.find((item) => item.imageUrl === previewUrl)
   const qc = useQueryClient()
   const { data: posesData } = useQuery(posesQuery)
@@ -488,6 +536,7 @@ function StudioPage() {
   const slotInputRef = useRef<HTMLInputElement | null>(null)
   const uploadSlotRef = useRef<'portrait' | 'costume' | 'pose'>('portrait')
   const [uploadingSlot, setUploadingSlot] = useState<string | null>(null)
+  const [randomizingAll, setRandomizingAll] = useState(false)
   const [randomizingAction, setRandomizingAction] = useState<{
     slot: ReferenceSlot
     scope: RandomScope
@@ -503,25 +552,10 @@ function StudioPage() {
   const [allDiceSpin, setAllDiceSpin] = useState(0)
   const [slotActionSpin, setSlotActionSpin] = useState<Record<string, number>>({})
   const [studioMuted, setStudioMutedState] = useState(() => getStudioMuted())
-  const [brushReactionTick, setBrushReactionTick] = useState(0)
-  const [isBrushFlying, setIsBrushFlying] = useState(false)
-  const [equippedBrushByProvider, setEquippedBrushByProvider] = useState<
-    Partial<Record<ImageProviderId, string>>
-  >({})
-  const [hoveredBrushInfo, setHoveredBrushInfo] = useState<HoveredBrushInfo | null>(null)
-  const [autoGrabTrigger, setAutoGrabTrigger] = useState<AutoGrabBrushTrigger | null>(null)
-  const [isAutoGrabbing, setIsAutoGrabbing] = useState(false)
-  const autoGrabSeqRef = useRef(0)
-  const autoGrabTimerRef = useRef<number | null>(null)
   const [artistReturnTick, setArtistReturnTick] = useState(0)
-
-  useEffect(() => {
-    return () => {
-      if (autoGrabTimerRef.current) window.clearTimeout(autoGrabTimerRef.current)
-    }
-  }, [])
+  const [stageResumeTick, setStageResumeTick] = useState(0)
   const [entranceDone, setEntranceDone] = useState(false)
-  const [spriteTravelTask, setSpriteTravelTask] = useState<SpriteTravelTask | null>(null)
+  const [spriteTravelTasks, setSpriteTravelTasks] = useState<SpriteTravelTask[]>([])
   const [homeworkThrowTask, setHomeworkThrowTask] = useState<HomeworkThrowTask | null>(null)
   const [deliveryState, setDeliveryState] = useState<{
     phase: 'cheering' | 'throwing'
@@ -584,15 +618,23 @@ function StudioPage() {
         visibleModels.findIndex((m) => m.profileId === activeProfile.profileId)
       )
     : 0
-  const equippedBrushRaw = equippedBrushByProvider[selectedProvider]
-  const activeEquippedBrushId =
-    equippedBrushRaw && visibleModels.some((m) => m.profileId === equippedBrushRaw)
-      ? equippedBrushRaw
-      : null
   const activeBrushPalette = activeProfile ? getBrushPalette(activeBrushIndex) : null
+  const textFallbackFeatureEnabled = platform.textFallbackEnabled !== false
+  const activeProfileSupportsTextFallback =
+    activeProviderInfo.models.length === 0
+      ? activeProviderInfo.configured
+      : Boolean(activeProfile?.supportsTextFallback)
+  const effectiveTextToImageMode = Boolean(
+    textFallbackFeatureEnabled && activeProfileSupportsTextFallback && textToImageMode
+  )
   const displayRatio =
     STUDIO_ASPECT_RATIOS.find((r) => r.id === (hoveredRatio ?? aspectRatio)) ??
     STUDIO_ASPECT_RATIOS[0]
+  const displayRatioDims = getEstimatedOutputDimensions(
+    selectedProvider,
+    displayRatio.id,
+    activeResolution
+  )
 
   const extraImages = recipe.extraImages || []
   const hasAnyRef = Boolean(recipe.portrait || recipe.costume || recipe.pose || extraImages.length > 0)
@@ -606,17 +648,41 @@ function StudioPage() {
   const [nowTick, setNowTick] = useState(() => Date.now())
   const [progressHighWater, setProgressHighWater] = useState(0)
 
-  const activeProcessingJob = history.find((item) => item.status === 'processing') ?? null
-  const showGeneratingState = isGenerating || Boolean(activeProcessingJob)
-  const effectiveProgress = generationProgress ?? activeProcessingJob?.liveProgress ?? null
-  const runningArtist = activeProcessingJob
-    ? getStudioArtist(activeProcessingJob.provider)
-    : generatingProvider
-      ? getStudioArtist(generatingProvider)
+  const queueCfg = useMemo(
+    () => mergeGenerationQueueConfig(platform.queueConfig),
+    [platform.queueConfig]
+  )
+  const processingJobs = history.filter((item) => item.status === 'processing')
+  const queuedJobs = history.filter((item) => item.status === 'queued')
+  const activeJobsCount = processingJobs.length + queuedJobs.length
+  const userQueueFull =
+    processingJobs.length >= queueCfg.maxUserConcurrency &&
+    queuedJobs.length >= queueCfg.maxUserQueuedJobs
+
+  const foregroundJob = foregroundJobId
+    ? history.find(
+        (item) =>
+          item.id === foregroundJobId && (item.status === 'processing' || item.status === 'queued')
+      ) ?? null
+    : null
+
+  const showSubmittingState = isSubmitting && !foregroundJob
+  const showForegroundQueued = foregroundJob?.status === 'queued'
+  const showForegroundProcessing = foregroundJob?.status === 'processing'
+  const showGeneratingState = showSubmittingState || showForegroundProcessing || showForegroundQueued
+  const activeCloudJobId = foregroundJob?.id ?? null
+  const isForegroundCancelling = Boolean(foregroundJob && cancellingJobIds[foregroundJob.id])
+  const effectiveProgress = showSubmittingState
+    ? submittingProgress
+    : foregroundJob?.liveProgress ?? null
+  const runningArtist = foregroundJob
+    ? getStudioArtist(foregroundJob.provider)
+    : submittingProvider
+      ? getStudioArtist(submittingProvider)
       : activeArtist
   const runningProviderInfo = providers.find((p) => p.providerId === runningArtist.id)
   const runningEnabledModels = (runningProviderInfo?.models || []).filter((m) => m.enabled)
-  const runningProfileId = activeProcessingJob?.profileId ?? generatingProfileId
+  const runningProfileId = foregroundJob?.profileId ?? submittingProfileId
   const runningBrushIdx = runningProfileId
     ? Math.max(
         0,
@@ -626,19 +692,28 @@ function StudioPage() {
   const runningBrushPalette = getBrushPalette(runningBrushIdx)
   const runningBrushColorHex = runningBrushPalette.hex
   const runningBrushGlowHex = runningBrushPalette.glowHex
-  const effectiveStartedAt =
-    effectiveProgress?.startedAt ?? activeProcessingJob?.createdAt ?? null
+  const effectiveStartedAt = showForegroundQueued
+    ? foregroundJob?.createdAt ?? null
+    : foregroundJob?.startedAt ??
+      effectiveProgress?.startedAt ??
+      foregroundJob?.createdAt ??
+      null
   const elapsedSeconds = effectiveStartedAt
     ? Math.max(0, Math.floor((nowTick - effectiveStartedAt) / 1000))
     : 0
   const liveStage: GenerationLiveStage = effectiveProgress?.stage ?? 'generating'
   const liveStageOrder =
-    liveStage === 'uploading' || liveStage === 'deducted' || liveStage === 'resolving_refs'
+    liveStage === 'uploading' ||
+    liveStage === 'queued' ||
+    liveStage === 'deducted' ||
+    liveStage === 'resolving_refs' ||
+    liveStage === 'transcribing_refs'
       ? 0
-      : liveStage === 'generating' || liveStage === 'retrying'
+      : liveStage === 'generating' || liveStage === 'text_generating' || liveStage === 'retrying'
         ? 1
         : 2
-  const isDrawingStage = liveStage === 'generating' || liveStage === 'retrying'
+  const isDrawingStage =
+    liveStage === 'generating' || liveStage === 'text_generating' || liveStage === 'retrying'
   const smoothWaitPercent = Math.min(
     78,
     Math.round(32 + (1 - Math.exp(-elapsedSeconds / 24)) * 46)
@@ -650,7 +725,7 @@ function StudioPage() {
 
   useEffect(() => {
     void refreshBootstrap()
-    if (user && !isGenerating) {
+    if (user && !isSubmitting) {
       void refreshHistory()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -714,7 +789,7 @@ function StudioPage() {
         if (inView) {
           playSpriteTravel(runningArtist.id, 'to_canvas')
           travelSeqRef.current += 1
-          setSpriteTravelTask({
+          const nextTask: SpriteTravelTask = {
             id: travelSeqRef.current,
             providerId: runningArtist.id,
             direction: 'to_canvas',
@@ -732,7 +807,11 @@ function StudioPage() {
               width: toRect.width,
               height: toRect.height,
             },
-          })
+          }
+          setSpriteTravelTasks((prev) => [
+            ...prev.filter((t) => t.providerId !== nextTask.providerId),
+            nextTask,
+          ])
           return
         }
       }
@@ -756,15 +835,16 @@ function StudioPage() {
   const wasGeneratingRef = useRef(showGeneratingState)
   const lastRevealedUrlRef = useRef<string | null>(previewUrl)
 
-  // 2. 绘画完成瞬间：若生成成功则进入「欢呼交作业」阶段，否则直接回位
+  // 2. 绘画完成瞬间：若生成成功则进入「欢呼交作业」阶段；若失败则留在画布原地露出沮丧表情；否则回位
   useEffect(() => {
     const was = wasGeneratingRef.current
     wasGeneratingRef.current = showGeneratingState
 
     if (was && !showGeneratingState) {
       const snap = runningJobSnapshotRef.current
+      const enteringFailedStage = Boolean(generationError)
       const shouldDeliver =
-        !generationError &&
+        !enteringFailedStage &&
         Boolean(previewUrl) &&
         previewUrl !== lastRevealedUrlRef.current &&
         Boolean(snap)
@@ -774,8 +854,15 @@ function StudioPage() {
       }
 
       const raf = requestAnimationFrame(() => {
+        setSpriteTravelTasks((prev) => prev.filter((t) => t.direction !== 'to_canvas'))
+        setStageResumeTick(0)
+
+        if (enteringFailedStage) {
+          setEntranceDone(true)
+          return
+        }
+
         setEntranceDone(false)
-        setSpriteTravelTask((prev) => (prev?.direction === 'to_canvas' ? null : prev))
         const reduceMotion =
           window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
 
@@ -843,7 +930,7 @@ function StudioPage() {
             if (sFrom.width > 0 && sTo.width > 0) {
               playSpriteTravel(deliveryState.providerId, 'to_home')
               travelSeqRef.current += 1
-              setSpriteTravelTask({
+              const nextTask: SpriteTravelTask = {
                 id: travelSeqRef.current,
                 providerId: deliveryState.providerId,
                 direction: 'to_home',
@@ -861,7 +948,11 @@ function StudioPage() {
                   width: sTo.width,
                   height: sTo.height,
                 },
-              })
+              }
+              setSpriteTravelTasks((prev) => [
+                ...prev.filter((t) => t.providerId !== nextTask.providerId),
+                nextTask,
+              ])
             }
           }
           return
@@ -879,13 +970,225 @@ function StudioPage() {
 
   const isEnteringMonitor = showGeneratingState && !entranceDone
   const showDeliveryScene = Boolean(deliveryState)
-  const awayProviderId: ImageProviderId | null = showGeneratingState
-    ? runningArtist.id
-    : deliveryState
-      ? deliveryState.providerId
-      : spriteTravelTask?.direction === 'to_home'
-        ? spriteTravelTask.providerId
-        : null
+  const showFailedStage = !showGeneratingState && !deliveryState && Boolean(generationError)
+
+  const failedStageArtist = useMemo(() => {
+    if (!showFailedStage) return null
+    const providerId = failedGenerationMeta?.providerId ?? selectedProvider
+    const pInfo = providers.find((p) => p.providerId === providerId)
+    const enabledModels = (pInfo?.models || []).filter((m) => m.enabled)
+    const targetProfileId =
+      providerId === selectedProvider
+        ? (activeProfile?.profileId ?? failedGenerationMeta?.profileId ?? null)
+        : (failedGenerationMeta?.profileId ?? null)
+    const idx = targetProfileId
+      ? Math.max(0, enabledModels.findIndex((m) => m.profileId === targetProfileId))
+      : 0
+    const palette = getBrushPalette(idx)
+    return {
+      providerId,
+      brushHex: palette.hex,
+      brushGlow: palette.glowHex,
+    }
+  }, [
+    showFailedStage,
+    failedGenerationMeta,
+    selectedProvider,
+    providers,
+    activeProfile?.profileId,
+  ])
+
+  const failedStageSnapRef = useRef<{
+    providerId: ImageProviderId
+    brushHex: string
+    brushGlow: string
+    slotRect: { left: number; top: number; width: number; height: number } | null
+  } | null>(null)
+  const wasFailedStageRef = useRef(showFailedStage)
+
+  const launchArtistReturnHome = useCallback(
+    (info: {
+      providerId: ImageProviderId
+      brushHex: string
+      brushGlow: string
+      frustrated?: boolean
+      fromRect?: { left: number; top: number; width: number; height: number } | null
+    }) => {
+      const reduceMotion =
+        window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
+      if (reduceMotion) {
+        setArtistReturnTick((n) => n + 1)
+        return
+      }
+      const spriteSlotEl = document.querySelector<HTMLElement>('[data-monitor-sprite-slot]')
+      const homeEl = document.querySelector<HTMLElement>(
+        `[data-artist-sprite-target="${info.providerId}"]`
+      )
+      const measuredFrom = spriteSlotEl?.getBoundingClientRect()
+      const sFrom =
+        measuredFrom && measuredFrom.width > 0 ? measuredFrom : info.fromRect ?? null
+      const sTo = homeEl?.getBoundingClientRect() ?? null
+      if (
+        sFrom &&
+        sTo &&
+        sFrom.width > 0 &&
+        sTo.width > 0 &&
+        sFrom.top + sFrom.height > 0 &&
+        sFrom.top < window.innerHeight &&
+        sTo.bottom > 0 &&
+        sTo.top < window.innerHeight
+      ) {
+        playSpriteTravel(info.providerId, 'to_home')
+        travelSeqRef.current += 1
+        const nextTask: SpriteTravelTask = {
+          id: travelSeqRef.current,
+          providerId: info.providerId,
+          direction: 'to_home',
+          brushColorHex: info.brushHex,
+          brushGlowHex: info.brushGlow,
+          frustrated: info.frustrated,
+          fromRect: {
+            left: sFrom.left,
+            top: sFrom.top,
+            width: sFrom.width,
+            height: sFrom.height,
+          },
+          toRect: {
+            left: sTo.left,
+            top: sTo.top,
+            width: sTo.width,
+            height: sTo.height,
+          },
+        }
+        setSpriteTravelTasks((prev) => [
+          ...prev.filter((t) => t.providerId !== nextTask.providerId),
+          nextTask,
+        ])
+        return
+      }
+      setArtistReturnTick((n) => n + 1)
+    },
+    []
+  )
+
+  useEffect(() => {
+    if (!showFailedStage || !failedStageArtist) return
+    const capture = () => {
+      const slotEl = document.querySelector<HTMLElement>('[data-monitor-sprite-slot]')
+      const r = slotEl?.getBoundingClientRect()
+      failedStageSnapRef.current = {
+        ...failedStageArtist,
+        slotRect:
+          r && r.width > 0
+            ? { left: r.left, top: r.top, width: r.width, height: r.height }
+            : failedStageSnapRef.current?.slotRect ?? null,
+      }
+    }
+    const raf = requestAnimationFrame(capture)
+    window.addEventListener('resize', capture, { passive: true })
+    window.addEventListener('scroll', capture, { capture: true, passive: true })
+    return () => {
+      cancelAnimationFrame(raf)
+      window.removeEventListener('resize', capture)
+      window.removeEventListener('scroll', capture, true)
+    }
+  }, [showFailedStage, failedStageArtist])
+
+  // 当用户离开失败原地沮丧舞台（如返回预览或切换另一位画师重画）时，让旧画师带着沮丧表情飞回左栏底座
+  useEffect(() => {
+    const was = wasFailedStageRef.current
+    wasFailedStageRef.current = showFailedStage
+    if (was && !showFailedStage) {
+      const snap = failedStageSnapRef.current
+      failedStageSnapRef.current = null
+      if (!snap) return
+      if (showGeneratingState && runningArtist.id === snap.providerId) return
+      const raf = requestAnimationFrame(() => {
+        if (!showGeneratingState) {
+          setEntranceDone(false)
+        }
+        launchArtistReturnHome({
+          providerId: snap.providerId,
+          brushHex: snap.brushHex,
+          brushGlow: snap.brushGlow,
+          frustrated: true,
+          fromRect: snap.slotRect,
+        })
+      })
+      return () => cancelAnimationFrame(raf)
+    }
+  }, [showFailedStage, showGeneratingState, runningArtist.id, launchArtistReturnHome])
+
+  const frustratedAwayProviderId: ImageProviderId | null =
+    showFailedStage && failedStageArtist ? failedStageArtist.providerId : null
+
+  const awayProviderIds = useMemo<ImageProviderId[]>(() => {
+    const ids = new Set<ImageProviderId>()
+    if (showGeneratingState) ids.add(runningArtist.id)
+    if (deliveryState) ids.add(deliveryState.providerId)
+    if (frustratedAwayProviderId) ids.add(frustratedAwayProviderId)
+    for (const task of spriteTravelTasks) {
+      if (task.direction === 'to_home') ids.add(task.providerId)
+    }
+    return Array.from(ids)
+  }, [
+    showGeneratingState,
+    runningArtist.id,
+    deliveryState,
+    frustratedAwayProviderId,
+    spriteTravelTasks,
+  ])
+
+  const applyDataUrlToSlot = async (
+    slot: 'portrait' | 'costume' | 'pose' | 'extra',
+    dataUrl: string,
+    rawName: string,
+    sourceBytes?: number
+  ) => {
+    const cleanName = rawName.replace(/\.[^.]+$/, '').slice(0, 24) || '参考图'
+    if (slot === 'extra') {
+      if (user) {
+        const uploaded = await uploadReferenceFileApi({
+          file: dataUrlToBlob(dataUrl),
+          filename: `${cleanName}.png`,
+          purpose: 'extra',
+        })
+        addExtraImage({ name: cleanName, url: uploaded.url, r2Key: uploaded.r2Key })
+      } else {
+        addExtraImage({ name: cleanName, url: dataUrl })
+      }
+      return
+    }
+    setUploadingSlot(slot)
+    try {
+      const image = new Image()
+      image.src = dataUrl
+      await image.decode()
+      const blob = dataUrlToBlob(dataUrl)
+      let finalUrl = dataUrl
+      let r2Key: string | undefined
+      let finalBytes = sourceBytes ?? blob.size
+      if (user) {
+        const uploaded = await uploadReferenceFileApi({
+          file: blob,
+          filename: `${cleanName}.png`,
+          purpose: slot,
+          width: image.width,
+          height: image.height,
+        })
+        finalUrl = uploaded.url
+        r2Key = uploaded.r2Key
+        finalBytes = uploaded.bytes
+      }
+      const items = uploadedReferences(cleanName, finalUrl, image.width, image.height, finalBytes, r2Key)
+      if (slot === 'portrait') setPortrait(items.portrait)
+      if (slot === 'costume') setCostume(items.costume)
+      if (slot === 'pose') setPose(items.pose)
+      toast.success(user ? '参考图已上传至云端' : '已暂存参考图（登录后将自动同步云端）')
+    } finally {
+      setUploadingSlot(null)
+    }
+  }
 
   const handleSlotUpload = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -896,38 +1199,11 @@ function StudioPage() {
       toast.error('请选择图片文件')
       return
     }
-    setUploadingSlot(slot)
     try {
       const dataUrl = await fileToDataUrl(file)
-      const image = new Image()
-      image.src = dataUrl
-      await image.decode()
-      const name = file.name.replace(/\.[^.]+$/, '') || '上传图片'
-      let finalUrl = dataUrl
-      let r2Key: string | undefined
-      let finalBytes = file.size
-      if (user) {
-        const blob = dataUrlToBlob(dataUrl)
-        const uploaded = await uploadReferenceFileApi({
-          file: blob,
-          filename: `${name}.png`,
-          purpose: slot,
-          width: image.width,
-          height: image.height,
-        })
-        finalUrl = uploaded.url
-        r2Key = uploaded.r2Key
-        finalBytes = uploaded.bytes
-      }
-      const items = uploadedReferences(name, finalUrl, image.width, image.height, finalBytes, r2Key)
-      if (slot === 'portrait') setPortrait(items.portrait)
-      if (slot === 'costume') setCostume(items.costume)
-      if (slot === 'pose') setPose(items.pose)
-      toast.success(user ? '参考图已上传至云端' : '已暂存参考图（登录后将自动同步云端）')
+      await applyDataUrlToSlot(slot, dataUrl, file.name, file.size)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : '图片读取失败')
-    } finally {
-      setUploadingSlot(null)
     }
   }
 
@@ -975,17 +1251,25 @@ function StudioPage() {
   }, [])
 
   const handleRandom = async () => {
+    if (randomizingAll) return
+    setRandomizingAll(true)
     setAllDiceSpin((s) => s + 1)
-    const [posesRes, costumes, portraits] = await Promise.all([
-      qc.ensureQueryData(posesQuery),
-      qc.ensureQueryData(costumesQuery),
-      qc.ensureQueryData(portraitsQuery),
-    ])
-    randomizeRecipe({
-      poses: posesRes.items,
-      costumes,
-      portraits,
-    })
+    try {
+      const [posesRes, costumes, portraits] = await Promise.all([
+        qc.ensureQueryData(posesQuery),
+        qc.ensureQueryData(costumesQuery),
+        qc.ensureQueryData(portraitsQuery),
+      ])
+      randomizeRecipe({
+        poses: posesRes.items,
+        costumes,
+        portraits,
+      })
+    } catch {
+      toast.error('素材库加载失败，请稍后重试')
+    } finally {
+      setRandomizingAll(false)
+    }
   }
 
   const handleRandomSlot = async (slot: ReferenceSlot, scope: RandomScope) => {
@@ -1070,15 +1354,13 @@ function StudioPage() {
     }
   }
 
-  const handleApplyHistoryRecipe = (item: GenerationHistoryItem) => {
+  const handleApplyHistoryRecipe = (item: GenerationHistoryItem, opts?: { silent?: boolean }) => {
     if (!item.snapshot?.recipe) {
       toast.info('该作品未保存配方快照')
-      return
+      return false
     }
     const snap = item.snapshot
-    setPortrait(snap.recipe.portrait ?? null)
-    setCostume(snap.recipe.costume ?? null)
-    setPose(snap.recipe.pose ?? null)
+    applyRecipe(snap.recipe)
     const validStyleIds = new Set(getEffectiveStyleCatalog(platform).map((s) => s.id))
     if (snap.stylePreset && (snap.stylePreset === 'none' || validStyleIds.has(snap.stylePreset))) {
       setStylePreset(snap.stylePreset)
@@ -1088,8 +1370,9 @@ function StudioPage() {
     if (snap.aspectRatio) {
       setAspectRatio(snap.aspectRatio)
     }
-    if (snap.sceneNote) {
-      setSceneNote(snap.sceneNote)
+    setSceneNote(snap.sceneNote ?? '')
+    if (typeof snap.textFallbackOnly === 'boolean') {
+      setTextToImageMode(snap.textFallbackOnly)
     }
     if (snap.provider) {
       const targetProv = providers.find((p) => p.providerId === snap.provider)
@@ -1112,11 +1395,33 @@ function StudioPage() {
       }
     }
     setGalleryModalOpen(false)
-    toast.success('已套用该作品的角色配方')
+    if (!opts?.silent) {
+      toast.success('已套用该作品的角色配方')
+    }
+    return true
   }
 
-  const handleGenerate = () => {
-    if (isAutoGrabbing) return
+  const handleUseImageAsExtraRef = (item: GenerationHistoryItem) => {
+    if (!item.imageUrl) return
+    const r2Key = item.imageUrl.startsWith('/api/files/')
+      ? item.imageUrl.slice('/api/files/'.length)
+      : undefined
+    addExtraImage({
+      name: item.recipeSummary ? `成图：${item.recipeSummary}` : '生成成图参考',
+      url: item.imageUrl,
+      r2Key,
+    })
+  }
+
+  const handleRegenerateFromHistory = (item: GenerationHistoryItem) => {
+    const applied = handleApplyHistoryRecipe(item, { silent: true })
+    if (!applied) return
+    void startGeneration(item.snapshot?.sceneNote ?? '', {
+      textToImage: Boolean(item.snapshot?.textFallbackOnly),
+    })
+  }
+
+  const handleGenerate = (opts?: { textToImage?: boolean }) => {
     if (!user) {
       openAuthModal('login')
       return
@@ -1126,33 +1431,28 @@ function StudioPage() {
       openAccountModal('redeem')
       return
     }
-    if (!activeEquippedBrushId && activeProfile) {
-      const targetProfile = activeProfile
-      setHoveredBrushInfo(null)
-      setSelectedProfileForProvider(selectedProvider, targetProfile.profileId)
-      setEquippedBrushByProvider((prev) => ({
-        ...prev,
-        [selectedProvider]: targetProfile.profileId,
-      }))
-      setAutoGrabTrigger({
-        providerId: selectedProvider,
-        profileId: targetProfile.profileId,
-        seq: ++autoGrabSeqRef.current,
-      })
-      setIsAutoGrabbing(true)
-      const prefersReduced =
-        typeof window !== 'undefined' &&
-        window.matchMedia('(prefers-reduced-motion: reduce)').matches
-      const grabDelayMs = prefersReduced ? 150 : 480
-      if (autoGrabTimerRef.current) window.clearTimeout(autoGrabTimerRef.current)
-      autoGrabTimerRef.current = window.setTimeout(() => {
-        autoGrabTimerRef.current = null
-        setIsAutoGrabbing(false)
-        void startGeneration(sceneNote)
-      }, grabDelayMs)
+    if (userQueueFull) {
+      void startGeneration(sceneNote, opts)
       return
     }
-    void startGeneration(sceneNote)
+    if (!hasAnyRef) {
+      toast.error('请先选择或上传至少 1 张参考图')
+      return
+    }
+    if (showFailedStage && failedStageArtist?.providerId === selectedProvider) {
+      unlockStudioAudio()
+      setEntranceDone(true)
+      entranceStartedRef.current = true
+      setStageResumeTick((n) => n + 1)
+      playSpriteSelect(selectedProvider)
+      void startGeneration(sceneNote, opts)
+      return
+    }
+    if (showFailedStage) {
+      setEntranceDone(false)
+      entranceStartedRef.current = false
+    }
+    void startGeneration(sceneNote, opts)
   }
 
   const styleCatalog = useMemo(() => getEffectiveStyleCatalog(platform), [platform])
@@ -1172,6 +1472,73 @@ function StudioPage() {
   }, [])
 
   const insufficientCredits = Boolean(user && activeProviderReady && user.creditBalance < activeCost)
+
+  const handleMoveToBackground = () => {
+    launchArtistReturnHome({
+      providerId: runningArtist.id,
+      brushHex: runningBrushColorHex,
+      brushGlow: runningBrushGlowHex,
+    })
+    setEntranceDone(false)
+    entranceStartedRef.current = false
+    sendForegroundToBackground()
+    toast.info(
+      showForegroundQueued
+        ? '已转入后台排队，可继续发起新创作，轮到后自动绘制并在完成后通知'
+        : '已转入后台绘制，可继续发起新创作，完成后自动通知入库'
+    )
+  }
+
+  const handleCancelForegroundQueued = async () => {
+    if (!foregroundJob || foregroundJob.status !== 'queued') return
+    const targetId = foregroundJob.id
+    const slotRectRaw = document
+      .querySelector<HTMLElement>('[data-monitor-sprite-slot]')
+      ?.getBoundingClientRect()
+    const fromRect =
+      slotRectRaw && slotRectRaw.width > 0
+        ? {
+            left: slotRectRaw.left,
+            top: slotRectRaw.top,
+            width: slotRectRaw.width,
+            height: slotRectRaw.height,
+          }
+        : null
+    const info = {
+      providerId: runningArtist.id,
+      brushHex: runningBrushColorHex,
+      brushGlow: runningBrushGlowHex,
+      fromRect,
+    }
+    const cancelled = await cancelQueuedJob(targetId)
+    if (cancelled) {
+      launchArtistReturnHome(info)
+      setEntranceDone(false)
+      entranceStartedRef.current = false
+    }
+  }
+
+  const handleCancelBeforeJob = () => {
+    if (entranceDone) {
+      launchArtistReturnHome({
+        providerId: runningArtist.id,
+        brushHex: runningBrushColorHex,
+        brushGlow: runningBrushGlowHex,
+      })
+    }
+    setEntranceDone(false)
+    entranceStartedRef.current = false
+    cancelGeneration()
+  }
+
+  const activeBadgeLabel =
+    processingJobs.length > 0 && queuedJobs.length > 0
+      ? `绘制 ${processingJobs.length} · 排队 ${queuedJobs.length}`
+      : processingJobs.length > 0
+        ? `绘制中 ${processingJobs.length}`
+        : queuedJobs.length > 0
+          ? `排队中 ${queuedJobs.length}`
+          : ''
 
   return (
     <div
@@ -1214,16 +1581,43 @@ function StudioPage() {
             </Button>
           )}
 
-          {history.length > 0 && (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => setLocalToolsOpen(true)}
+            title="本地裁剪、改尺寸与压缩工具（0 积分）"
+            className="h-7 rounded-full bg-card px-2.5 text-xs font-medium"
+          >
+            <WrenchIcon className="size-3.5 text-[#116E65] dark:text-[#4FD1C5]" />
+            <span className="hidden sm:inline">本地图片工具</span>
+          </Button>
+
+          {(history.length > 0 || activeJobsCount > 0) && (
             <Button
               type="button"
               variant="outline"
               size="sm"
               onClick={() => setGalleryModalOpen(true)}
-              className="h-7 rounded-full bg-card px-3 text-xs font-medium"
+              className={cn(
+                'h-7 rounded-full px-3 text-xs font-medium transition-colors',
+                activeJobsCount > 0
+                  ? 'border-[#E5A918]/65 bg-[#E5A918]/10 text-[#7A5200] hover:bg-[#E5A918]/15 dark:text-[#E5A918]'
+                  : 'bg-card'
+              )}
             >
-              <ImagesIcon className="size-3.5 text-[#E5A918]" />
+              {activeJobsCount > 0 ? (
+                <LoaderCircleIcon className="size-3.5 animate-spin text-[#B88300] dark:text-[#E5A918]" />
+              ) : (
+                <ImagesIcon className="size-3.5 text-[#E5A918]" />
+              )}
               <span>云端作品集 ({history.length})</span>
+              {activeBadgeLabel && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-[#E5A918]/20 px-1.5 py-0.5 text-xs font-bold leading-none text-[#7A5200] dark:text-[#F5C443]">
+                  <span aria-hidden="true" className="size-1.5 animate-pulse rounded-full bg-[#D9381E]" />
+                  <span>{activeBadgeLabel}</span>
+                </span>
+              )}
             </Button>
           )}
 
@@ -1252,7 +1646,8 @@ function StudioPage() {
               type="button"
               variant="outline"
               size="sm"
-              className="h-7 rounded-full px-2.5 text-xs active:scale-95"
+              disabled={randomizingAll}
+              className="h-7 rounded-full px-2.5 text-xs active:scale-95 disabled:cursor-wait"
               onClick={handleRandom}
             >
               <motion.span
@@ -1261,7 +1656,7 @@ function StudioPage() {
                 transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
                 className="inline-flex items-center"
               >
-                <DicesIcon className="size-3.5 text-[#E5A918]" />
+                <DicesIcon className={cn('size-3.5 text-[#E5A918]', randomizingAll && 'animate-spin')} />
               </motion.span>
               <span>全随机</span>
             </Button>
@@ -1417,47 +1812,59 @@ function StudioPage() {
                   aria-pressed={poseFrontOnly}
                   title={
                     poseFrontOnly
-                      ? '已锁定「仅随机正面」：换同类/换其他/全随机仅抽正面（点击取消锁定）'
-                      : '点击锁定「仅随机正面视角」'
+                      ? '已锁定「仅正面」：换同类、换其他与全随机只抽正面姿势（点击解锁全部视角）'
+                      : '未锁定「仅正面」：随机可抽任意视角（点击锁定仅随机正面）'
                   }
                   aria-label={
                     poseFrontOnly
-                      ? '已开启仅随机正面视角，点击关闭'
-                      : '未开启仅随机正面视角，点击开启'
+                      ? '已锁定仅随机正面视角，点击解锁'
+                      : '未锁定仅随机正面视角，点击锁定'
                   }
                   onClick={() => void handleTogglePoseFrontOnly()}
                   className={cn(
-                    'h-6 shrink-0 whitespace-nowrap rounded-md border px-2 text-xs leading-none transition-colors',
+                    'inline-flex h-6 shrink-0 items-center gap-1 whitespace-nowrap rounded-md border px-2 text-xs leading-none transition-colors',
                     poseFrontOnly
                       ? 'border-[#D9381E] bg-[#D9381E] font-semibold text-white'
                       : 'border-border/80 bg-[#FAF8F4] font-medium text-muted-foreground hover:text-foreground dark:bg-muted/45'
                   )}
                 >
-                  仅正面
+                  {poseFrontOnly ? (
+                    <LockIcon className="size-3 shrink-0" />
+                  ) : (
+                    <LockOpenIcon className="size-3 shrink-0 opacity-70" />
+                  )}
+                  <span>仅正面</span>
                 </button>
 
                 {recipe.pose && poseAngles.length > 1 && (
-                  <select
-                    aria-label="已选姿势视角"
-                    title="切换当前姿势视角"
+                  <Select
                     value={recipe.pose.角度}
-                    onChange={(e) => {
-                      const nextPose = poseAngles.find((p) => p.角度 === e.target.value)
+                    onValueChange={(angleVal) => {
+                      const nextPose = poseAngles.find((p) => p.角度 === angleVal)
                       if (nextPose && recipe.pose) {
                         setPose({ ...nextPose, useDepth: Boolean(recipe.pose.useDepth) })
                       }
                     }}
-                    className="h-6 max-w-[5.25rem] shrink-0 rounded-md border border-border/80 bg-[#FAF8F4] px-1.5 text-xs font-medium text-foreground outline-none transition-colors hover:bg-muted dark:bg-muted/45"
                   >
-                    {poseAngles.map((p) => (
-                      <option key={p.id} value={p.角度}>
-                        {p.角度}
-                      </option>
-                    ))}
-                  </select>
+                    <SelectTrigger
+                      size="sm"
+                      aria-label="已选姿势视角"
+                      title="切换当前姿势视角"
+                      className="h-6 max-w-[5.5rem] shrink-0 rounded-md border-border/80 bg-[#FAF8F4] px-2 text-xs font-medium text-foreground shadow-none hover:bg-muted dark:bg-muted/45"
+                    >
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {poseAngles.map((p) => (
+                        <SelectItem key={p.id} value={p.角度} className="text-xs">
+                          {p.角度}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 )}
 
-                {recipe.pose && recipe.pose.source !== 'upload' && (
+                {recipe.pose && hasPoseDepthMap(recipe.pose) && (
                   <button
                     type="button"
                     onClick={toggleRecipePoseDepth}
@@ -1514,7 +1921,12 @@ function StudioPage() {
                     <img
                       src={referenceImageUrl(recipe.costume.缩略图)}
                       alt={recipe.costume.服装名称}
-                      className="h-full w-full object-cover object-[50%_15%] transition-transform duration-300 group-hover/img:scale-105"
+                      className={cn(
+                        'h-full w-full transition-transform duration-300 group-hover/img:scale-105',
+                        recipe.costume.source === 'mio' || recipe.costume.source === 'shisei'
+                          ? 'bg-[#DFDFE2] object-contain p-0.5 dark:bg-[#232328]'
+                          : 'object-cover object-[50%_15%]'
+                      )}
                     />
                     <span className="pointer-events-none absolute right-1.5 bottom-1.5 flex size-5 items-center justify-center rounded-full bg-black/55 text-white opacity-0 transition-opacity group-hover/img:opacity-100">
                       <ZoomInIcon className="size-3" />
@@ -1580,24 +1992,31 @@ function StudioPage() {
               {recipe.costume && costumeViews.length > 0 && (
                 <div className="flex items-center gap-1.5">
                   <span className="shrink-0 text-xs text-muted-foreground">视角</span>
-                  <select
-                    aria-label="已选服装视角"
+                  <Select
                     value={
                       costumeViews.find((view) => view.id === recipe.costume?.selectedView)?.id ||
                       costumeViews.find((view) => view.id === 'front')?.id ||
                       costumeViews[0].id
                     }
-                    onChange={(e) => {
-                      if (recipe.costume) setCostume(selectCostumeView(recipe.costume, e.target.value))
+                    onValueChange={(viewId) => {
+                      if (recipe.costume) setCostume(selectCostumeView(recipe.costume, viewId))
                     }}
-                    className="h-6.5 max-w-[7rem] rounded-md border border-border/80 bg-[#FAF8F4] px-1.5 text-xs font-medium text-foreground outline-none transition-colors hover:bg-muted dark:bg-muted/45"
                   >
-                    {costumeViews.map((v) => (
-                      <option key={v.id} value={v.id}>
-                        {v.label}
-                      </option>
-                    ))}
-                  </select>
+                    <SelectTrigger
+                      size="sm"
+                      aria-label="已选服装视角"
+                      className="h-6.5 max-w-[7.5rem] rounded-md border-border/80 bg-[#FAF8F4] px-2 text-xs font-medium text-foreground shadow-none hover:bg-muted dark:bg-muted/45"
+                    >
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {costumeViews.map((v) => (
+                        <SelectItem key={v.id} value={v.id} className="text-xs">
+                          {v.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
               )}
             </div>
@@ -1820,70 +2239,11 @@ function StudioPage() {
             >
               <div className="min-h-0 flex-1 space-y-2 overflow-x-hidden overflow-y-auto px-2.5 py-1.5">
               {/* 选择 AI小画家 与实体画笔 */}
-              <div className="space-y-1">
+              <div className="space-y-1.5">
                 <div className="flex min-h-[20px] flex-wrap items-center justify-between gap-2">
                   <span className="shrink-0 text-xs font-extrabold tracking-tight text-foreground sm:text-sm">
                     AI小画家
                   </span>
-                  {hoveredBrushInfo ? (
-                    <motion.span
-                      key={hoveredBrushInfo.profile.profileId}
-                      data-hovered-brush-badge="true"
-                      initial={{ opacity: 0, y: 2 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ duration: 0.14, ease: [0.22, 1, 0.36, 1] }}
-                      title={
-                        hoveredBrushInfo.profile.tagline
-                          ? `${hoveredBrushInfo.profile.displayName} · ${hoveredBrushInfo.profile.tagline}`
-                          : hoveredBrushInfo.profile.displayName
-                      }
-                      className="inline-flex h-5 max-w-[260px] shrink-0 items-center gap-1.5 truncate rounded-full border border-border/80 bg-[#FAF8F4] px-2 text-xs font-semibold leading-none text-foreground shadow-xs dark:bg-muted/70"
-                    >
-                      <span
-                        aria-hidden="true"
-                        className="size-2 shrink-0 rounded-full"
-                        style={{
-                          backgroundColor: hoveredBrushInfo.colorHex,
-                          boxShadow: `0 0 6px ${hoveredBrushInfo.glowHex}`,
-                        }}
-                      />
-                      <span className="truncate">{hoveredBrushInfo.profile.displayName}</span>
-                      {hoveredBrushInfo.profile.badge && (
-                        <>
-                          <span className="text-muted-foreground/50">·</span>
-                          <span className="shrink-0 font-medium text-muted-foreground">
-                            {hoveredBrushInfo.profile.badge}
-                          </span>
-                        </>
-                      )}
-                    </motion.span>
-                  ) : activeProfile && activeBrushPalette ? (
-                    <span
-                      title={
-                        activeProfile.tagline
-                          ? `${activeProfile.displayName} · ${activeProfile.tagline}`
-                          : activeProfile.displayName
-                      }
-                      className="inline-flex h-5 max-w-[260px] shrink-0 items-center gap-1.5 truncate rounded-full border border-border/80 bg-[#FAF8F4] px-2 text-xs font-semibold leading-none text-foreground shadow-xs dark:bg-muted/70"
-                    >
-                      <span
-                        aria-hidden="true"
-                        className="size-2 shrink-0 rounded-full"
-                        style={{
-                          backgroundColor: activeBrushPalette.hex,
-                        }}
-                      />
-                      <span className="truncate">{activeProfile.displayName}</span>
-                      {activeProfile.badge && (
-                        <>
-                          <span className="text-muted-foreground/50">·</span>
-                          <span className="shrink-0 font-medium text-muted-foreground">
-                            {activeProfile.badge}
-                          </span>
-                        </>
-                      )}
-                    </span>
-                  ) : null}
                 </div>
 
                 <ArtistStageSelector
@@ -1892,38 +2252,18 @@ function StudioPage() {
                   providersLoaded={providersLoaded}
                   selectedProvider={selectedProvider}
                   selectedProfileId={activeProfile?.profileId ?? null}
-                  equippedBrushId={activeEquippedBrushId}
-                  hasActiveBrush={Boolean(activeEquippedBrushId && activeBrushPalette)}
-                  hideHeldBrush={isBrushFlying}
+                  selectedProfileByProvider={selectedProfileByProvider}
                   activeBrushColorHex={activeBrushPalette?.hex}
                   activeBrushGlowHex={activeBrushPalette?.glowHex}
-                  brushReactionTick={brushReactionTick + artistReturnTick}
+                  brushReactionTick={artistReturnTick}
                   generatingProviderId={showGeneratingState ? runningArtist.id : null}
-                  awayProviderId={awayProviderId}
-                  autoGrabTrigger={autoGrabTrigger}
+                  awayProviderIds={awayProviderIds}
+                  frustratedAwayProviderId={frustratedAwayProviderId}
                   onSelectProvider={(providerId) => {
-                    if (isAutoGrabbing) return
-                    setIsBrushFlying(false)
-                    setHoveredBrushInfo(null)
-                    setEquippedBrushByProvider((prev) =>
-                      Object.keys(prev).length === 0 ? prev : {}
-                    )
                     setSelectedProvider(providerId)
                   }}
                   onSelectProfile={(providerId, profileId) => {
-                    if (isAutoGrabbing) return
-                    setHoveredBrushInfo(null)
                     setSelectedProfileForProvider(providerId, profileId)
-                    setEquippedBrushByProvider((prev) => ({
-                      ...prev,
-                      [providerId]: profileId,
-                    }))
-                  }}
-                  onHoverBrushChange={setHoveredBrushInfo}
-                  onBrushFlightStart={() => setIsBrushFlying(true)}
-                  onBrushFlightLand={() => {
-                    setIsBrushFlying(false)
-                    setBrushReactionTick((n) => n + 1)
                   }}
                 />
               </div>
@@ -1947,14 +2287,16 @@ function StudioPage() {
                   'grid grid-cols-1 gap-2 border-t border-border/70 pt-0.5',
                   activeProfile &&
                     activeProfileResolutions.length >= 2 &&
-                    '@[430px]/controls:grid-cols-[minmax(0,1fr)_auto]'
+                    (activeProfileResolutions.length >= 3
+                      ? '@[510px]/controls:grid-cols-[minmax(0,1fr)_auto]'
+                      : '@[430px]/controls:grid-cols-[minmax(0,1fr)_auto]')
                 )}
               >
                 <div className="min-w-0 space-y-1">
                   <div className="flex flex-wrap items-center justify-between gap-1.5">
                     <span className="text-xs font-extrabold tracking-tight text-foreground sm:text-sm">画幅比例</span>
                     <motion.div
-                      key={displayRatio.id}
+                      key={`${displayRatio.id}-${displayRatioDims.label}`}
                       initial={{ opacity: 0, y: 2 }}
                       animate={{ opacity: 1, y: 0 }}
                       transition={{ duration: 0.14 }}
@@ -1963,6 +2305,9 @@ function StudioPage() {
                       <AspectRatioLogo ratio={displayRatio.id} compact className="text-foreground" />
                       <span className="shrink-0 font-mono font-bold text-foreground">{displayRatio.label}</span>
                       <span className="shrink-0 font-semibold text-foreground">{displayRatio.hint}</span>
+                      <span className="hidden shrink-0 font-mono text-muted-foreground sm:inline">
+                        · {displayRatioDims.label}
+                      </span>
                     </motion.div>
                   </div>
 
@@ -2065,16 +2410,78 @@ function StudioPage() {
               {/* 画面细节 */}
               <div className="space-y-1 border-t border-border/70 pt-0.5">
                 <div className="flex flex-wrap items-center justify-between gap-1.5">
-                  <span className="text-xs font-extrabold tracking-tight text-foreground sm:text-sm">画面细节</span>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs font-extrabold tracking-tight text-foreground sm:text-sm">画面细节</span>
+                    <button
+                      type="button"
+                      aria-expanded={promptChipsOpen}
+                      onClick={() => setPromptChipsOpen((v) => !v)}
+                      className={cn(
+                        'inline-flex h-5 items-center gap-1 rounded-full border px-2 text-xs font-medium transition-colors',
+                        promptChipsOpen
+                          ? 'border-foreground bg-foreground text-background'
+                          : 'border-border/80 bg-[#FAF8F4] text-muted-foreground hover:text-foreground dark:bg-muted/40'
+                      )}
+                    >
+                      <WandSparklesIcon className="size-3" />
+                      <span>灵感词条</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPromptPreviewOpen(true)}
+                      title="查看发送给 AI 画师的完整编译指令"
+                      className="inline-flex h-5 items-center gap-1 rounded-full border border-border/80 bg-[#FAF8F4] px-2 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground dark:bg-muted/40"
+                    >
+                      <FileTextIcon className="size-3" />
+                      <span>查看指令</span>
+                    </button>
+                  </div>
                   <span className="hidden text-xs text-muted-foreground @[440px]/controls:inline">
                     Cmd/Ctrl+Enter 生成
                   </span>
                 </div>
 
+                {promptChipsOpen && (
+                  <div className="space-y-1.5 rounded-xl border border-border/80 bg-[#FAF8F4] p-2 dark:bg-muted/30">
+                    {STUDIO_PROMPT_CHIP_GROUPS.map((group) => (
+                      <div key={group.id} className="flex flex-wrap items-center gap-1">
+                        <span className="w-14 shrink-0 text-xs font-semibold text-muted-foreground">
+                          {group.label}
+                        </span>
+                        <div className="flex min-w-0 flex-1 flex-wrap gap-1">
+                          {group.chips.map((chip) => {
+                            const active = sceneNote.includes(chip.text)
+                            return (
+                              <button
+                                key={chip.label}
+                                type="button"
+                                aria-pressed={active}
+                                title={chip.text}
+                                onClick={() =>
+                                  setSceneNote((prev) => toggleSceneNoteChip(prev, chip.text).next)
+                                }
+                                className={cn(
+                                  'rounded-full border px-2 py-0.5 text-xs font-medium transition-colors',
+                                  active
+                                    ? 'border-[#D9381E]/60 bg-[#D9381E]/12 text-[#B82914] dark:text-[#FF7A59]'
+                                    : 'border-border/80 bg-card text-foreground hover:border-foreground/35'
+                                )}
+                              >
+                                {chip.label}
+                              </button>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
                 <div className="relative">
-                  <Input
+                  <Textarea
                     id="studio-scene-note"
                     aria-label="补充画面细节"
+                    rows={2}
                     value={sceneNote}
                     onChange={(e) => setSceneNote(e.target.value)}
                     onKeyDown={(e) => {
@@ -2082,7 +2489,8 @@ function StudioPage() {
                         (e.metaKey || e.ctrlKey) &&
                         e.key === 'Enter' &&
                         hydrated &&
-                        !isGenerating &&
+                        !showGeneratingState &&
+                        !userQueueFull &&
                         uploadingSlot === null
                       ) {
                         e.preventDefault()
@@ -2090,14 +2498,14 @@ function StudioPage() {
                       }
                     }}
                     placeholder="补充服装材质、灯光氛围、镜头景别或背景环境（可选）…"
-                    className="h-7 rounded-xl bg-[#FAF8F4] pr-7 text-xs dark:bg-muted/30"
+                    className="min-h-[46px] max-h-[88px] resize-none rounded-xl bg-[#FAF8F4] pr-7 text-xs leading-snug dark:bg-muted/30"
                   />
                   {sceneNote && (
                     <button
                       type="button"
                       aria-label="清空补充细节"
                       onClick={() => setSceneNote('')}
-                      className="absolute top-1/2 right-2 -translate-y-1/2 rounded-full p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+                      className="absolute top-2 right-2 rounded-full p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
                     >
                       <XIcon className="size-3" />
                     </button>
@@ -2106,10 +2514,69 @@ function StudioPage() {
               </div>
               </div>
 
-              <div className="shrink-0 border-t border-border/75 bg-card/95 p-1.5">
+              <div className="shrink-0 space-y-1.5 border-t border-border/75 bg-card/95 p-1.5">
+                {textFallbackFeatureEnabled && (
+                  <div className="flex flex-wrap items-center justify-between gap-1.5 px-0.5">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-xs font-bold text-foreground">生图模式</span>
+                      <div
+                        role="radiogroup"
+                        aria-label="选择生图模式"
+                        className="inline-flex items-center gap-0.5 rounded-lg border border-border/80 bg-[#FAF8F4] p-0.5 dark:bg-muted/35"
+                      >
+                        <button
+                          type="button"
+                          role="radio"
+                          aria-checked={!effectiveTextToImageMode}
+                          onClick={() => setTextToImageMode(false)}
+                          className={cn(
+                            'inline-flex h-6 cursor-pointer items-center gap-1 rounded-md px-2 text-xs font-semibold transition-colors',
+                            !effectiveTextToImageMode
+                              ? 'bg-foreground text-background shadow-2xs'
+                              : 'text-muted-foreground hover:text-foreground'
+                          )}
+                        >
+                          <ImageIcon className="size-3" />
+                          <span>带图生图</span>
+                        </button>
+                        <button
+                          type="button"
+                          role="radio"
+                          aria-checked={effectiveTextToImageMode}
+                          disabled={!activeProfileSupportsTextFallback}
+                          title={
+                            !activeProfileSupportsTextFallback
+                              ? '当前画笔暂不支持图转文纯文生图模式，请换支画笔或换位AI小画家'
+                              : '先将参考图转为文字描述，再进行纯文生图'
+                          }
+                          onClick={() => setTextToImageMode(true)}
+                          className={cn(
+                            'inline-flex h-6 items-center gap-1 rounded-md px-2 text-xs font-semibold transition-colors',
+                            !activeProfileSupportsTextFallback
+                              ? 'cursor-not-allowed text-muted-foreground/45'
+                              : effectiveTextToImageMode
+                                ? 'cursor-pointer bg-[#B88300] text-white shadow-2xs dark:bg-[#E5A918] dark:text-zinc-950'
+                                : 'cursor-pointer text-muted-foreground hover:text-foreground'
+                          )}
+                        >
+                          <FileTextIcon className="size-3" />
+                          <span>图转文生图</span>
+                        </button>
+                      </div>
+                    </div>
+                    <span className="truncate text-right text-xs text-muted-foreground">
+                      {!activeProfileSupportsTextFallback
+                        ? '当前画笔不支持图转文'
+                        : effectiveTextToImageMode
+                          ? '参考图转文字 · 纯文生图'
+                          : '直传参考原图'}
+                    </span>
+                  </div>
+                )}
+
                 <Button
-                  onClick={handleGenerate}
-                  disabled={!hydrated || showGeneratingState || isAutoGrabbing || uploadingSlot !== null || (Boolean(user) && !activeProviderReady)}
+                  onClick={() => handleGenerate()}
+                  disabled={!hydrated || showGeneratingState || userQueueFull || uploadingSlot !== null || (Boolean(user) && !activeProviderReady)}
                   className={cn(
                     'ks-keycap h-9.5 w-full rounded-xl border-0 text-sm font-extrabold tracking-tight text-white',
                     insufficientCredits
@@ -2117,23 +2584,34 @@ function StudioPage() {
                       : 'bg-[#D9381E] hover:bg-[#C23018]'
                   )}
                 >
-                  {isAutoGrabbing ? (
+                  {showForegroundQueued ? (
                     <>
-                      <LoaderCircleIcon className="size-4 animate-spin" />
-                      <span>小画家正在拿笔…</span>
+                      <ClockIcon className="size-4" />
+                      <span>
+                        排队中（第 {foregroundJob?.queueInfo?.position ?? 1} 位）…
+                      </span>
                     </>
                   ) : showGeneratingState ? (
                     <>
                       <LoaderCircleIcon className="size-4 animate-spin" />
                       <span>AI小画家正在创作中…</span>
                     </>
+                  ) : userQueueFull ? (
+                    <>
+                      <ClockIcon className="size-4" />
+                      <span>
+                        并发队列已满（绘制 {processingJobs.length} · 排队 {queuedJobs.length}）
+                      </span>
+                    </>
                   ) : !user ? (
                     <>
                       <LogInIcon className="size-4" />
                       <span>
                         {providersLoaded && activeProviderReady
-                          ? `登录后立即生成角色图（消耗 ${activeCost} 积分）`
-                          : '登录后立即生成角色图'}
+                          ? `登录后${effectiveTextToImageMode ? '图转文生图' : '立即生成角色图'}（消耗 ${activeCost} 积分）`
+                          : effectiveTextToImageMode
+                            ? '登录后图转文生图'
+                            : '登录后立即生成角色图'}
                       </span>
                     </>
                   ) : !activeProviderReady ? (
@@ -2147,6 +2625,11 @@ function StudioPage() {
                     <>
                       <CoinsIcon className="size-4" />
                       <span>积分不足（需 {activeCost} / 剩 {user.creditBalance}）· 点击兑换积分</span>
+                    </>
+                  ) : effectiveTextToImageMode ? (
+                    <>
+                      <FileTextIcon className="size-4" />
+                      <span>图转文生图 · 消耗 {activeCost} 积分</span>
                     </>
                   ) : (
                     <>
@@ -2172,18 +2655,39 @@ function StudioPage() {
                     <h2 className="text-xs font-extrabold tracking-tight sm:text-sm">生成监视器</h2>
                   </div>
 
-                  {previewUrl && !showGeneratingState && (
-                    <div className="flex items-center gap-1.5">
+                  {previewUrl && !showGeneratingState && !showFailedStage && (
+                    <div className="flex flex-wrap items-center gap-1.5">
                       {previewResult && (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="h-7 rounded-lg px-2 text-xs"
-                          onClick={() => setComparisonResult(previewResult)}
-                        >
-                          <EyeIcon className="size-3.5" />
-                          <span>对比</span>
-                        </Button>
+                        <>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-7 rounded-lg px-2 text-xs"
+                            onClick={() => setDetailWorkItem(previewResult)}
+                          >
+                            <InfoIcon className="size-3.5" />
+                            <span>详情</span>
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            title="将当前成图加入附加参考图继续迭代"
+                            className="h-7 rounded-lg px-2 text-xs"
+                            onClick={() => handleUseImageAsExtraRef(previewResult)}
+                          >
+                            <ImagePlusIcon className="size-3.5 text-[#116E65] dark:text-[#4FD1C5]" />
+                            <span className="hidden sm:inline">设为附图</span>
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-7 rounded-lg px-2 text-xs"
+                            onClick={() => setComparisonResult(previewResult)}
+                          >
+                            <EyeIcon className="size-3.5" />
+                            <span>对比</span>
+                          </Button>
+                        </>
                       )}
                       <Button
                         variant="outline"
@@ -2195,7 +2699,7 @@ function StudioPage() {
                         <span>大图</span>
                       </Button>
                       <Button variant="outline" size="sm" className="h-7 rounded-lg px-2 text-xs" asChild>
-                        <a href={previewUrl} download="character.png">
+                        <a href={previewUrl} download={downloadFileName('character', previewUrl)}>
                           <DownloadIcon className="size-3.5" />
                           <span>下载</span>
                         </a>
@@ -2228,13 +2732,15 @@ function StudioPage() {
                             : 'bg-muted-foreground/50'
                     )}
                   />
-                  {showGeneratingState
-                    ? '进行中'
-                    : generationError
-                      ? '生成失败'
-                      : previewUrl
-                        ? `${previewResult?.resolution ? `${previewResult.resolution} · ` : ''}已成图`
-                        : '待命'}
+                  {showForegroundQueued
+                    ? `排队中 · 第 ${foregroundJob?.queueInfo?.position ?? 1} 位`
+                    : showGeneratingState
+                      ? '进行中'
+                      : generationError
+                        ? '生成失败'
+                        : previewUrl
+                          ? `${previewResult?.resolution ? `${previewResult.resolution} · ` : ''}已成图`
+                          : '待命'}
                 </span>
               </div>
 
@@ -2245,24 +2751,115 @@ function StudioPage() {
                 <span aria-hidden="true" className="pointer-events-none absolute bottom-2.5 left-2.5 size-3 border-b border-l border-foreground/20" />
                 <span aria-hidden="true" className="pointer-events-none absolute right-2.5 bottom-2.5 size-3 border-r border-b border-foreground/20" />
 
-                {(showGeneratingState || showDeliveryScene) && (
-                  <div className="relative z-10 flex w-full max-w-xs flex-col items-center gap-3 text-center">
+                {(showGeneratingState || showDeliveryScene || showFailedStage) && (
+                  <div
+                    className={cn(
+                      'relative z-10 flex w-full flex-col items-center text-center',
+                      showFailedStage
+                        ? 'max-h-full max-w-md gap-2 overflow-y-auto px-2 py-1'
+                        : 'max-w-xs gap-3'
+                    )}
+                  >
                     <GeneratingSpriteStage
-                      providerId={deliveryState ? deliveryState.providerId : runningArtist.id}
-                      brushColorHex={deliveryState ? deliveryState.brushHex : runningBrushColorHex}
-                      brushGlowHex={deliveryState ? deliveryState.brushGlow : runningBrushGlowHex}
+                      providerId={
+                        deliveryState
+                          ? deliveryState.providerId
+                          : showFailedStage && failedStageArtist
+                            ? failedStageArtist.providerId
+                            : runningArtist.id
+                      }
+                      brushColorHex={
+                        deliveryState
+                          ? deliveryState.brushHex
+                          : showFailedStage && failedStageArtist
+                            ? failedStageArtist.brushHex
+                            : runningBrushColorHex
+                      }
+                      brushGlowHex={
+                        deliveryState
+                          ? deliveryState.brushGlow
+                          : showFailedStage && failedStageArtist
+                            ? failedStageArtist.brushGlow
+                            : runningBrushGlowHex
+                      }
                       stagePhase={
                         deliveryState?.phase === 'cheering'
                           ? 'cheering'
                           : deliveryState?.phase === 'throwing'
                             ? 'returning'
-                            : isEnteringMonitor
-                              ? 'entering'
-                              : 'working'
+                            : showFailedStage
+                              ? 'frustrated'
+                              : isEnteringMonitor
+                                ? 'entering'
+                                : showForegroundQueued
+                                  ? 'queued'
+                                  : 'working'
                       }
                       previewImageUrl={deliveryState?.imageUrl}
+                      reactionTick={stageResumeTick}
                     />
-                    {showGeneratingState ? (
+                    {showForegroundQueued && foregroundJob ? (
+                      <div className="w-full space-y-2.5 rounded-xl border border-[#E5A918]/45 bg-card/95 p-3 text-center shadow-sm">
+                        <div className="flex items-center justify-center gap-1.5 text-sm font-extrabold text-foreground">
+                          <ClockIcon className="size-4 text-[#B88300] dark:text-[#E5A918]" />
+                          <span>
+                            排队等待中 · 第 {foregroundJob.queueInfo?.position ?? 1} 位
+                          </span>
+                        </div>
+                        <p className="text-xs leading-relaxed text-muted-foreground">
+                          {foregroundJob.queueInfo
+                            ? `前面还有 ${foregroundJob.queueInfo.aheadCount} 个任务 · ${
+                                foregroundJob.queueInfo.reason === 'model_busy'
+                                  ? `当前画笔并发已满${
+                                      foregroundJob.queueInfo.modelAheadCount > 0
+                                        ? `（同画笔前有 ${foregroundJob.queueInfo.modelAheadCount} 个）`
+                                        : ''
+                                    }`
+                                  : foregroundJob.queueInfo.reason === 'user_busy'
+                                    ? '您同时绘制的任务数已达上限'
+                                    : '当前全站生图并发较高'
+                              }`
+                            : '正在等待空闲并发槽位，轮到后将自动开画…'}
+                        </p>
+                        <div className="relative h-1.5 overflow-hidden rounded-full border border-border bg-background">
+                          <motion.div
+                            aria-hidden="true"
+                            animate={{ x: ['-40%', '220%'] }}
+                            transition={{ duration: 2.2, repeat: Infinity, ease: 'linear' }}
+                            className="h-full w-1/3 rounded-full bg-[#E5A918]/75"
+                          />
+                        </div>
+                        <div className="flex flex-wrap items-center justify-between gap-2 pt-0.5 text-xs">
+                          <span className="font-mono text-muted-foreground">
+                            已等待 {elapsedSeconds}s
+                          </span>
+                          <div className="flex items-center gap-1.5">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              disabled={isForegroundCancelling}
+                              onClick={() => void handleCancelForegroundQueued()}
+                              className="h-7 rounded-full border-destructive/40 px-2.5 text-xs font-semibold text-destructive hover:bg-destructive/10"
+                            >
+                              {isForegroundCancelling
+                                ? '取消中…'
+                                : `取消排队（退 ${foregroundJob.creditsCost} 积分）`}
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={handleMoveToBackground}
+                              title="先放进后台排队，左侧按钮立即解锁可继续创作下一张"
+                              className="h-7 rounded-full px-2.5 text-xs font-semibold"
+                            >
+                              后台排队
+                            </Button>
+                          </div>
+                        </div>
+                      </div>
+                    ) : showGeneratingState ? (
                       <div className="w-full space-y-2.5">
                         <div className="text-sm font-bold text-foreground">
                           AI小画家正在绘图中
@@ -2285,14 +2882,97 @@ function StudioPage() {
                           </div>
                           <div className="flex items-center justify-between font-mono text-xs text-muted-foreground">
                             <span>
-                              {liveStageOrder === 0
-                                ? '准备素材中…'
-                                : liveStageOrder === 1
-                                  ? '绘制中…'
-                                  : '保存成图中…'}
+                              {liveStage === 'transcribing_refs'
+                                ? '正在将参考图转为文字…'
+                                : liveStage === 'text_generating'
+                                  ? '纯文生图绘制中…'
+                                  : liveStageOrder === 0
+                                    ? '准备素材中…'
+                                    : liveStageOrder === 1
+                                      ? '绘制中…'
+                                      : '保存成图中…'}
                             </span>
-                            <span>{elapsedSeconds}s</span>
+                            <div className="flex items-center gap-2">
+                              <span>{elapsedSeconds}s</span>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={activeCloudJobId ? handleMoveToBackground : handleCancelBeforeJob}
+                                title={
+                                  activeCloudJobId
+                                    ? '收起绘制界面转入后台继续画，可立即发起下一个任务，完成后自动通知入库'
+                                    : '取消本次上传与生成请求'
+                                }
+                                className="h-6 rounded-full px-2.5 text-xs font-sans"
+                              >
+                                {activeCloudJobId ? '后台绘制' : '取消'}
+                              </Button>
+                            </div>
                           </div>
+                        </div>
+                      </div>
+                    ) : showFailedStage ? (
+                      <div className="w-full space-y-2.5 rounded-xl border border-destructive/30 bg-card/95 p-3 text-center shadow-sm">
+                        <div className="flex items-center justify-center gap-1.5 text-sm font-bold text-destructive">
+                          <CircleAlertIcon className="size-4 shrink-0" />
+                          <span>生成失败（已自动退还积分）</span>
+                        </div>
+                        <p className="text-xs leading-relaxed text-muted-foreground">
+                          {generationError}
+                        </p>
+                        <div className="flex flex-wrap items-center justify-center gap-2 pt-0.5">
+                          <Button
+                            type="button"
+                            size="sm"
+                            disabled={showGeneratingState || userQueueFull || (Boolean(user) && !activeProviderReady)}
+                            className="rounded-xl bg-[#D9381E] text-xs font-bold text-white hover:bg-[#C23018]"
+                            onClick={() => handleGenerate()}
+                          >
+                            <RotateCcwIcon className="size-3.5" />
+                            重试生成
+                          </Button>
+                          {textFallbackFeatureEnabled &&
+                            activeProfileSupportsTextFallback &&
+                            !effectiveTextToImageMode && (
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                disabled={showGeneratingState || userQueueFull || (Boolean(user) && !activeProviderReady)}
+                                className="rounded-xl border-[#E5A918]/55 text-xs font-semibold hover:bg-[#E5A918]/10"
+                                onClick={() => {
+                                  setTextToImageMode(true)
+                                  handleGenerate({ textToImage: true })
+                                }}
+                              >
+                                <FileTextIcon className="size-3.5 text-[#B88300] dark:text-[#E5A918]" />
+                                改用图转文生图
+                              </Button>
+                            )}
+                          {previewUrl && (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="rounded-xl text-xs"
+                              onClick={() => setZoomImageUrl(previewUrl)}
+                            >
+                              查看上一张作品
+                            </Button>
+                          )}
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="rounded-xl text-xs text-muted-foreground hover:text-foreground"
+                            onClick={() => {
+                              setGenerationError('')
+                              setPreviewUrl('')
+                            }}
+                          >
+                            返回
+                          </Button>
                         </div>
                       </div>
                     ) : (
@@ -2303,35 +2983,7 @@ function StudioPage() {
                   </div>
                 )}
 
-                {!showGeneratingState && generationError ? (
-                  <div className="flex max-w-md flex-col items-center gap-2.5 text-center">
-                    <CircleAlertIcon className="size-7 text-destructive" />
-                    <div className="text-sm font-bold text-destructive">生成失败（已自动退还积分）</div>
-                    <p className="text-xs leading-relaxed text-muted-foreground">
-                      {generationError}
-                    </p>
-                    <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
-                      <Button
-                        size="sm"
-                        className="rounded-xl bg-[#D9381E] text-xs font-bold text-white hover:bg-[#C23018]"
-                        onClick={handleGenerate}
-                      >
-                        <RotateCcwIcon className="size-3.5" />
-                        重试生成
-                      </Button>
-                      {previewUrl && (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="rounded-xl text-xs"
-                          onClick={() => setZoomImageUrl(previewUrl)}
-                        >
-                          查看上一张作品
-                        </Button>
-                      )}
-                    </div>
-                  </div>
-                ) : !showGeneratingState && previewUrl ? (
+                {!showGeneratingState && !showFailedStage && previewUrl ? (
                   <MonitorResultCard
                     previewUrl={previewUrl}
                     hiddenForDelivery={showDeliveryScene}
@@ -2339,7 +2991,7 @@ function StudioPage() {
                     onImageReady={() => setResultImgLoadedUrl(previewUrl)}
                     onZoom={() => setZoomImageUrl(previewUrl)}
                   />
-                ) : !showGeneratingState ? (
+                ) : !showGeneratingState && !showFailedStage ? (
                   <div className="relative flex w-full max-w-md flex-col items-center gap-3.5 text-center sm:gap-4">
                     <div
                       aria-hidden="true"
@@ -2404,7 +3056,7 @@ function StudioPage() {
                       <button
                         type="button"
                         onClick={() => openStylePicker('all')}
-                        aria-label={`更换画风（当前：${viewfinderStyleLabel}）`}
+                        aria-label={`更换风格（当前：${viewfinderStyleLabel}）`}
                         className="group relative flex size-24 shrink-0 cursor-pointer flex-col items-center justify-center overflow-hidden rounded-2xl border-2 border-[#D9381E]/85 bg-card shadow-md transition-transform hover:scale-[1.03] focus-visible:outline-2 focus-visible:outline-ring sm:size-36"
                       >
                         {styleVisual.preview ? (
@@ -2514,124 +3166,149 @@ function StudioPage() {
         }
       />
 
-      {/* 全部云端作品集弹窗 */}
-      <Dialog open={galleryModalOpen} onOpenChange={setGalleryModalOpen}>
-        <DialogContent className="max-h-[90dvh] w-[95vw] max-w-4xl overflow-y-auto p-4 sm:max-w-4xl">
-          <DialogHeader className="flex flex-row flex-wrap items-center justify-between gap-3 pr-8">
-            <DialogTitle className="text-base">云端作品集 ({history.length})</DialogTitle>
+      {/* 云端作品集（支持搜索、状态/画师筛选、横向信息卡与批量管理） */}
+      <CloudWorksDialog
+        open={galleryModalOpen}
+        onOpenChange={setGalleryModalOpen}
+        history={history}
+        foregroundJobId={foregroundJobId}
+        cancellingJobIds={cancellingJobIds}
+        onRefresh={refreshHistory}
+        onOpenDetail={(item) => setDetailWorkItem(item)}
+        onFocusMonitor={focusJobInMonitor}
+        onCancelQueued={cancelQueuedJob}
+        onCompare={(item) => setComparisonResult(item)}
+        onApplyRecipe={(item) => handleApplyHistoryRecipe(item)}
+        onRegenerate={(item) => handleRegenerateFromHistory(item)}
+        onUseAsExtraRef={(item) => handleUseImageAsExtraRef(item)}
+        onRequestDelete={(item) => setPendingDeleteHistoryItem(item)}
+        onBatchDelete={removeHistoryItems}
+      />
+
+      {/* 分栏任务详情灯箱 */}
+      {(() => {
+        const detailIdx = detailWorkItem
+          ? history.findIndex((item) => item.id === detailWorkItem.id)
+          : -1
+        const activeDetail = detailIdx >= 0 ? history[detailIdx] : detailWorkItem
+        return (
+          <WorkDetailDialog
+            item={activeDetail}
+            open={activeDetail !== null}
+            onOpenChange={(open) => {
+              if (!open) setDetailWorkItem(null)
+            }}
+            styleCatalog={styleCatalog}
+            canPrev={detailIdx > 0}
+            canNext={detailIdx >= 0 && detailIdx < history.length - 1}
+            onPrev={() => {
+              if (detailIdx > 0) setDetailWorkItem(history[detailIdx - 1])
+            }}
+            onNext={() => {
+              if (detailIdx >= 0 && detailIdx < history.length - 1) {
+                setDetailWorkItem(history[detailIdx + 1])
+              }
+            }}
+            onZoom={(url) => setZoomImageUrl(url)}
+            onCompare={(item) => setComparisonResult(item)}
+            onApplyRecipe={(item) => handleApplyHistoryRecipe(item)}
+            onRegenerate={(item) => handleRegenerateFromHistory(item)}
+            onUseAsExtraRef={(item) => handleUseImageAsExtraRef(item)}
+            onFocusMonitor={focusJobInMonitor}
+            onCancelQueued={(id) => void cancelQueuedJob(id)}
+            onDelete={(item) => setPendingDeleteHistoryItem(item)}
+          />
+        )
+      })()}
+
+      <LocalImageToolsDialog
+        open={localToolsOpen}
+        onOpenChange={setLocalToolsOpen}
+        currentMonitorUrl={previewUrl || undefined}
+        onApplyToSlot={(slot, dataUrl, fileName) => {
+          void applyDataUrlToSlot(slot, dataUrl, fileName).catch((err) => {
+            toast.error(err instanceof Error ? err.message : '载入参考槽位失败')
+          })
+        }}
+      />
+
+      {/* 查看完整编译指令弹窗 */}
+      <Dialog open={promptPreviewOpen} onOpenChange={setPromptPreviewOpen}>
+        <DialogContent className="max-h-[85dvh] w-[95vw] max-w-2xl overflow-y-auto rounded-[24px] p-5 sm:max-w-2xl">
+          <DialogHeader className="pr-8 text-left">
+            <DialogTitle className="flex items-center gap-2 text-base font-extrabold">
+              <FileTextIcon className="size-4 text-[#D9381E]" />
+              <span>完整生成指令预览</span>
+            </DialogTitle>
+            <DialogDescription className="text-xs text-muted-foreground">
+              实时展示当前参考槽位顺序、画风预设与补充细节编译后发送给「{activeArtist.name}」的指令文本。
+            </DialogDescription>
           </DialogHeader>
+          {(() => {
+            const compiledPrompt = buildRecipePrompt(recipe, activeStyleKey, {
+              sceneNote,
+              allowFaceStyleShift,
+              allowPoseStyleShift,
+              singleStitchedSheet: Boolean(
+                platform.sendStitchedSheet || activeProfile?.needsStitchedSheet
+              ),
+              promptTemplate: platform.promptTemplate,
+              poseSanitize: platform.poseSanitize,
+              stylePresets: styleCatalog,
+              styleCategories: platform.styleCategories,
+              styleSubcategories: platform.styleSubcategories,
+            })
+            const slotTags = [
+              recipe.pose ? `姿势：${recipe.pose.姿势名称}` : null,
+              recipe.costume ? `服装：${recipe.costume.服装名称}` : null,
+              recipe.portrait ? `人像：${recipe.portrait.发型名称 || recipe.portrait.标题}` : null,
+              ...(recipe.extraImages || []).map((ex, i) => `附图${i + 1}：${ex.name}`),
+            ].filter(Boolean) as string[]
 
-          {history.length === 0 ? (
-            <div className="py-12 text-center text-xs text-muted-foreground">暂无云端生成作品</div>
-          ) : (
-            <div className="mt-2 grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
-              {history.map((h) => {
-                return (
-                  <div
-                    key={h.id}
-                    className="group flex flex-col justify-between overflow-hidden rounded-2xl border border-border/70 bg-[#FAF8F4] p-2 shadow-2xs dark:bg-muted/30"
+            return (
+              <div className="space-y-3 pt-1">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="rounded-full border border-border bg-[#FAF8F4] px-2.5 py-0.5 font-mono text-xs font-semibold text-foreground dark:bg-muted/40">
+                    {aspectRatio}
+                    {activeResolution ? ` · ${activeResolution}` : ''} · {displayRatioDims.label}
+                  </span>
+                  <span className="rounded-full border border-border bg-[#FAF8F4] px-2.5 py-0.5 text-xs font-semibold text-foreground dark:bg-muted/40">
+                    画风：{viewfinderStyleLabel}
+                  </span>
+                  {slotTags.map((tag, i) => (
+                    <span
+                      key={`${tag}-${i}`}
+                      className="rounded-full border border-border/80 bg-card px-2.5 py-0.5 text-xs text-muted-foreground"
+                    >
+                      {`<IMAGE_${i}>`} {tag}
+                    </span>
+                  ))}
+                </div>
+
+                <div className="rounded-2xl border border-border bg-[#FAF8F4] p-3.5 font-mono text-xs leading-relaxed whitespace-pre-wrap text-foreground dark:bg-muted/35">
+                  {compiledPrompt}
+                </div>
+
+                <div className="flex justify-end gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      void navigator.clipboard
+                        .writeText(compiledPrompt)
+                        .then(() => toast.success('已复制完整生成指令'))
+                        .catch(() => toast.error('复制失败，请手动选中复制'))
+                    }}
+                    className="h-8 rounded-xl text-xs"
                   >
-                    <div className="relative aspect-3/4 overflow-hidden rounded-xl bg-muted/20">
-                      {h.status === 'succeeded' && h.imageUrl ? (
-                        <button
-                          type="button"
-                          aria-label={`查看生成记录：${h.recipeSummary}`}
-                          onClick={() => {
-                            setPreviewUrl(h.imageUrl)
-                            setZoomImageUrl(h.imageUrl)
-                          }}
-                          className="block h-full w-full cursor-zoom-in"
-                        >
-                          <img
-                            src={h.imageUrl}
-                            alt={h.recipeSummary}
-                            className="h-full w-full object-cover transition group-hover:scale-105"
-                          />
-                          <span className="absolute bottom-1.5 left-1.5 max-w-[calc(100%-12px)] truncate rounded-full bg-black/75 px-2 py-0.5 font-mono text-xs text-white">
-                            {h.resolution ? `${h.resolution} · ` : ''}
-                            {h.creditsCost} 积分
-                          </span>
-                        </button>
-                      ) : h.status === 'processing' ? (
-                        <div className="flex h-full flex-col items-center justify-center gap-2 p-3 text-center text-xs text-muted-foreground">
-                          <LoaderCircleIcon className="size-6 animate-spin text-[#E5A918]" />
-                          <span>AI小画家正在绘制中…</span>
-                        </div>
-                      ) : (
-                        <div className="flex h-full flex-col items-center justify-center gap-1.5 p-3 text-center">
-                          <CircleAlertIcon className="size-5 text-destructive" />
-                          <span className="text-xs font-semibold text-destructive">生成失败</span>
-                          <span className="line-clamp-3 text-xs leading-relaxed text-muted-foreground">
-                            {h.errorMessage || '生成未成功，请重试'}
-                          </span>
-                          {h.creditsRefunded > 0 && (
-                            <span className="rounded-full bg-[#116E65]/15 px-2 py-0.5 text-xs font-semibold text-[#116E65] dark:text-[#4FD1C5]">
-                              已退 {h.creditsRefunded} 积分
-                            </span>
-                          )}
-                        </div>
-                      )}
-
-                      {h.status !== 'processing' && (
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            void removeHistoryItem(h.id)
-                          }}
-                          title="删除此作品"
-                          className="absolute top-1.5 right-1.5 rounded-full bg-black/70 p-1 text-white opacity-85 transition hover:bg-destructive hover:opacity-100"
-                        >
-                          <XIcon className="size-3" />
-                        </button>
-                      )}
-                    </div>
-
-                    <div className="mt-2 space-y-1.5 px-0.5">
-                      <div className="truncate text-xs font-bold">{h.recipeSummary}</div>
-                      {h.status === 'succeeded' && (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="h-8 w-full rounded-xl bg-card text-xs"
-                          onClick={() => setComparisonResult(h)}
-                        >
-                          对比参考
-                        </Button>
-                      )}
-                      <div className="grid grid-cols-2 gap-1.5">
-                        <button
-                          type="button"
-                          onClick={() => handleApplyHistoryRecipe(h)}
-                          className="flex h-7 items-center justify-center rounded-lg bg-muted text-xs font-semibold text-foreground transition hover:bg-muted/70"
-                        >
-                          套用配方
-                        </button>
-                        {h.status === 'succeeded' && h.imageUrl ? (
-                          <a
-                            href={h.imageUrl}
-                            download={`character-${h.id}.png`}
-                            className="flex h-7 items-center justify-center rounded-lg bg-[#D9381E] text-xs font-bold text-white transition hover:bg-[#C23018]"
-                          >
-                            下载
-                          </a>
-                        ) : (
-                          <button
-                            type="button"
-                            disabled={h.status === 'processing'}
-                            onClick={() => void removeHistoryItem(h.id)}
-                            className="flex h-7 items-center justify-center rounded-lg bg-muted text-xs font-semibold text-destructive transition hover:bg-destructive/15 disabled:opacity-40"
-                          >
-                            删除
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
-          )}
+                    <CopyIcon className="size-3.5" />
+                    <span>复制指令</span>
+                  </Button>
+                </div>
+              </div>
+            )
+          })()}
         </DialogContent>
       </Dialog>
 
@@ -2661,6 +3338,53 @@ function StudioPage() {
         open={comparisonResult !== null}
         onOpenChange={(open) => !open && setComparisonResult(null)}
       />
+
+      <Dialog
+        open={pendingDeleteHistoryItem !== null}
+        onOpenChange={(open) => {
+          if (!open && !deletingHistoryId) setPendingDeleteHistoryItem(null)
+        }}
+      >
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="text-base">确认删除作品？</DialogTitle>
+            <DialogDescription className="text-xs leading-relaxed">
+              将从云端作品集永久移除「{pendingDeleteHistoryItem?.recipeSummary || '未命名作品'}」，删除后不可恢复。
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={deletingHistoryId !== null}
+              onClick={() => setPendingDeleteHistoryItem(null)}
+            >
+              取消
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              size="sm"
+              disabled={deletingHistoryId !== null}
+              onClick={async () => {
+                if (!pendingDeleteHistoryItem) return
+                const targetId = pendingDeleteHistoryItem.id
+                setDeletingHistoryId(targetId)
+                try {
+                  await removeHistoryItem(targetId)
+                  setDetailWorkItem((prev) => (prev?.id === targetId ? null : prev))
+                  setPendingDeleteHistoryItem(null)
+                } finally {
+                  setDeletingHistoryId(null)
+                }
+              }}
+            >
+              {deletingHistoryId ? '删除中…' : '确认删除'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <ImageViewer
         imageUrl={zoomImageUrl || ''}
         open={Boolean(zoomImageUrl)}
@@ -2710,18 +3434,17 @@ function StudioPage() {
       </Dialog>
 
       <SpriteTravelPortal
-        spriteTask={spriteTravelTask}
+        spriteTasks={spriteTravelTasks}
         homeworkTask={homeworkThrowTask}
         onSpriteArrive={(taskId) => {
-          setSpriteTravelTask((prev) => {
-            if (!prev || prev.id !== taskId) return prev
-            if (prev.direction === 'to_canvas') {
-              setEntranceDone(true)
-            } else {
-              setArtistReturnTick((n) => n + 1)
-            }
-            return null
-          })
+          const arrived = spriteTravelTasks.find((t) => t.id === taskId)
+          if (!arrived) return
+          if (arrived.direction === 'to_canvas') {
+            setEntranceDone(true)
+          } else {
+            setArtistReturnTick((n) => n + 1)
+          }
+          setSpriteTravelTasks((prev) => prev.filter((t) => t.id !== taskId))
         }}
         onHomeworkLand={(taskId) => {
           setHomeworkThrowTask((prev) => (prev && prev.id === taskId ? null : prev))

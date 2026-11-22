@@ -1,5 +1,6 @@
 import { Hono } from 'hono'
 import { getCookie } from 'hono/cookie'
+import { mergeVisionFallbackConfig } from '../../shared/studio'
 import {
   SESSION_COOKIE_NAME,
   createSession,
@@ -18,15 +19,22 @@ import {
 } from '../db'
 import { hashPassword, randomTokenHex, sha256Hex, verifyPassword } from '../crypto'
 import {
-  WECHAT_STATE_COOKIE_NAME,
   clearSessionCookie,
   clearWechatStateCookie,
   getRequestOrigin,
   requireAuth,
-  setAdminSessionCookie,
   setSessionCookie,
   setWechatStateCookie,
+  WECHAT_STATE_COOKIE_NAME,
 } from '../middleware'
+import {
+  clearRateLimits,
+  formatRetryWait,
+  getRequestClientIp,
+  inspectRateLimits,
+  recordRateLimitHit,
+  type RateLimitDescriptor,
+} from '../rateLimit'
 import type { AppEnv } from '../types'
 import {
   sanitizeReturnToPath,
@@ -62,6 +70,10 @@ authRoutes.get('/bootstrap', async (c) => {
     defaultPromptSuffix: '',
     defaultNegativePrompt: '',
     promptTemplate: undefined,
+    poseSanitize: undefined,
+    visionFallback: undefined,
+    textFallbackEnabled: mergeVisionFallbackConfig(platform.visionFallback).enabled,
+    imagePassMode: 'url' as const,
     stylePresets: platform.stylePresets.map((item) => ({
       ...item,
       prompt: '',
@@ -94,6 +106,25 @@ authRoutes.post('/auth/register', async (c) => {
     return c.json({ error: { message: '请求体格式错误' } }, 400)
   }
 
+  const now = Date.now()
+  const regDescriptors: RateLimitDescriptor[] = [
+    {
+      scope: 'register_ip',
+      identifier: getRequestClientIp(c),
+      maxAttempts: 10,
+      windowMs: 15 * 60 * 1000,
+      lockMs: 5 * 60 * 1000,
+    },
+  ]
+  const regRl = await inspectRateLimits(c.env.DB, regDescriptors, now)
+  if (regRl.blocked) {
+    c.header('Retry-After', String(regRl.retryAfterSec))
+    return c.json(
+      { error: { message: `注册请求过于频繁，请 ${formatRetryWait(regRl.retryAfterSec)} 后再试` } },
+      429
+    )
+  }
+
   const platform = await getPlatformConfig(c.env.DB)
   if (!platform.allowRegistration) {
     return c.json({ error: { message: '当前暂未开放新用户自助注册，请联系管理员' } }, 403)
@@ -116,6 +147,8 @@ authRoutes.post('/auth/register', async (c) => {
 
   const displayNameRaw = typeof body.displayName === 'string' ? body.displayName.trim() : ''
   const displayName = (displayNameRaw || username).slice(0, 40)
+
+  await recordRateLimitHit(c.env.DB, regDescriptors, regRl, now)
 
   const existingName = await c.env.DB.prepare(
     `SELECT id FROM users WHERE username_lower = ?`
@@ -170,13 +203,38 @@ authRoutes.post('/auth/login', async (c) => {
         ? body.username.trim()
         : ''
   const password = typeof body.password === 'string' ? body.password : ''
-  const requireAdminFlag = Boolean(body.requireAdmin)
 
   if (!account || !password) {
     return c.json({ error: { message: '请输入账号和密码' } }, 400)
   }
 
   const lower = account.toLowerCase()
+  const now = Date.now()
+  const loginDescriptors: RateLimitDescriptor[] = [
+    {
+      scope: 'login_ip',
+      identifier: getRequestClientIp(c),
+      maxAttempts: 15,
+      windowMs: 15 * 60 * 1000,
+      lockMs: 5 * 60 * 1000,
+    },
+    {
+      scope: 'login_acct',
+      identifier: lower,
+      maxAttempts: 10,
+      windowMs: 15 * 60 * 1000,
+      lockMs: 5 * 60 * 1000,
+    },
+  ]
+  const loginRl = await inspectRateLimits(c.env.DB, loginDescriptors, now)
+  if (loginRl.blocked) {
+    c.header('Retry-After', String(loginRl.retryAfterSec))
+    return c.json(
+      { error: { message: `登录失败次数过多，请 ${formatRetryWait(loginRl.retryAfterSec)} 后再试` } },
+      429
+    )
+  }
+
   const row = await c.env.DB.prepare(
     `SELECT u.*,
             oa.openid AS wechat_openid,
@@ -191,35 +249,21 @@ authRoutes.post('/auth/login', async (c) => {
     .first<UserRow>()
 
   if (!row || !(await verifyPassword(password, row.password_hash))) {
+    await recordRateLimitHit(c.env.DB, loginDescriptors, loginRl, now)
     return c.json({ error: { message: '账号或密码错误' } }, 401)
   }
 
   if (row.status !== 'active') {
+    await recordRateLimitHit(c.env.DB, loginDescriptors, loginRl, now)
     return c.json({ error: { message: '该账号已被停用，请联系管理员' } }, 403)
   }
 
-  if (requireAdminFlag) {
-    if (row.role !== 'admin') {
-      return c.json({ error: { message: '该账号不具备管理员权限' } }, 403)
-    }
-    const { rawToken } = await createSession(c.env.DB, row.id, c.req.header('user-agent'))
-    setAdminSessionCookie(c, rawToken)
-    c.header('Cache-Control', 'no-store')
-    return c.json({ user: mapUserRow({ ...row, last_login_at: Date.now() }) })
-  }
+  await clearRateLimits(c.env.DB, loginRl.keys)
 
   const { rawToken } = await createSession(c.env.DB, row.id, c.req.header('user-agent'))
   setSessionCookie(c, rawToken)
-  if (row.role === 'admin') {
-    const { rawToken: adminRawToken } = await createSession(
-      c.env.DB,
-      row.id,
-      c.req.header('user-agent')
-    )
-    setAdminSessionCookie(c, adminRawToken)
-  }
   c.header('Cache-Control', 'no-store')
-  return c.json({ user: mapUserRow({ ...row, last_login_at: Date.now() }) })
+  return c.json({ user: mapUserRow({ ...row, last_login_at: now }) })
 })
 
 authRoutes.post('/auth/logout', async (c) => {

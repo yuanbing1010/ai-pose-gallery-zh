@@ -1,4 +1,5 @@
 import type { CostumeItem, PortraitItem, PoseItem, RecipeState } from '@/types/gallery'
+import { hasPoseDepthMap } from '../../shared/studio'
 
 export type ReferenceSlot = 'portrait' | 'costume' | 'pose'
 export type RandomScope = 'similar' | 'other'
@@ -77,5 +78,9 @@ export function randomSlot(
   }
   if (!candidates.length) return null
   const picked = candidates[Math.floor(Math.random() * candidates.length)]
-  return { ...recipe, [slot]: slot === 'pose' ? { ...picked, useDepth } : picked }
+  if (slot === 'pose') {
+    const pose = picked as PoseItem
+    return { ...recipe, pose: { ...pose, useDepth: hasPoseDepthMap(pose) ? useDepth : false } }
+  }
+  return { ...recipe, [slot]: picked }
 }

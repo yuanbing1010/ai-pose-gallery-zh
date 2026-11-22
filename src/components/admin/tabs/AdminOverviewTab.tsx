@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import {
   AlertTriangleIcon,
@@ -6,6 +7,7 @@ import {
   HardDriveIcon,
   LoaderCircleIcon,
   LockIcon,
+  RefreshCwIcon,
   ShieldAlertIcon,
   SlidersHorizontalIcon,
   SparklesIcon,
@@ -15,6 +17,7 @@ import {
   UsersIcon,
 } from 'lucide-react'
 import { Area, AreaChart, CartesianGrid, XAxis, YAxis } from 'recharts'
+import { invalidateMioGalleryCache } from '@/api/gallery'
 import { Button } from '@/components/ui/button'
 import {
   ChartContainer,
@@ -25,12 +28,14 @@ import {
   type ChartConfig,
 } from '@/components/ui/chart'
 import {
+  fetchAdminMioSyncStatusApi,
   fetchAdminOverviewApi,
   fetchAdminR2CleanupApi,
+  runAdminMioSyncApi,
   runAdminR2CleanupApi,
 } from '@/lib/apiClient'
 import { toast } from '@/lib/notifications'
-import type { AdminOverviewPayload, AdminR2CleanupReport } from '@/types/gallery'
+import type { AdminOverviewPayload, AdminR2CleanupReport, MioSyncStatus } from '@/types/gallery'
 import { PROVIDER_META } from '../../../../shared/studio'
 import {
   AdminBadge,
@@ -73,20 +78,25 @@ export function AdminOverviewTab({
   onSelectTab,
   onQuickCreateUser,
 }: AdminOverviewTabProps) {
+  const queryClient = useQueryClient()
   const [overview, setOverview] = useState<AdminOverviewPayload | null>(null)
   const [r2Report, setR2Report] = useState<AdminR2CleanupReport | null>(null)
+  const [mioSync, setMioSync] = useState<MioSyncStatus | null>(null)
   const [loadingCleanup, setLoadingCleanup] = useState(false)
   const [runningCleanup, setRunningCleanup] = useState(false)
+  const [syncingMio, setSyncingMio] = useState(false)
 
   const loadData = useCallback(async () => {
     onLoadingChange(true)
     try {
-      const [ov, r2] = await Promise.all([
+      const [ov, r2, mio] = await Promise.all([
         fetchAdminOverviewApi(),
         fetchAdminR2CleanupApi().catch(() => null),
+        fetchAdminMioSyncStatusApi().catch(() => null),
       ])
       setOverview(ov)
       if (r2) setR2Report(r2)
+      if (mio) setMioSync(mio)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : '加载总览数据失败')
     } finally {
@@ -140,6 +150,26 @@ export function AdminOverviewTab({
       destructive: true,
       run: executeRunCleanup,
     })
+  }
+
+  const handleSyncMio = async () => {
+    setSyncingMio(true)
+    try {
+      const res = await runAdminMioSyncApi()
+      setMioSync(res)
+      invalidateMioGalleryCache()
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['gallery', 'poses'] }),
+        queryClient.invalidateQueries({ queryKey: ['gallery', 'costumes'] }),
+      ])
+      toast.success(
+        `同步完成：姿势 ${res.poseCount} 项、服装 ${res.costumeCount} 套（原站更新于 ${res.generated || '未知'}）`
+      )
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '同步霧島澪档案失败')
+    } finally {
+      setSyncingMio(false)
+    }
   }
 
   const registrationClosed = overview?.allowRegistration === false
@@ -204,6 +234,26 @@ export function AdminOverviewTab({
             className="inline-flex items-center gap-1 font-mono text-xs font-bold underline underline-offset-2"
           >
             前往审计日志
+            <ArrowRightIcon className="size-3" />
+          </button>
+        </div>
+      )}
+
+      {overview && ((overview.jobsProcessing ?? 0) > 0 || (overview.jobsQueued ?? 0) > 0) && (
+        <div className="flex flex-wrap items-center justify-between gap-3 border border-sky-600/40 bg-sky-500/10 px-4 py-3 text-xs text-sky-900 dark:text-sky-200">
+          <div className="flex flex-wrap items-center gap-2.5">
+            <span className="font-bold">实时任务队列：</span>
+            <span>
+              执行中 <span className="font-mono font-bold">{overview.jobsProcessing}</span> · 排队等待{' '}
+              <span className="font-mono font-bold">{overview.jobsQueued ?? 0}</span>
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={() => onSelectTab('queue')}
+            className="inline-flex shrink-0 items-center gap-1 font-mono text-xs font-bold underline underline-offset-2"
+          >
+            <span>查看队列与并发</span>
             <ArrowRightIcon className="size-3" />
           </button>
         </div>
@@ -447,6 +497,67 @@ export function AdminOverviewTab({
         </div>
       </AdminPanel>
 
+      {/* 外部图库定期同步（霧島澪 · 设计档案） */}
+      <AdminPanel
+        title="外部参考档案定期同步（霧島澪 · 设计档案）"
+        subtitle="每日 20:30 (Asia/Shanghai) 由 Worker Cron 自动拉取 sleepyzone.online/mio-design-archive/ 最新姿势与服装元数据至 R2；图片由原站在线加载，版权归原网站及 霧島澪（@Mio_2am）所有。"
+        icon={<RefreshCwIcon className="size-3.5" />}
+        headerRight={
+          <div className="flex flex-wrap items-center gap-2">
+            {mioSync?.synced ? (
+              <AdminBadge tone="success">已同步云端增量</AdminBadge>
+            ) : (
+              <AdminBadge tone="neutral">使用随包静态快照</AdminBadge>
+            )}
+            <Button
+              type="button"
+              size="sm"
+              className={ADMIN_BTN_SM_CLS}
+              disabled={syncingMio}
+              onClick={() => void handleSyncMio()}
+            >
+              {syncingMio ? (
+                <LoaderCircleIcon className="size-3 animate-spin" />
+              ) : (
+                <RefreshCwIcon className="size-3" />
+              )}
+              立即同步
+            </Button>
+          </div>
+        }
+      >
+        <div className="grid gap-3 text-xs sm:grid-cols-4">
+          <div className="border border-zinc-200 p-3 dark:border-zinc-800">
+            <div className="text-zinc-500">原站生成日期</div>
+            <div className="mt-1 font-mono text-sm font-bold">
+              {mioSync?.generated || '—'}
+            </div>
+          </div>
+          <div className="border border-zinc-200 p-3 dark:border-zinc-800">
+            <div className="text-zinc-500">同步姿势 / 服装</div>
+            <div className="mt-1 font-mono text-sm font-bold">
+              {mioSync?.synced ? `${mioSync.poseCount} / ${mioSync.costumeCount}` : '—'}
+            </div>
+          </div>
+          <div className="border border-zinc-200 p-3 dark:border-zinc-800">
+            <div className="text-zinc-500">上次成功同步</div>
+            <div className="mt-1 font-mono text-xs font-semibold">
+              {mioSync?.syncedAt ? formatAdminDateTime(mioSync.syncedAt) : '尚未触发'}
+            </div>
+          </div>
+          <div className="border border-zinc-200 p-3 dark:border-zinc-800">
+            <div className="text-zinc-500">最近检查状态</div>
+            <div className="mt-1 font-mono text-xs font-semibold">
+              {mioSync?.lastError
+                ? `异常：${mioSync.lastError}`
+                : mioSync?.checkedAt
+                  ? `正常 · ${formatAdminDateTime(mioSync.checkedAt)}`
+                  : '等待 Cron 或手动触发'}
+            </div>
+          </div>
+        </div>
+      </AdminPanel>
+
       <AdminPanel title="快捷操作入口" subtitle="常用运维动作一键直达。">
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <button
@@ -500,7 +611,7 @@ export function AdminOverviewTab({
             <div>
               <div className="text-xs font-bold">画笔档位与路由调度</div>
               <div className="mt-0.5 text-xs text-zinc-500">
-                查看并调整画师档位 Pricing 与多渠道容灾
+                查看并调整画师档位定价与多渠道容灾
               </div>
             </div>
           </button>

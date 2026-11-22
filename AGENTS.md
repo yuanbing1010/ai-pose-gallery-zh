@@ -100,6 +100,7 @@ python scripts/import_shisei_costumes.py      # 更新 Shisei 中国历代服装
   - **状态管理**：统一使用 `Zustand`（`zustand`，集中在 `src/store/studioStore.tsx`）。
   - **响应式**：用户可见文案使用简体中文；布局同时考虑桌面与手机（容器查询 `@container` / `@lg/...`）。
   - **组件头部信息排布**：整站保持行为与视觉逻辑统一——一般情况下，组件/区块的**左上方**放置标题与操作按钮，**右上方**放置所选名称、状态或说明文字。
+  - **工作室画师与积分展示约定（强约束，勿返工）**：`/studio` 画师选择卡片中**禁止在画师头顶显示名称铭牌**；画笔底部快捷槽仅用紧凑色阶宝石胶囊指示，禁止在窄卡内堆叠文字导致溢出；**单次生成积分费用仅在最底部的生成主按钮上展示**，禁止在画师卡片、画笔胶囊、「AI小画家」栏右上角等各处散落显示积分费用。
 - **依赖**：项目没有测试框架，也没有 Oxfmt 脚本；严格限制重复依赖，不要引入功能重叠的同类库。升级/新增依赖后用 pnpm 更新 `pnpm-lock.yaml`。
 
 ## 常见任务提示
@@ -121,7 +122,7 @@ pnpm lint
 涉及后端或 UI 时启动 `pnpm dev:all`，手动检查 `/`、`/poses`、`/costumes`、`/portraits`、`/studio`、`/admin/login`、`/admin`，并验证：
 
 - 管理员初始化/登录、厂商加密配置保存（不泄漏密钥）、用户注册/登录、卡密兑换与手动调积分。
-- 管理端独立会话（`/admin/login`、`pose_atlas_admin_sid`）与 10 个管理分区（`overview`/`users`/`redeem`/`suppliers`/`api`/`jobs`/`styles`/`access`/`prompts`/`sanitize`）的权限校验、筛选分页及未保存离开提醒正常。
+- 管理端独立会话（`/admin/login`、`pose_atlas_admin_sid`）与 11 个管理分区（`overview`/`users`/`redeem`/`suppliers`/`api`/`jobs`/`styles`/`access`/`prompts`/`sanitize`/`descriptions`）的权限校验、筛选分页及未保存离开提醒正常。
 - 生图失败自动全额退还积分、R2 文件仅本人/管理员可访问、跨设备云端作品集列表与对比正常。
 - 部署构建用 `bash scripts/build.sh`，确认 `dist/` 包含 `data/thumbs/img`，并留意 Cloudflare 的单文件 25 MiB、文件数 20,000 限制。
 
@@ -129,6 +130,7 @@ pnpm lint
 
 - `README.md`：功能、数据规模、完整目录结构、部署方式。
 - `docs/cloudflare-d1-r2.md`：Cloudflare Workers + D1 + R2 本地联调、数据库迁移与线上部署步骤。
+- `docs/GCP-VPS.md`：GCP 东京 VPS（`muse2api` 所在服务器）的 SSH 连接信息、目录布局与常用运维命令。
 - `docs/SHISEI-COSTUMES.md`、`docs/GIA-ANIME-COSTUMES.md`：两类外部服装数据说明。
 - `skills/`：姿势/服装/人像检索技能包及图片来源限制。
 

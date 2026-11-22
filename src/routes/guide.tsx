@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { createFileRoute, Link } from '@tanstack/react-router'
+import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
 import { motion } from 'motion/react'
 import {
   ArrowRightIcon,
@@ -10,12 +10,20 @@ import {
   ShirtIcon,
   SparklesIcon,
   UserRoundIcon,
+  WandSparklesIcon,
 } from 'lucide-react'
 import { costumesQuery, portraitsQuery, posesQuery } from '@/api/gallery'
 import { StyleWheelDeck } from '@/components/guide/StyleWheelDeck'
 import { Button } from '@/components/ui/button'
+import { toast } from '@/lib/notifications'
 import { getVisualStylePresets } from '@/lib/stylePresets'
 import { useStudio } from '@/store/studioStore'
+import {
+  MIO_ARCHIVE_ORIGIN,
+  MIO_AUTHOR_HANDLE,
+  MIO_AUTHOR_NAME,
+  MIO_AUTHOR_URL,
+} from '../../shared/mioArchive'
 
 export const Route = createFileRoute('/guide')({
   staticData: { title: '使用指南' },
@@ -63,6 +71,44 @@ const STEPS = [
   },
 ] as const
 
+const OBSERVATION_STEPS = [
+  {
+    no: '01',
+    title: '先看构图重心',
+    body: '确定需要全身立绘、七分半身还是近景特写，并在姿势库挑选对应视角或开启深度图约束，稳定画面骨架。',
+  },
+  {
+    no: '02',
+    title: '再定光线与色温',
+    body: '把模糊的“好看氛围”写成具体光源，例如影棚柔和漫反射、金色侧逆光或阴天散射光，避免画面平淡。',
+  },
+  {
+    no: '03',
+    title: '补充材质与环境',
+    body: '标注衣料垂坠感、缝线纹理或背景景深（如纯净暖白影棚、虚化街头光斑），大幅提升立绘完成度。',
+  },
+  {
+    no: '04',
+    title: '成图设为附图迭代',
+    body: '满意雏形后，在监视器或云端作品集中一键「设为附图」，锁定五官或主造型继续微调光影与穿搭细节。',
+  },
+] as const
+
+const DETAIL_RECIPES = [
+  {
+    label: '棚拍清透人像',
+    text: '膝上七分半身构图，影棚级柔和漫反射主光，肤色通透自然，干净纯粹浅暖白影棚背景',
+  },
+  {
+    label: '电影逆光戏剧感',
+    text: '全身完整出镜，金色侧逆光勾勒发丝与肩部轮廓光，轻微仰拍广角透视，虚化城市日系街头背景',
+  },
+  {
+    label: '国风工笔留白',
+    text: '轻盈垂坠丝绸与自然风动衣褶质感，保留轻盈水彩纸纹与温润手绘笔触，中式园林木构回廊浅景深',
+  },
+] as const
+
 const LEGAL_RULES = [
   {
     no: '01',
@@ -77,14 +123,15 @@ const LEGAL_RULES = [
 ] as const
 
 function GuidePage() {
-  const { platform } = useStudio()
+  const { platform, setSceneNote } = useStudio()
+  const navigate = useNavigate()
   const { data: posesData } = useQuery(posesQuery)
   const { data: costumes } = useQuery(costumesQuery)
   const { data: portraits } = useQuery(portraitsQuery)
 
   const styleCount = getVisualStylePresets(platform).length
-  const poseCount = posesData?.items.length ?? 1439
-  const costumeCount = costumes?.length ?? 3224
+  const poseCount = posesData?.items.length ?? 1689
+  const costumeCount = costumes?.length ?? 3341
   const portraitCount = portraits?.length ?? 1499
   const giaRealisticCount = costumes
     ? costumes.filter((c) => !c.source && c.一级分类 !== '二次元').length
@@ -94,6 +141,8 @@ function GuidePage() {
     : 1320
   const shiseiCount = costumes ? costumes.filter((c) => c.source === 'shisei').length : 57
   const charadbCount = costumes ? costumes.filter((c) => c.source === 'charadb').length : 440
+  const mioPoseCount = posesData ? posesData.items.filter((p) => p.source === 'mio').length : 250
+  const mioCostumeCount = costumes ? costumes.filter((c) => c.source === 'mio').length : 117
 
   const stepCounts: Record<string, string> = {
     '/poses': `${poseCount.toLocaleString('zh-CN')} 张`,
@@ -281,6 +330,75 @@ function GuidePage() {
         })}
       </section>
 
+      {/* 高对比暗房观察与拆解工作流（吸收自排版对比带设计） */}
+      <motion.section
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.28, delay: 0.16, ease: EASE_OUT }}
+        className="overflow-hidden rounded-[24px] border border-white/10 bg-[#121210] text-zinc-100"
+      >
+        <div className="flex flex-col justify-between gap-4 border-b border-white/10 px-6 py-6 sm:flex-row sm:items-end sm:px-8">
+          <div className="space-y-1.5">
+            <div className="flex items-center gap-2 font-mono text-xs font-semibold tracking-wider text-[#E5A918]">
+              <span>OBSERVE &amp; COMPOSE</span>
+            </div>
+            <h2 className="text-lg font-extrabold tracking-tight text-white sm:text-xl">
+              四步拆解好画面 · 一键带入合成细节
+            </h2>
+            <p className="text-xs leading-relaxed text-zinc-400">
+              参考图负责“动作 / 穿搭 / 五官”实体约束，画面细节负责“景别 / 光线 / 材质 / 背景”氛围控制。
+            </p>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            asChild
+            className="h-9 shrink-0 rounded-full border-white/20 bg-white/5 px-4 text-xs font-semibold text-white hover:bg-white/15 hover:text-white"
+          >
+            <Link to="/studio">
+              <SparklesIcon className="size-3.5 text-[#E5A918]" />
+              <span>打开合成工作台</span>
+            </Link>
+          </Button>
+        </div>
+
+        <div className="grid grid-cols-1 divide-y divide-white/10 sm:grid-cols-2 lg:grid-cols-4 lg:divide-x lg:divide-y-0">
+          {OBSERVATION_STEPS.map((item) => (
+            <div key={item.no} className="space-y-2.5 p-6">
+              <div className="font-mono text-xs font-bold tracking-widest text-[#E5A918]">
+                {item.no}
+              </div>
+              <h3 className="text-sm font-extrabold text-white">{item.title}</h3>
+              <p className="text-xs leading-relaxed text-zinc-400">{item.body}</p>
+            </div>
+          ))}
+        </div>
+
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-white/10 bg-white/[0.03] px-6 py-4 sm:px-8">
+          <div className="flex items-center gap-2 text-xs font-semibold text-zinc-300">
+            <WandSparklesIcon className="size-3.5 text-[#D9381E]" />
+            <span>试试带入一组结构化画面细节：</span>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {DETAIL_RECIPES.map((preset) => (
+              <button
+                key={preset.label}
+                type="button"
+                onClick={() => {
+                  setSceneNote(preset.text)
+                  toast.success(`已填入「${preset.label}」画面细节`)
+                  void navigate({ to: '/studio' })
+                }}
+                className="inline-flex h-8 items-center gap-1.5 rounded-full border border-white/15 bg-white/8 px-3 text-xs font-semibold text-white transition hover:border-[#E5A918]/60 hover:bg-white/15"
+              >
+                <span>{preset.label}</span>
+                <ArrowRightIcon className="size-3 text-zinc-400" />
+              </button>
+            ))}
+          </div>
+        </div>
+      </motion.section>
+
       {/* 底部编排：1px 分隔画册版本页脚（使用规范 + 来源归属） */}
       <motion.footer
         initial={{ opacity: 0, y: 12 }}
@@ -335,6 +453,28 @@ function GuidePage() {
                 原作者条款
               </a>
               ）。
+            </p>
+            <p>
+              <strong className="mr-1 text-foreground">霧島澪 · 设计档案：</strong>
+              {mioPoseCount.toLocaleString('zh-CN')} 项人体动态姿势与 {mioCostumeCount.toLocaleString('zh-CN')} 套主题服装源自{' '}
+              <a
+                className="font-semibold text-foreground underline hover:opacity-80"
+                href={MIO_ARCHIVE_ORIGIN}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                sleepyzone.online/mio-design-archive
+              </a>
+              ，设计与图片版权归原网站及原作者{' '}
+              <a
+                className="font-semibold text-foreground underline hover:opacity-80"
+                href={MIO_AUTHOR_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                {MIO_AUTHOR_NAME}（{MIO_AUTHOR_HANDLE}）
+              </a>
+              {' '}所有；图片由原站在线加载，仅限学习与创作参考，禁止二次分发或商业再发布。
             </p>
           </div>
         </section>

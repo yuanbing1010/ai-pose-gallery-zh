@@ -2,6 +2,7 @@ import { useRef, type CSSProperties, type MouseEvent, type PointerEvent } from '
 import { motion } from 'motion/react'
 import { CheckIcon, FlameIcon, PlusIcon } from 'lucide-react'
 import { getPortraitAccent } from '@/lib/cardAccents'
+import { referenceImageUrl } from '@/lib/recipeImages'
 import { cn } from '@/lib/utils'
 import type { PortraitItem } from '@/types/gallery'
 
@@ -21,12 +22,19 @@ export function PortraitCard({
   onOpenViewer,
 }: PortraitCardProps) {
   const cardRef = useRef<HTMLDivElement>(null)
+  const rectRef = useRef<DOMRect | null>(null)
   const accent = getPortraitAccent(item.分区, item.发长, item.热门, index)
+
+  const handlePointerEnter = () => {
+    const el = cardRef.current
+    if (el) rectRef.current = el.getBoundingClientRect()
+  }
 
   const handlePointerMove = (e: PointerEvent<HTMLDivElement>) => {
     const el = cardRef.current
     if (!el || e.pointerType !== 'mouse') return
-    const rect = el.getBoundingClientRect()
+    const rect = rectRef.current ?? el.getBoundingClientRect()
+    rectRef.current = rect
     const nx = (e.clientX - rect.left) / Math.max(1, rect.width)
     const ny = (e.clientY - rect.top) / Math.max(1, rect.height)
     const rx = (0.5 - ny) * 11
@@ -40,6 +48,7 @@ export function PortraitCard({
   }
 
   const handlePointerLeave = () => {
+    rectRef.current = null
     const el = cardRef.current
     if (!el) return
     el.style.transitionDuration = '360ms'
@@ -61,6 +70,7 @@ export function PortraitCard({
     >
       <div
         ref={cardRef}
+        onPointerEnter={handlePointerEnter}
         onPointerMove={handlePointerMove}
         onPointerLeave={handlePointerLeave}
         style={
@@ -87,7 +97,7 @@ export function PortraitCard({
             className="relative block size-full cursor-zoom-in overflow-hidden text-left outline-none focus-visible:ring-2 focus-visible:ring-foreground focus-visible:ring-inset"
           >
             <img
-              src={`/${item.缩略图}`}
+              src={referenceImageUrl(item.缩略图)}
               alt={item.标题}
               loading="lazy"
               decoding="async"

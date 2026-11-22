@@ -81,8 +81,9 @@ def _build_pose_prompts(item: dict) -> tuple[str, str]:
     system = item.get("体系", "")
     cat = item.get("分类", "")
     angle = item.get("角度", "正面")
-    zh = f"{angle}视角，动作：{title}（{system}·{cat}）"
-    en = f"{angle} view, pose: {title} ({cat})"
+    desc = item.get("描述", "")
+    zh = f"{angle}视角，动作：{title}（{system}·{cat}）" + (f"，{desc}" if desc else "")
+    en = item.get("关键词") or f"{angle} view, pose: {title} ({cat})"
     return zh, en
 
 
@@ -106,15 +107,18 @@ def _build_portrait_prompts(item: dict) -> tuple[str, str]:
 
 
 def _pose_image_rel_path(item: dict, use_depth: bool = False) -> str:
-    raw = str(item.get("原图", "")).lstrip("/")
-    if use_depth and raw.startswith("img/") and not raw.startswith("img/depth/"):
-        stem = raw[len("img/") :].rsplit(".", 1)[0]
+    raw = str(item.get("原图", ""))
+    if raw.startswith("https://"):
+        return raw
+    clean = raw.lstrip("/")
+    if use_depth and clean.startswith("img/") and not clean.startswith("img/depth/"):
+        stem = clean[len("img/") :].rsplit(".", 1)[0]
         return f"img/depth/{stem}.webp"
-    return raw
+    return clean
 
 
 class PoseGalleryNode:
-    """从 1,439 张 3D 素体姿势库中选择姿势参考图并输出 IMAGE 与提示词。"""
+    """从 3D 素体与外部设计档案姿势库中选择姿势参考图并输出 IMAGE 与提示词。"""
 
     @classmethod
     def INPUT_TYPES(cls):

@@ -1,16 +1,17 @@
 import { useCallback, useEffect, useState } from 'react'
 import {
-  ChevronLeftIcon,
-  ChevronRightIcon,
   CopyIcon,
+  DownloadIcon,
   LoaderCircleIcon,
   PlusIcon,
   SearchIcon,
+  Trash2Icon,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
   createAdminRedeemCodesApi,
+  deleteAdminRedeemCodeApi,
   fetchAdminRedeemCodesApi,
   toggleAdminRedeemCodeApi,
 } from '@/lib/apiClient'
@@ -21,6 +22,7 @@ import {
   AdminField,
   AdminFilterBar,
   AdminPageHeader,
+  AdminPagination,
   AdminPanel,
 } from '../AdminPrimitives'
 import {
@@ -183,6 +185,67 @@ export function AdminRedeemTab({
     }
   }
 
+  const handleDeleteCode = (item: RedeemCodeItem) => {
+    onConfirm({
+      title: `删除兑换码 ${item.code}`,
+      description: '仅未领取过的兑换码支持永久删除，删除后无法恢复。确认移除？',
+      confirmLabel: '确认删除',
+      destructive: true,
+      run: async () => {
+        await deleteAdminRedeemCodeApi(item.id)
+        toast.success(`已删除兑换码 ${item.code}`)
+        await loadData()
+      },
+    })
+  }
+
+  const downloadBlobFile = (filename: string, mime: string, content: string) => {
+    const blob = new Blob([content], { type: mime })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  }
+
+  const handleExportTxt = () => {
+    if (codes.length === 0) return
+    const text = codes.map((c) => c.code).join('\n')
+    downloadBlobFile(`redeem-codes-${codeFilter}.txt`, 'text/plain;charset=utf-8', text)
+    toast.success(`已导出本页 ${codes.length} 条兑换码（TXT）`)
+  }
+
+  const handleExportCsv = () => {
+    if (codes.length === 0) return
+    const esc = (v: string | number | null) => {
+      const s = v === null ? '' : String(v)
+      return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
+    }
+    const header = 'code,credits,usedCount,maxUses,status,expiresAt,note'
+    const lines = codes.map((c) =>
+      [
+        c.code,
+        c.credits,
+        c.usedCount,
+        c.maxUses,
+        c.status,
+        c.expiresAt ? new Date(c.expiresAt).toISOString() : '',
+        c.note || '',
+      ]
+        .map(esc)
+        .join(',')
+    )
+    downloadBlobFile(
+      `redeem-codes-${codeFilter}.csv`,
+      'text/csv;charset=utf-8',
+      '\uFEFF' + [header, ...lines].join('\r\n')
+    )
+    toast.success(`已导出本页 ${codes.length} 条兑换码（CSV）`)
+  }
+
   const activeAvailableOnPage = codes.filter(
     (c) =>
       c.status === 'active' &&
@@ -309,6 +372,30 @@ export function AdminRedeemTab({
                 查询
               </Button>
             </form>
+            {codes.length > 0 && (
+              <>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className={ADMIN_BTN_SM_CLS}
+                  onClick={handleExportTxt}
+                >
+                  <DownloadIcon className="size-3" />
+                  导出 TXT
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className={ADMIN_BTN_SM_CLS}
+                  onClick={handleExportCsv}
+                >
+                  <DownloadIcon className="size-3" />
+                  导出 CSV
+                </Button>
+              </>
+            )}
             {activeAvailableOnPage.length > 0 && (
               <Button
                 type="button"
@@ -405,14 +492,28 @@ export function AdminRedeemTab({
                       </AdminBadge>
                     </td>
                     <td className="px-4 py-2.5 text-right">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className={ADMIN_BTN_SM_CLS}
-                        onClick={() => void handleToggleCodeStatus(c)}
-                      >
-                        {c.status === 'active' ? '停用' : '启用'}
-                      </Button>
+                      <div className="inline-flex items-center gap-1.5">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className={ADMIN_BTN_SM_CLS}
+                          onClick={() => void handleToggleCodeStatus(c)}
+                        >
+                          {c.status === 'active' ? '停用' : '启用'}
+                        </Button>
+                        {c.usedCount === 0 && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            title="删除未使用的兑换码"
+                            aria-label={`删除兑换码 ${c.code}`}
+                            className={`${ADMIN_BTN_SM_CLS} text-red-600 hover:bg-red-500/10`}
+                            onClick={() => handleDeleteCode(c)}
+                          >
+                            <Trash2Icon className="size-3" />
+                          </Button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 )
@@ -422,37 +523,13 @@ export function AdminRedeemTab({
         </table>
       </div>
 
-      {total > PAGE_LIMIT && (
-        <div className="flex items-center justify-between border border-zinc-200 px-4 py-2.5 font-mono text-xs text-zinc-500 dark:border-zinc-800">
-          <span>
-            第 {Math.floor(offset / PAGE_LIMIT) + 1} / {Math.ceil(total / PAGE_LIMIT)} 页 · 共 {total} 条
-          </span>
-          <div className="flex items-center gap-1.5">
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              className={ADMIN_BTN_SM_CLS}
-              disabled={offset === 0}
-              onClick={() => setOffset((o) => Math.max(0, o - PAGE_LIMIT))}
-            >
-              <ChevronLeftIcon className="size-3.5" />
-              上一页
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              className={ADMIN_BTN_SM_CLS}
-              disabled={offset + PAGE_LIMIT >= total}
-              onClick={() => setOffset((o) => o + PAGE_LIMIT)}
-            >
-              下一页
-              <ChevronRightIcon className="size-3.5" />
-            </Button>
-          </div>
-        </div>
-      )}
+      <AdminPagination
+        offset={offset}
+        limit={PAGE_LIMIT}
+        total={total}
+        unitLabel="条"
+        onPageChange={setOffset}
+      />
     </div>
   )
 }

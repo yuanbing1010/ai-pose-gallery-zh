@@ -24,17 +24,26 @@ export function FashionCard({
   onOpenViewer,
 }: FashionCardProps) {
   const cardRef = useRef<HTMLDivElement>(null)
+  const rectRef = useRef<DOMRect | null>(null)
 
   const isShisei = item.source === 'shisei'
+  const isMio = item.source === 'mio'
   const viewCount = item.views?.length || 0
   const accent = getCostumeAccent(item.分类, item.一级分类, index)
   const thumbUrl = referenceImageUrl(item.缩略图)
   const isMixedShisei = isShisei && aspect === '2/3'
+  const useContain = isMixedShisei || isMio
+
+  const handlePointerEnter = () => {
+    const el = cardRef.current
+    if (el) rectRef.current = el.getBoundingClientRect()
+  }
 
   const handlePointerMove = (e: PointerEvent<HTMLDivElement>) => {
     const el = cardRef.current
     if (!el || e.pointerType !== 'mouse') return
-    const rect = el.getBoundingClientRect()
+    const rect = rectRef.current ?? el.getBoundingClientRect()
+    rectRef.current = rect
     const nx = (e.clientX - rect.left) / Math.max(1, rect.width)
     const ny = (e.clientY - rect.top) / Math.max(1, rect.height)
     const rx = (0.5 - ny) * 11
@@ -48,6 +57,7 @@ export function FashionCard({
   }
 
   const handlePointerLeave = () => {
+    rectRef.current = null
     const el = cardRef.current
     if (!el) return
     el.style.transitionDuration = '360ms'
@@ -69,6 +79,7 @@ export function FashionCard({
     >
       <div
         ref={cardRef}
+        onPointerEnter={handlePointerEnter}
         onPointerMove={handlePointerMove}
         onPointerLeave={handlePointerLeave}
         style={
@@ -91,7 +102,7 @@ export function FashionCard({
           className={cn(
             'relative w-full overflow-hidden',
             aspect === '3/4' ? 'aspect-[3/4]' : 'aspect-[2/3]',
-            isMixedShisei ? 'bg-[#E6E6E8]' : 'bg-muted/30'
+            isMixedShisei ? 'bg-[#E6E6E8]' : isMio ? 'bg-[#DFDFE2] dark:bg-[#232328]' : 'bg-muted/30'
           )}
         >
           <button
@@ -107,7 +118,7 @@ export function FashionCard({
               decoding="async"
               className={cn(
                 'block size-full transition-transform duration-300 ease-out group-hover:scale-[1.03]',
-                isMixedShisei ? 'object-contain' : 'object-cover'
+                useContain ? 'object-contain' : 'object-cover'
               )}
             />
           </button>

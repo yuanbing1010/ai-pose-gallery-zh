@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { AnimatePresence, motion } from 'motion/react'
 import { Link } from '@tanstack/react-router'
-import { ArrowRightIcon, CheckIcon, DicesIcon, SparklesIcon, Volume2Icon, VolumeXIcon, XIcon } from 'lucide-react'
+import { ArrowRightIcon, CheckIcon, DicesIcon, LayersIcon, Volume2Icon, VolumeXIcon, XIcon } from 'lucide-react'
 import { toast } from '@/lib/notifications'
 import { poseThumbPath, referenceImageUrl } from '@/lib/recipeImages'
 import { cn } from '@/lib/utils'
@@ -16,6 +16,7 @@ export interface DrawnPack {
 
 export interface PackStageProps {
   drawn: DrawnPack
+  totalCount?: number
   packSeed: number
   muted: boolean
   onToggleMute: () => void
@@ -45,10 +46,10 @@ function seededShuffle<T>(items: T[], seedStr: string): T[] {
 }
 
 const PACK_SKINS = [
-  ['Cobalt', '#2b3ff0'],
+  ['Sienna', '#B86B27'],
   ['Vermilion', '#d9381e'],
   ['Jade', '#0e9c79'],
-  ['Grape', '#7a42f0'],
+  ['Plum', '#7A3E48'],
 ] as const
 
 const BANDS = ['#ff3d6e', '#ff8a3d', '#ffd34d', '#4fd9a0', '#4fb2ff', '#8b6cff', '#ff5cc8']
@@ -247,6 +248,7 @@ interface FlyingCardClone {
   slotKey: 'portrait' | 'costume' | 'pose'
   img: string
   alt: string
+  contain?: boolean
   from: { left: number; top: number; width: number; height: number }
   to: { left: number; top: number; width: number; height: number }
   duration: number
@@ -256,6 +258,7 @@ interface FlyingCardClone {
 
 export function PackStage({
   drawn,
+  totalCount = 6529,
   packSeed,
   muted,
   onToggleMute,
@@ -333,6 +336,7 @@ export function PackStage({
         dotColor: '#19857B',
         title: drawn.costume.服装名称,
         img: referenceImageUrl(drawn.costume.缩略图),
+        contain: drawn.costume.source === 'mio' || drawn.costume.source === 'shisei',
       },
       {
         slotKey: 'pose' as const,
@@ -340,6 +344,7 @@ export function PackStage({
         dotColor: '#D9381E',
         title: drawn.pose.姿势名称,
         img: referenceImageUrl(poseThumbPath(drawn.pose)),
+        contain: drawn.pose.source === 'mio',
       },
     ]
     return seededShuffle(
@@ -399,6 +404,7 @@ export function PackStage({
           slotKey: spec.slotKey,
           img: spec.img,
           alt: spec.title,
+          contain: 'contain' in spec ? spec.contain : false,
           from,
           to: { left: tr.left, top: tr.top, width: tr.width, height: tr.height },
           ...profile,
@@ -699,8 +705,13 @@ export function PackStage({
     const bandEls = [...rays.querySelectorAll<SVGPathElement>('.hp-band')]
     const stops = [...rays.querySelectorAll<SVGStopElement>('#hpfade-g stop')]
 
+    let stageRect = stage.getBoundingClientRect()
+    const syncStageRect = () => {
+      stageRect = stage.getBoundingClientRect()
+    }
     let reach = 260
     const fit = () => {
+      stageRect = stage.getBoundingClientRect()
       const sw = stage.clientWidth || 860
       const sh = stage.clientHeight || 580
       PW = pack.offsetWidth || 248
@@ -923,6 +934,10 @@ export function PackStage({
         img.src = spec.img
         img.alt = spec.title
         img.draggable = false
+        if ('contain' in spec && spec.contain) {
+          win.style.background = '#e6e4de'
+          img.style.objectFit = 'contain'
+        }
         win.appendChild(img)
         const holo = document.createElement('i')
         holo.className = 'hp-holo'
@@ -1185,6 +1200,9 @@ export function PackStage({
     const aimed = (): CardObj | null => {
       const sw = stage.clientWidth || 860
       const sh = stage.clientHeight || 580
+      const rect = stageRect
+      const px = pointer.x - rect.left
+      const py = pointer.y - rect.top
       let best: CardObj | null = null
       for (const c of cards) {
         if (c.phase !== 'spread') continue
@@ -1195,9 +1213,6 @@ export function PackStage({
         const sin = Math.sin(a)
         const w = PW * 0.84 * f.s * near
         const h = w * 1.4
-        const rect = stage.getBoundingClientRect()
-        const px = pointer.x - rect.left
-        const py = pointer.y - rect.top
         const dx = px - (sw / 2 + f.x * near)
         const dy = py - (sh / 2 + f.y * near)
         const hx = (dx * cos + dy * sin) / w + 0.5
@@ -1356,6 +1371,7 @@ export function PackStage({
     stage.addEventListener('click', onStageClick)
     const ro = new ResizeObserver(fit)
     ro.observe(stage)
+    window.addEventListener('scroll', syncStageRect, { passive: true })
 
     let raf = 0
     let inView = true
@@ -1375,7 +1391,7 @@ export function PackStage({
       squeeze.to = tug ? -Math.abs(tug) / 90 : held && state === 'idle' ? motion : 0
 
       if (state === 'enter' || state === 'idle') {
-        const rect = stage.getBoundingClientRect()
+        const rect = stageRect
         const hold = drag?.moved ? 0.25 : 1
         const nx = pointer.in ? clamp(((pointer.x - rect.left) / Math.max(1, rect.width)) * 2 - 1, -1, 1) : 0
         const ny = pointer.in ? clamp(((pointer.y - rect.top) / Math.max(1, rect.height)) * 2 - 1, -1, 1) : 0
@@ -1623,6 +1639,7 @@ export function PackStage({
       visObs.disconnect()
       document.removeEventListener('visibilitychange', onVisibility)
       ro.disconnect()
+      window.removeEventListener('scroll', syncStageRect)
       hit.removeEventListener('pointerdown', onHitDown)
       hit.removeEventListener('pointermove', onHitMove)
       hit.removeEventListener('pointerup', letGo)
@@ -1670,8 +1687,8 @@ export function PackStage({
             >
               <span className="inline-flex items-center gap-1.5 rounded-full border border-black/10 bg-white/75 px-3 py-0.5 font-mono text-xs font-semibold whitespace-nowrap text-foreground/85 backdrop-blur-md sm:text-xs dark:border-white/15 dark:bg-white/10">
                 <span className="size-1.5 shrink-0 rounded-full bg-[#D9381E]" />
-                <span className="sm:hidden">3-IN-1 配方盲盒 · 6,162+ 参考卡</span>
-                <span className="hidden sm:inline">3-IN-1 角色配方盲盒 · 6,162+ 中文参考卡</span>
+                <span className="sm:hidden">3-IN-1 配方盲盒 · {totalCount.toLocaleString('zh-CN')} 参考卡</span>
+                <span className="hidden sm:inline">3-IN-1 角色配方盲盒 · {totalCount.toLocaleString('zh-CN')} 中文参考卡</span>
               </span>
               <p className="text-xs text-muted-foreground sm:text-sm">
                 沿顶部铝箔横向划开，或轻点两次直接拆封今日角色配方
@@ -1833,19 +1850,20 @@ export function PackStage({
               {lockedSlots.portrait && lockedSlots.costume && lockedSlots.pose ? (
                 <Link
                   to="/studio"
-                  className="ks-keycap inline-flex h-10 items-center gap-2 rounded-full bg-[#D9381E] px-6 text-xs font-semibold text-white shadow-md transition-all hover:-translate-y-0.5 hover:bg-[#C23018] active:scale-[0.97]"
+                  className="inline-flex h-10 items-center gap-2 rounded-full border border-foreground/20 bg-card px-5 text-xs font-semibold text-foreground shadow-xs transition-all hover:bg-muted active:scale-[0.97]"
                 >
-                  <span>已锁入配方 · 前往合成台</span>
+                  <CheckIcon className="size-3.5 text-emerald-600 dark:text-emerald-400" />
+                  <span>已装入配方 · 前往合成台</span>
                   <ArrowRightIcon className="size-3.5" />
                 </Link>
               ) : (
                 <button
                   type="button"
                   onClick={handleSynthesizeClick}
-                  className="ks-keycap inline-flex h-10 items-center gap-2 rounded-full bg-[#D9381E] px-6 text-xs font-semibold text-white shadow-md transition-all hover:-translate-y-0.5 hover:bg-[#C23018] active:scale-[0.97]"
+                  className="inline-flex h-10 items-center gap-2 rounded-full bg-foreground px-6 text-xs font-semibold text-background shadow-md transition-all hover:-translate-y-0.5 hover:opacity-90 active:scale-[0.97]"
                 >
-                  <SparklesIcon className="size-3.5" />
-                  <span>立即合成</span>
+                  <LayersIcon className="size-3.5" />
+                  <span>装入配方槽</span>
                 </button>
               )}
             </motion.div>
@@ -1876,8 +1894,8 @@ export function PackStage({
                 <img
                   src={c.img}
                   alt={c.alt}
-                  className="block size-full object-cover"
-                  style={{ objectPosition: '50% 15%' }}
+                  className={cn('block size-full', c.contain ? 'bg-[#e6e4de] object-contain' : 'object-cover')}
+                  style={c.contain ? undefined : { objectPosition: '50% 15%' }}
                 />
               </div>
             ))}

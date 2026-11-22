@@ -4,7 +4,7 @@ import { api } from "../../scripts/api.js";
 const LIBRARIES = {
   pose: {
     key: "pose",
-    label: "姿势库 (1,439)",
+    label: "姿势库 (1,689)",
     shortLabel: "姿势",
     defaultId: "full_single_P001_front",
     titleField: "姿势名称",
@@ -15,7 +15,7 @@ const LIBRARIES = {
   },
   costume: {
     key: "costume",
-    label: "服装库 (3,224)",
+    label: "服装库 (3,341)",
     shortLabel: "服装",
     defaultId: "SPR-0001",
     titleField: "服装名称",
@@ -70,9 +70,11 @@ async function fetchCatalogue(lib) {
 }
 
 function getThumbUrl(lib, id, relPath, useDepth = false) {
-  if (!relPath && lib === "costume") relPath = catalogueCache.costume?.find((r) => r.id === id)?.缩略图;
+  if (!relPath && catalogueCache[lib]) relPath = catalogueCache[lib].find((r) => r.id === id)?.缩略图;
   if (lib === "costume" && /^charadb-O\d{3}$/.test(id)) return `https://charadb-2fi.pages.dev/thumb/${id.slice(8)}.webp`;
-  if (lib === "costume" && relPath?.startsWith("https://ai-costume-anime-gallery.pages.dev/")) return relPath;
+  if (relPath?.startsWith("https://ai-costume-anime-gallery.pages.dev/") || relPath?.startsWith("https://sleepyzone.online/mio-design-archive/")) {
+    return relPath;
+  }
   const depthParam = lib === "pose" && useDepth ? "&depth=1" : "";
   if (relPath) {
     return `/pose_character_atlas/image?path=${encodeURIComponent(relPath)}${depthParam}`;
@@ -187,7 +189,7 @@ class PoseAtlasModal {
           <div class="pca-title-group">
             <div>
               <h3 class="pca-title">AI 角色三合一参考图集 (ComfyUI 选图器)</h3>
-              <div class="pca-subtitle">6,162 条中文参考索引 · Shisei / wquguru CC0 · 二次元图片需联网 · <a href="https://github.com/taki-ttt/charadb/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">CharaDB来源条款</a></div>
+              <div class="pca-subtitle">中文参考索引 · Shisei / wquguru CC0 · <a href="https://sleepyzone.online/mio-design-archive/" target="_blank" rel="noopener noreferrer">霧島澪(@Mio_2am)设计档案</a> · <a href="https://github.com/taki-ttt/charadb/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">CharaDB来源条款</a></div>
             </div>
           </div>
           <div class="pca-tabs" id="pca-tabs"></div>
@@ -197,7 +199,7 @@ class PoseAtlasModal {
           <input class="pca-search-input" id="pca-search" type="text" placeholder="搜索中文标题、动作、服装、发型、编号 (如: 坐姿 / 水手服 / 双马尾 / SPR-0001)..." />
           <select class="pca-select" id="pca-filter-primary"></select>
           <select class="pca-select" id="pca-filter-secondary"></select>
-          <select class="pca-select" aria-label="服装来源" id="pca-filter-source"><option value="">全部来源</option><option value="gia">ギア · 写实</option><option value="gia-anime">ギア · 动漫</option><option value="charadb">CharaDB</option><option value="shisei">Shisei · 中国历代</option></select>
+          <select class="pca-select" aria-label="素材来源" id="pca-filter-source"><option value="">全部来源</option><option value="gia">ギア · 写实/素体</option><option value="gia-anime">ギア · 动漫</option><option value="charadb">CharaDB</option><option value="shisei">Shisei · 中国历代</option><option value="mio">霧島澪 · 设计档案</option></select>
           <button class="pca-btn" id="pca-depth-btn">${this.useDepth ? "🌗 深度图 (Depth)" : "🗿 素体白模"}</button>
           <button class="pca-btn" id="pca-sfw-btn">${this.safeMode ? "🛡️ 安全模式 (SFW)" : "🔞 18+ 完整模式"}</button>
           <button class="pca-btn" id="pca-random-btn">🎲 随机抽一张</button>
@@ -336,7 +338,10 @@ class PoseAtlasModal {
 
   async switchLibrary(lib) {
     this.activeLib = lib;
-    this.backdrop.querySelector("#pca-filter-source").style.display = lib === "costume" ? "" : "none";
+    const sourceSel = this.backdrop.querySelector("#pca-filter-source");
+    sourceSel.style.display = lib === "costume" || lib === "pose" ? "" : "none";
+    this.sourceFilter = "";
+    sourceSel.value = "";
     this.primaryFilter = "";
     this.secondaryFilter = "";
     this.page = 1;
@@ -346,6 +351,8 @@ class PoseAtlasModal {
     gridEl.innerHTML = `<div style="padding:40px;color:#9ca3af;">正在加载 ${LIBRARIES[lib].label}...</div>`;
 
     await fetchCatalogue(lib);
+    LIBRARIES[lib].label = `${LIBRARIES[lib].shortLabel}库 (${(catalogueCache[lib] || []).length.toLocaleString("zh-CN")})`;
+    this.renderTabs();
     this.populateFilters();
     this.renderGrid();
     this.renderFooterSlots();
@@ -404,7 +411,7 @@ class PoseAtlasModal {
     const q = this.searchQuery;
 
     return items.filter((it) => {
-      if (this.activeLib === "costume" && this.sourceFilter && (it.source || "gia") !== this.sourceFilter) return false;
+      if ((this.activeLib === "costume" || this.activeLib === "pose") && this.sourceFilter && (it.source || "gia") !== this.sourceFilter) return false;
       if (
         this.primaryFilter &&
         cfg.primaryField &&
@@ -460,7 +467,8 @@ class PoseAtlasModal {
         (item[cfg.primaryField] || "") +
         (cfg.secondaryField && item[cfg.secondaryField]
           ? ` · ${item[cfg.secondaryField]}`
-          : "") + (item.source === "charadb" ? " · たき AI / CharaDB" : "");
+          : "") +
+        (item.source === "charadb" ? " · たき AI / CharaDB" : item.source === "mio" ? " · 霧島澪 / mio-design-archive" : "");
 
       card.innerHTML = `
         <div class="pca-card-img-wrap">

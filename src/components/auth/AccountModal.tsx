@@ -70,6 +70,7 @@ export function AccountModal() {
   const [confirmNewPassword, setConfirmNewPassword] = useState('')
   const [showCurPwd, setShowCurPwd] = useState(false)
   const [showNewPwd, setShowNewPwd] = useState(false)
+  const [showConfirmPwd, setShowConfirmPwd] = useState(false)
   const [savingPwd, setSavingPwd] = useState(false)
 
   const [bindingWechat, setBindingWechat] = useState(false)
@@ -101,11 +102,9 @@ export function AccountModal() {
     }
   }, [accountModalOpen, accountModalTab, user, ledgerReloadTick])
 
-  if (!user) return null
-
-  const hasPassword = user.hasPassword !== false
+  const hasPassword = user?.hasPassword !== false
   const wechatReady = Boolean(wechatLogin.enabled && wechatLogin.configured)
-  const showAvatar = Boolean(user.avatarUrl && avatarErrorForUrl !== user.avatarUrl)
+  const showAvatar = Boolean(user?.avatarUrl && avatarErrorForUrl !== user.avatarUrl)
 
   const handleRedeem = async (e: FormEvent) => {
     e.preventDefault()
@@ -186,7 +185,7 @@ export function AccountModal() {
 
   return (
     <Dialog
-      open={accountModalOpen}
+      open={accountModalOpen && Boolean(user)}
       onOpenChange={(open) => {
         if (!open) {
           setCurrentPassword('')
@@ -194,6 +193,7 @@ export function AccountModal() {
           setConfirmNewPassword('')
           setShowCurPwd(false)
           setShowNewPwd(false)
+          setShowConfirmPwd(false)
           setBindingWechat(false)
           setConfirmingUnbind(false)
           closeAccountModal()
@@ -201,6 +201,8 @@ export function AccountModal() {
       }}
     >
       <DialogContent className="max-h-[90dvh] w-[95vw] max-w-xl overflow-y-auto rounded-2xl p-4 sm:max-w-xl sm:p-5">
+        {user ? (
+        <>
         <DialogHeader className="space-y-1">
           <div className="flex flex-wrap items-center justify-between gap-2 pr-8">
             <DialogTitle className="flex min-w-0 items-center gap-2 text-base font-extrabold">
@@ -578,15 +580,25 @@ export function AccountModal() {
                     <Label htmlFor="acct-confirm-pwd" className="text-xs font-semibold">
                       确认密码
                     </Label>
-                    <Input
-                      id="acct-confirm-pwd"
-                      type={showNewPwd ? 'text' : 'password'}
-                      autoComplete="new-password"
-                      value={confirmNewPassword}
-                      onChange={(e) => setConfirmNewPassword(e.target.value)}
-                      placeholder="再次输入密码"
-                      className="h-9 rounded-xl text-xs"
-                    />
+                    <div className="relative">
+                      <Input
+                        id="acct-confirm-pwd"
+                        type={showConfirmPwd ? 'text' : 'password'}
+                        autoComplete="new-password"
+                        value={confirmNewPassword}
+                        onChange={(e) => setConfirmNewPassword(e.target.value)}
+                        placeholder="再次输入密码"
+                        className="h-9 rounded-xl pr-9 text-xs"
+                      />
+                      <button
+                        type="button"
+                        aria-label={showConfirmPwd ? '隐藏确认密码' : '显示确认密码'}
+                        onClick={() => setShowConfirmPwd((v) => !v)}
+                        className="absolute top-1/2 right-2.5 -translate-y-1/2 rounded p-1 text-muted-foreground hover:text-foreground"
+                      >
+                        {showConfirmPwd ? <EyeOffIcon className="size-3.5" /> : <EyeIcon className="size-3.5" />}
+                      </button>
+                    </div>
                   </div>
                 </div>
                 <Button type="submit" disabled={savingPwd} className="h-9 w-full rounded-xl text-xs font-bold">
@@ -597,6 +609,8 @@ export function AccountModal() {
             </div>
           )
         )}
+        </>
+        ) : null}
       </DialogContent>
     </Dialog>
   )

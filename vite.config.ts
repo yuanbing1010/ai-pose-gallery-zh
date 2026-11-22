@@ -127,21 +127,59 @@ function localAssetsPlugin(): Plugin {
       const forwardHeaders: Record<string, string> = {
         'Accept-Encoding': 'identity',
       }
+      const extraHeadersRaw = req.headers['x-dev-extra-headers']
+      if (typeof extraHeadersRaw === 'string' && extraHeadersRaw) {
+        try {
+          const parsed = JSON.parse(extraHeadersRaw) as Record<string, unknown>
+          if (parsed && typeof parsed === 'object') {
+            for (const [k, v] of Object.entries(parsed)) {
+              const lower = k.toLowerCase()
+              if (
+                typeof v === 'string' &&
+                v &&
+                !['host', 'connection', 'content-length', 'transfer-encoding'].includes(lower) &&
+                !lower.startsWith('x-dev-')
+              ) {
+                forwardHeaders[k] = v
+              }
+            }
+          }
+        } catch {
+          // ignore malformed extra headers JSON
+        }
+      }
       for (const h of ['content-type', 'authorization', 'x-goog-api-key']) {
         const val = req.headers[h]
         if (typeof val === 'string' && val) {
           forwardHeaders[h] = val
         }
       }
-      if (rawBody.length > 0 && method !== 'GET') {
+      if (rawBody.length > 0 && method !== 'GET' && method !== 'HEAD') {
         forwardHeaders['content-length'] = String(rawBody.length)
       }
+
+      const rawTimeoutMs = Number(req.headers['x-dev-timeout-ms'] || 0)
+      const upstreamTimeoutMs =
+        Number.isFinite(rawTimeoutMs) && rawTimeoutMs > 0
+          ? Math.min(200_000, Math.max(5_000, Math.floor(rawTimeoutMs)))
+          : 80_000
 
       const targetPort = Number(target.port) || 443
       const proxyUrl = getProxyUrlForTarget(target.hostname)
       const agent = proxyUrl ? createProxyAgent(proxyUrl, target.hostname, targetPort) : undefined
 
       await new Promise<void>((resolve, reject) => {
+        let settled = false
+        const finish = (err?: Error) => {
+          if (settled) return
+          settled = true
+          clearTimeout(deadlineTimer)
+          req.off('aborted', onClientAbort)
+          res.off('close', onClientClose)
+          if (err) reject(err)
+          else resolve()
+        }
+
         const upReq = https.request(
           {
             hostname: target.hostname,
@@ -150,21 +188,47 @@ function localAssetsPlugin(): Plugin {
             method,
             headers: forwardHeaders,
             agent,
-            timeout: 80_000,
+            timeout: upstreamTimeoutMs,
           },
           (upRes) => {
             res.statusCode = upRes.statusCode || 502
             const ct = upRes.headers['content-type']
             if (ct) res.setHeader('Content-Type', ct)
+            const retryAfter = upRes.headers['retry-after']
+            if (typeof retryAfter === 'string' && retryAfter) {
+              res.setHeader('Retry-After', retryAfter)
+            }
             upRes.pipe(res)
-            upRes.once('end', () => resolve())
-            upRes.once('error', (err) => reject(err))
+            upRes.once('end', () => finish())
+            upRes.once('error', (err) => finish(err))
           }
         )
+
+        const onClientAbort = () => {
+          const err = new Error('Client aborted upstream request')
+          upReq.destroy(err)
+          finish(err)
+        }
+        const onClientClose = () => {
+          if (!res.writableEnded) {
+            const err = new Error('Client closed upstream request')
+            upReq.destroy(err)
+            finish(err)
+          }
+        }
+        req.once('aborted', onClientAbort)
+        res.once('close', onClientClose)
+
+        const deadlineTimer = setTimeout(() => {
+          const err = new Error('Upstream request deadline exceeded')
+          upReq.destroy(err)
+          finish(err)
+        }, upstreamTimeoutMs + 1_000)
+
         upReq.once('timeout', () => {
           upReq.destroy(new Error('Upstream request timeout'))
         })
-        upReq.once('error', (err) => reject(err))
+        upReq.once('error', (err) => finish(err))
         if (rawBody.length > 0 && method !== 'GET') {
           upReq.write(rawBody)
         }
@@ -175,6 +239,8 @@ function localAssetsPlugin(): Plugin {
         res.statusCode = 502
         res.setHeader('Content-Type', 'application/json; charset=utf-8')
         res.end(JSON.stringify({ error: { message: err instanceof Error ? err.message : 'Dev upstream proxy failed' } }))
+      } else if (!res.destroyed) {
+        res.destroy(err instanceof Error ? err : undefined)
       }
     }
   }

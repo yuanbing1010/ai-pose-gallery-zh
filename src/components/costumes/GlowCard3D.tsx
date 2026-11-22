@@ -423,7 +423,9 @@ export function GlowCard3D({
   const stageRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [webglFailed, setWebglFailed] = useState(false)
+  const [failedUrl, setFailedUrl] = useState<string | null>(null)
   const [fallbackTilt, setFallbackTilt] = useState({ rx: 0, ry: 0 })
+  const showFallback = webglFailed || failedUrl === imageUrl
   const dirRef = useRef(direction)
   const shadowOpacityRef = useRef(shadowOpacity)
 
@@ -535,11 +537,15 @@ export function GlowCard3D({
     resize()
 
     loadImageRef.current = (src: string, dir: 1 | -1) => {
-      if (currentCard?.url === src && !transition) return
+      if (currentCard?.url === src && !transition) {
+        setFailedUrl((prev) => (prev === src ? null : prev))
+        return
+      }
       const token = ++loadSeq
       void loadCrossOriginImage(src)
         .then((img) => {
           if (disposed || token !== loadSeq) return
+          setFailedUrl(null)
           const natW = img.naturalWidth || 360
           const natH = img.naturalHeight || 540
           const cardH = CARD_HEIGHT
@@ -588,13 +594,17 @@ export function GlowCard3D({
           }
           updateCamZ()
         })
-        .catch(() => {})
+        .catch(() => {
+          if (!disposed && token === loadSeq) {
+            setFailedUrl(src)
+          }
+        })
     }
 
     loadImageRef.current(imageUrl, dirRef.current)
 
     const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
-    const motionAmp = reduced ? 0.35 : 1
+    const motionAmp = reduced ? 0 : 1
 
     const pointer = { x: 0, y: 0, over: false }
     const smoothTilt = { x: 0, y: 0, z: 0 }
@@ -771,12 +781,28 @@ export function GlowCard3D({
       }
     }
 
-    raf = requestAnimationFrame(tick)
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') {
+        if (raf) {
+          cancelAnimationFrame(raf)
+          raf = 0
+        }
+      } else if (!disposed && !raf) {
+        lastNow = 0
+        raf = requestAnimationFrame(tick)
+      }
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+
+    if (document.visibilityState !== 'hidden') {
+      raf = requestAnimationFrame(tick)
+    }
 
     return () => {
       disposed = true
       loadImageRef.current = null
-      cancelAnimationFrame(raf)
+      if (raf) cancelAnimationFrame(raf)
+      document.removeEventListener('visibilitychange', onVisibility)
       ro.disconnect()
       stage.removeEventListener('pointermove', onMove)
       stage.removeEventListener('pointerleave', onLeave)
@@ -808,24 +834,25 @@ export function GlowCard3D({
         className
       )}
       onPointerMove={(e) => {
-        if (!webglFailed) return
+        if (!showFallback) return
         const r = e.currentTarget.getBoundingClientRect()
         const nx = ((e.clientX - r.left) / r.width - 0.5) * 2
         const ny = ((e.clientY - r.top) / r.height - 0.5) * 2
         setFallbackTilt({ rx: -ny * 14, ry: nx * 18 })
       }}
       onPointerLeave={() => {
-        if (webglFailed) setFallbackTilt({ rx: 0, ry: 0 })
+        if (showFallback) setFallbackTilt({ rx: 0, ry: 0 })
       }}
     >
-      {!webglFailed ? (
+      {!webglFailed && (
         <canvas
           ref={canvasRef}
           aria-label={alt}
-          className="block size-full touch-none"
+          className={cn('block size-full touch-none', showFallback && 'pointer-events-none opacity-0')}
         />
-      ) : (
-        <div className="flex size-full items-center justify-center p-4">
+      )}
+      {showFallback && (
+        <div className="absolute inset-0 flex size-full items-center justify-center p-4">
           <div
             style={{
               transform: `perspective(950px) rotateX(${fallbackTilt.rx}deg) rotateY(${fallbackTilt.ry}deg)`,

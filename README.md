@@ -1,6 +1,6 @@
 # AI 角色参考与合成工作台 · 中文版（3合1）
 
-> **姿势库（1,439 张素体白模 + 1,439 张深度图 Depth） + 服装库（3,224 套：ギア写实 1,407 + Shisei 中国历代 57 套/227 视角 + ギア动漫 1,320 + CharaDB 二次元 440） + 人像库（1,499 位） = 6,162 条全中文参考数据 / 12,022 张本地高清图，另有 1,760 张来源站点参考图**，集成 **5 大 AI 图像协议直连工作台** 与 **原生 ComfyUI 自定义节点插件（`custom_nodes`）**。
+> **姿势库（1,439 张素体白模 + 1,439 张深度图 Depth + 250 项霧島澪人体动态） + 服装库（3,341 套：ギア写实 1,407 + Shisei 中国历代 57 套/227 视角 + ギア动漫 1,320 + CharaDB 二次元 440 + 霧島澪 117） + 人像库（1,499 位） = 6,529 条全中文参考数据 / 12,022 张本地高清图，另有 2,127 张来源站点参考图**，集成 **5 大 AI 图像协议直连工作台** 与 **原生 ComfyUI 自定义节点插件（`custom_nodes`）**。
 
 ![画廊总览预览](docs/preview.jpg)
 
@@ -19,7 +19,7 @@
 - 服装库：<https://ai-costume-gallery.pages.dev/>
 - 人像库：<https://ai-portrait-gallery.pages.dev/>
 
-**原有图库作者：** ギア（@giaaibusi）；二次元服装作者：たき AI（[@taki_auto](https://x.com/taki_auto) · [CharaDB](https://charadb-2fi.pages.dev/)）。
+**原有图库作者：** ギア（@giaaibusi）；二次元服装作者：たき AI（[@taki_auto](https://x.com/taki_auto) · [CharaDB](https://charadb-2fi.pages.dev/)）；外部同步设计档案：霧島澪（[@Mio_2am](https://x.com/Mio_2am) · [霧島澪 · 设计档案](https://sleepyzone.online/mio-design-archive/)）。
 **中文版维护：** Anhao · [X @anhao_ai](https://x.com/anhao_ai)
 **GitHub：** <https://github.com/anhao/ai-pose-gallery-zh>
 
@@ -90,7 +90,8 @@
 | **动漫服装（ギア动漫）** | 春季 · 夏季 · 秋季 · 冬季 · 内衣睡衣 · 性感 · 泳装 · 礼服 | 1,320 | 原站热链，仓库与发布包不存图 |
 | **二次元服装（CharaDB）** | 15类，中文名称与原始Danbooru标签 | 440 | 原站热链，仓库与发布包不存图 |
 | **人像库（Portrait）** | 正脸参考 (893) · 造型氛围 (606) / 短发 (727) · 中发 (376) · 中长发 (260) · 长发 (136) | 1,499 | 2,998 张（缩略图 `.webp` + `1600×2000` 原图 `.webp`） |
-| **合计** | **3 大图库全中文索引（含白模 + 深度双视图）** | **6,162** | **12,022 张** |
+| **霧島澪 · 设计档案（远程同步）** | 姿势（27 卷 / 250 项）· 服装（13 卷 / 117 套），支持每日定时同步 | 367 | 原站在线加载，仓库与发布包不存图 |
+| **合计** | **3 大图库全中文索引（含白模 + 深度双视图 + 远程同步）** | **6,529** | **12,022 张** |
 
 ---
 
@@ -282,6 +283,7 @@ for d in ~/ai-pose-gallery-zh/skills/*-reference*; do ln -s "$d" ~/.claude/skill
    - 站点与插件默认开启 **「安全模式 (SFW)」** 屏蔽上述分类；**未满 18 周岁的未成年人严禁关闭安全模式或访问相关内容**。
 3. **数据来源与版权归属声明**
    - 本仓库原有姿势（`ai-pose-gallery.pages.dev`）、服装（`ai-costume-gallery.pages.dev`）、人像（`ai-portrait-gallery.pages.dev`，CC0 1.0 协议）图片与原始数据的著作权归原作者 **ギア（@giaaibusi）** 所有。
+   - **霧島澪 · 设计档案**（[sleepyzone.online/mio-design-archive/](https://sleepyzone.online/mio-design-archive/)）中的姿势与服装参考，设计与图片版权归原网站及原作者 **霧島澪（[@Mio_2am](https://x.com/Mio_2am)）** 所有；本项目仅收录检索元数据并定期同步（详见 [docs/MIO-DESIGN-ARCHIVE.md](docs/MIO-DESIGN-ARCHIVE.md)），图片直接从原站在线加载，**严禁二次分发图片本体或商业再发布**。
    - 本仓库仅为中文本地化翻译与前端工程实践存档，不对原始图片主张任何权利，**严禁任何人将本仓库图片提取后进行商业倒卖或付费分发**。若原作者对镜像存档有任何异议，请联系维护者立即处理。
 4. **开源协议**
    - 前端应用代码（`src/`）、ComfyUI 插件（`comfyui_plugin/`）与数据处理脚本（`scripts/`）以 [MIT 协议](LICENSE) 开源；该协议**不覆盖** `img/`、`thumbs/` 与 `data/` 中的图片及原始数据。

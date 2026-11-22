@@ -1,0 +1,39 @@
+services:
+  dreamina-bridge:
+    build: .
+    image: dreamina-bridge:latest
+    container_name: dreamina-bridge
+    restart: unless-stopped
+    # 只绑本机回环：对外统一走反向代理或 Cloudflare Tunnel
+    ports:
+      - "127.0.0.1:8790:8790"
+    environment:
+      DREAMINA_BRIDGE_TOKEN: ${DREAMINA_BRIDGE_TOKEN:?请在 .env 里设置}
+      DREAMINA_BRIDGE_HOST: 0.0.0.0
+      DREAMINA_LAUNCH_CHROME: "1"
+      # 默认走 Xvfb 虚拟屏有头模式（hover 下载与防无头指纹更稳）；如需纯无头可改 XVFB=0 + HEADLESS=1
+      DREAMINA_XVFB: "1"
+      DREAMINA_HEADLESS: "0"
+      DREAMINA_CHROME_BIN: /usr/bin/chromium
+      DREAMINA_PROFILE_DIR: /data/profile
+      DREAMINA_DOWNLOAD_DIR: /data/downloads
+      DREAMINA_JOB_TIMEOUT_MS: "480000"
+      DREAMINA_IMAGE_TIMEOUT_MS: "420000"
+    volumes:
+      # /data 里存的是已登录的浏览器 profile，等同于账号凭证，务必持久化并限制权限
+      - dreamina-data:/data
+    # Chromium 在容器里需要足够的 /dev/shm，否则会随机崩标签页
+    shm_size: "1gb"
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:8790/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 90s
+
+volumes:
+  dreamina-data:

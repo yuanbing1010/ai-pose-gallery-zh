@@ -302,11 +302,13 @@ function AdminJobDetailPage() {
               )}
             </div>
             <div className="mt-1 text-xs text-zinc-500">
-              {creditsRefunded > 0
-                ? '失败自动全额退还'
-                : job.status === 'succeeded'
-                  ? '已核销扣费'
-                  : '处理中暂扣'}
+              {job.status === 'cancelled'
+                ? '取消排队全额退还'
+                : creditsRefunded > 0
+                  ? '失败自动全额退还'
+                  : job.status === 'succeeded'
+                    ? '已核销扣费'
+                    : '排队/处理中暂扣'}
             </div>
           </div>
 
@@ -318,6 +320,9 @@ function AdminJobDetailPage() {
             </div>
             <div className="mt-1 text-xs text-zinc-500">
               {job.aspectRatio} · {styleLabel}
+              {job.startedAt && job.startedAt - job.createdAt > 1000
+                ? ` · 排队等待 ${formatTraceShortDuration(job.startedAt - job.createdAt)}`
+                : ''}
             </div>
           </div>
         </div>
@@ -334,6 +339,25 @@ function AdminJobDetailPage() {
               </div>
             </div>
             <CopyActionButton text={finalError} label="复制报错" toastMessage="已复制报错信息" />
+          </div>
+        )}
+
+        {(trace?.textFallbackAvailable || trace?.textFallbackConsumedJobId) && (
+          <div className="flex flex-wrap items-center justify-between gap-2 border border-amber-500/50 bg-amber-500/10 px-4 py-2.5 text-xs text-amber-900 dark:text-amber-200">
+            <span>
+              {trace.textFallbackConsumedJobId
+                ? '用户已确认改用图转文生图（已派生新任务）'
+                : '已向前台提示图转文生图兜底（待用户确认/未触发）'}
+            </span>
+            {trace.textFallbackConsumedJobId && (
+              <Link
+                to="/admin/jobs/$jobId"
+                params={{ jobId: trace.textFallbackConsumedJobId }}
+                className="border border-amber-600/40 bg-white px-2 py-0.5 font-mono text-xs font-bold text-amber-900 hover:border-zinc-950 dark:bg-zinc-950 dark:text-amber-200"
+              >
+                查看派生任务 #{trace.textFallbackConsumedJobId.slice(0, 8)}
+              </Link>
+            )}
           </div>
         )}
       </section>
@@ -451,6 +475,105 @@ function AdminJobDetailPage() {
                   {finalPrompt || '—'}
                 </pre>
               </div>
+
+              {trace?.textFallbackInfo?.triggered && (
+                <div className="border-t border-zinc-200 bg-zinc-50/70 p-4 dark:border-zinc-800 dark:bg-zinc-900/40">
+                  <div className="flex flex-wrap items-center justify-between gap-2 pb-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-xs font-bold text-zinc-900 dark:text-zinc-100">
+                        图转文 · 纯文生图记录
+                      </span>
+                      {trace.textFallbackInfo.sourceJobId && (
+                        <Link
+                          to="/admin/jobs/$jobId"
+                          params={{ jobId: trace.textFallbackInfo.sourceJobId }}
+                          className="border border-zinc-300 bg-white px-1.5 py-0.5 font-mono text-xs text-zinc-700 hover:border-zinc-950 hover:text-zinc-950 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300"
+                        >
+                          来源失败任务 #{trace.textFallbackInfo.sourceJobId.slice(0, 8)}
+                        </Link>
+                      )}
+                    </div>
+                    <span className="font-mono text-xs text-zinc-500">
+                      视觉模型：{trace.textFallbackInfo.visionModel || '—'}
+                      {trace.textFallbackInfo.visionSupplierName
+                        ? ` (${trace.textFallbackInfo.visionSupplierName})`
+                        : ''}
+                    </span>
+                  </div>
+                  {trace.textFallbackInfo.error && (
+                    <div className="mb-2 border border-red-300 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-300">
+                      转译或兜底失败：{trace.textFallbackInfo.error}
+                    </div>
+                  )}
+                  <div className="grid gap-3 md:grid-cols-2">
+                    {trace.textFallbackInfo.poseDescription && (
+                      <div className="border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-950">
+                        <div className="mb-1 flex items-center justify-between text-xs text-zinc-500">
+                          <span className="font-bold text-zinc-800 dark:text-zinc-200">
+                            姿势图转译文本
+                          </span>
+                          <span>
+                            {trace.textFallbackInfo.poseCacheHit ? '命中库缓存' : '即时识图落库'}
+                          </span>
+                        </div>
+                        <p className="text-xs leading-relaxed text-zinc-700 dark:text-zinc-300">
+                          {trace.textFallbackInfo.poseDescription}
+                        </p>
+                      </div>
+                    )}
+                    {trace.textFallbackInfo.costumeDescription && (
+                      <div className="border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-950">
+                        <div className="mb-1 flex items-center justify-between text-xs text-zinc-500">
+                          <span className="font-bold text-zinc-800 dark:text-zinc-200">
+                            服装图转译文本
+                          </span>
+                          <span>
+                            {trace.textFallbackInfo.costumeCacheHit ? '命中库缓存' : '即时识图落库'}
+                          </span>
+                        </div>
+                        <p className="text-xs leading-relaxed text-zinc-700 dark:text-zinc-300">
+                          {trace.textFallbackInfo.costumeDescription}
+                        </p>
+                      </div>
+                    )}
+                    {trace.textFallbackInfo.portraitDescription && (
+                      <div className="border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-950">
+                        <div className="mb-1 flex items-center justify-between text-xs text-zinc-500">
+                          <span className="font-bold text-zinc-800 dark:text-zinc-200">
+                            人像图转译文本
+                          </span>
+                          <span>
+                            {trace.textFallbackInfo.portraitCacheHit ? '命中库缓存' : '即时识图落库'}
+                          </span>
+                        </div>
+                        <p className="text-xs leading-relaxed text-zinc-700 dark:text-zinc-300">
+                          {trace.textFallbackInfo.portraitDescription}
+                        </p>
+                      </div>
+                    )}
+                    {(trace.textFallbackInfo.extraDescriptions || []).map((desc, extraIdx) => (
+                      <div
+                        key={extraIdx}
+                        className="border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-950"
+                      >
+                        <div className="mb-1 flex items-center justify-between text-xs text-zinc-500">
+                          <span className="font-bold text-zinc-800 dark:text-zinc-200">
+                            附加参考图 #{extraIdx + 1} 转译文本
+                          </span>
+                          <span>
+                            {trace.textFallbackInfo?.extraCacheHits?.[extraIdx]
+                              ? '命中库缓存'
+                              : '即时识图落库'}
+                          </span>
+                        </div>
+                        <p className="text-xs leading-relaxed text-zinc-700 dark:text-zinc-300">
+                          {desc}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           </section>
 
@@ -476,11 +599,24 @@ function AdminJobDetailPage() {
                   </thead>
                   <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800">
                     {candidateChannels.map((ch) => {
+                      const matchesKey = (a: { channelId: string; supplierKeyHint?: string }) =>
+                        a.channelId === ch.channelId &&
+                        (!ch.supplierKeyHint || !a.supplierKeyHint || a.supplierKeyHint === ch.supplierKeyHint)
                       const isWinner =
-                        job.status === 'succeeded' && trace?.result?.winningChannelId === ch.channelId
-                      const channelAttempts = attempts.filter((a) => a.channelId === ch.channelId)
+                        job.status === 'succeeded' &&
+                        trace?.result?.winningChannelId === ch.channelId &&
+                        (!ch.supplierKeyHint ||
+                          !trace?.result?.winningSupplierKeyHint ||
+                          trace?.result?.winningSupplierKeyHint === ch.supplierKeyHint)
+                      const channelAttempts = attempts.filter(matchesKey)
+                      const hasInProgress = channelAttempts.some(
+                        (a) => a.outcome === 'in_progress'
+                      )
                       const hasFailed = channelAttempts.some((a) => a.outcome === 'failed')
-                      const totalChannelMs = channelAttempts.reduce((acc, a) => acc + a.durationMs, 0)
+                      const totalChannelMs = channelAttempts.reduce(
+                        (acc, a) => acc + (a.durationMs ?? 0),
+                        0
+                      )
 
                       return (
                         <tr
@@ -489,7 +625,14 @@ function AdminJobDetailPage() {
                         >
                           <td className="px-4 py-2.5 font-mono font-bold">#{ch.order}</td>
                           <td className="px-4 py-2.5 font-bold">{ch.channelName}</td>
-                          <td className="px-4 py-2.5">{ch.supplierName}</td>
+                          <td className="px-4 py-2.5">
+                            <div>{ch.supplierName}</div>
+                            {(ch.supplierKeyLabel || ch.supplierKeyHint) && (
+                              <div className="font-mono text-xs text-zinc-500">
+                                {ch.supplierKeyLabel || ''} {ch.supplierKeyHint ? `(${ch.supplierKeyHint})` : ''}
+                              </div>
+                            )}
+                          </td>
                           <td className="px-4 py-2.5 font-mono">{ch.model}</td>
                           <td className="px-4 py-2.5 font-mono font-bold">{ch.priority}</td>
                           <td className="px-4 py-2.5 text-right whitespace-nowrap">
@@ -497,6 +640,10 @@ function AdminJobDetailPage() {
                               <span className="border border-emerald-600/50 bg-emerald-500/15 px-2 py-0.5 text-xs font-bold text-emerald-700 dark:text-emerald-400">
                                 最终命中（第 {trace?.result?.winningAttemptIndex} 次 ·{' '}
                                 {formatTraceShortDuration(totalChannelMs)}）
+                              </span>
+                            ) : hasInProgress ? (
+                              <span className="border border-amber-500/50 bg-amber-500/15 px-2 py-0.5 text-xs font-bold text-amber-800 dark:text-amber-300">
+                                调用中（{channelAttempts.length} 次）
                               </span>
                             ) : hasFailed ? (
                               <span className="border border-red-500/50 bg-red-500/10 px-2 py-0.5 text-xs font-bold text-red-700 dark:text-red-400">
@@ -589,6 +736,7 @@ function AdminJobDetailPage() {
                 />
                 {attempts.map((attempt, idx) => {
                   const isOk = attempt.outcome === 'succeeded'
+                  const isInProgress = attempt.outcome === 'in_progress'
                   return (
                     <div key={`${job.id}-${attempt.attemptIndex}`} className="relative min-w-0">
                       <span
@@ -596,7 +744,9 @@ function AdminJobDetailPage() {
                         className={`absolute top-3 -left-6 flex size-5 items-center justify-center border font-mono text-xs font-bold sm:-left-7 ${
                           isOk
                             ? 'border-emerald-600 bg-emerald-600 text-white'
-                            : 'border-red-600 bg-red-600 text-white'
+                            : isInProgress
+                              ? 'border-amber-500 bg-amber-500 text-white'
+                              : 'border-red-600 bg-red-600 text-white'
                         }`}
                       >
                         {attempt.attemptIndex}
@@ -759,14 +909,14 @@ function AdminJobDetailPage() {
                       <div className="min-w-0 flex-1 space-y-1">
                         <div className="flex flex-wrap items-center gap-1.5 text-xs">
                           <span className="font-mono font-bold">#{ref.index}</span>
-                          <span className="border border-zinc-300 px-1 py-0.2 text-xs dark:border-zinc-700">
+                          <span className="border border-zinc-300 px-1 py-0.5 text-xs dark:border-zinc-700">
                             {TRACE_SLOT_LABELS[ref.slot] ?? ref.slot}
                           </span>
-                          <span className="bg-zinc-100 px-1 py-0.2 text-xs dark:bg-zinc-900">
+                          <span className="bg-zinc-100 px-1 py-0.5 text-xs dark:bg-zinc-900">
                             {sourceLabel}
                           </span>
                           {deliveryLabel && (
-                            <span className="border border-zinc-300 px-1 py-0.2 text-xs text-zinc-600 dark:border-zinc-700 dark:text-zinc-400">
+                            <span className="border border-zinc-300 px-1 py-0.5 text-xs text-zinc-600 dark:border-zinc-700 dark:text-zinc-400">
                               {deliveryLabel}
                             </span>
                           )}

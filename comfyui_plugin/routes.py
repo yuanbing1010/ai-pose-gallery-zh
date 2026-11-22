@@ -34,10 +34,17 @@ def load_library(lib: str) -> list[dict]:
             raise FileNotFoundError(f"未找到数据文件: {fp}")
         with open(fp, encoding="utf-8") as f:
             _CACHE[lib] = json.load(f)
-        if lib == "costume":
-            for name in ("costume-anime-zh.json", "costume-gia-anime-zh.json", "costume-shisei-zh.json"):
-                with open(DATA_DIR / name, encoding="utf-8") as f:
+        if lib == "pose":
+            mio_pose = DATA_DIR / "pose-mio-zh.json"
+            if mio_pose.exists():
+                with open(mio_pose, encoding="utf-8") as f:
                     _CACHE[lib] += json.load(f)
+        if lib == "costume":
+            for name in ("costume-anime-zh.json", "costume-gia-anime-zh.json", "costume-shisei-zh.json", "costume-mio-zh.json"):
+                extra_fp = DATA_DIR / name
+                if extra_fp.exists():
+                    with open(extra_fp, encoding="utf-8") as f:
+                        _CACHE[lib] += json.load(f)
     return _CACHE[lib]
 
 
@@ -47,8 +54,8 @@ def find_item(lib: str, item_id: str) -> dict:
     for it in items:
         if it.get("id") == clean_id:
             return it
-    if clean_id.startswith(("charadb-", "gia-anime-", "shisei-")):
-        raise ValueError("未知外部来源服装 ID")
+    if clean_id.startswith(("charadb-", "gia-anime-", "shisei-", "mio-")):
+        raise ValueError("未知外部来源 ID")
     return items[0]
 
 
@@ -69,16 +76,28 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         raise ValueError("远程图片地址不允许重定向")
 
 
+def _allowed_remote_formats() -> dict[str, set[str]]:
+    allowed: dict[str, set[str]] = {}
+    for row in load_library("costume") + load_library("pose"):
+        src = row.get("source")
+        if src not in ("charadb", "gia-anime", "mio"):
+            continue
+        url = row.get("原图")
+        if not isinstance(url, str) or not url.startswith("https://"):
+            continue
+        allowed[url] = {"JPEG"} if src in ("charadb", "mio") else {"PNG", "WEBP"}
+    return allowed
+
+
 def open_reference_image(rel_path: str):
-    """本地图保持原行为；远程仅允许已收录 CharaDB / ギア动漫原图，内存读取。"""
+    """本地图保持原行为；远程仅允许已收录 CharaDB / ギア动漫 / 霧島澪 原图，内存读取。"""
     from PIL import Image
 
     if not rel_path.startswith("https://"):
         return Image.open(resolve_safe_image_path(rel_path))
-    allowed = {row["原图"]: ({"JPEG"} if row.get("source") == "charadb" else {"PNG", "WEBP"})
-               for row in load_library("costume") if row.get("source") in ("charadb", "gia-anime")}
+    allowed = _allowed_remote_formats()
     if rel_path not in allowed:
-        raise ValueError("远程图片不在已收录服装目录中")
+        raise ValueError("远程图片不在已收录目录中")
     opener = urllib.request.build_opener(_NoRedirect())
     request = urllib.request.Request(rel_path, headers={"User-Agent": "ai-pose-gallery/2.0", "Accept": "image/jpeg,image/png,image/webp"})
     with opener.open(request, timeout=20) as response:
@@ -163,7 +182,13 @@ def register_routes() -> None:
                     rel = f"img/depth/{stem}.webp"
             if rel.startswith("https://"):
                 # Browser reads only catalogue URLs; no arbitrary remote proxy.
-                allowed = {r[k] for r in load_library("costume") if r.get("source") in ("charadb", "gia-anime") for k in ("缩略图", "原图")}
+                allowed = {
+                    r[k]
+                    for r in load_library("costume") + load_library("pose")
+                    if r.get("source") in ("charadb", "gia-anime", "mio")
+                    for k in ("缩略图", "原图")
+                    if isinstance(r.get(k), str)
+                }
                 if rel not in allowed:
                     raise ValueError("未知远程图片")
                 raise web.HTTPFound(rel)

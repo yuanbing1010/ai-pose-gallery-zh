@@ -127,6 +127,7 @@ export function TraceAttemptCard({
     badgeClass: 'border-zinc-400 bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300',
   }
   const isSuccess = attempt.outcome === 'succeeded'
+  const isInProgress = attempt.outcome === 'in_progress'
   const requestParamsText = formatJsonText(attempt.request.params)
   const sentPromptPreview = extractPromptFromParams(attempt.request.params)
   const responseBodyText = attempt.response ? formatJsonText(attempt.response.body) : ''
@@ -136,7 +137,9 @@ export function TraceAttemptCard({
       className={`min-w-0 border bg-white dark:bg-zinc-950 ${
         isSuccess
           ? 'border-emerald-600/50 dark:border-emerald-500/40'
-          : 'border-red-500/45 dark:border-red-500/40'
+          : isInProgress
+            ? 'border-amber-500/50 dark:border-amber-500/40'
+            : 'border-red-500/45 dark:border-red-500/40'
       }`}
     >
       {/* 卡片顶部：序号、触发动作、状态、时间窗与耗时 */}
@@ -144,7 +147,9 @@ export function TraceAttemptCard({
         className={`flex flex-wrap items-center justify-between gap-2 border-b px-4 py-2.5 ${
           isSuccess
             ? 'border-emerald-600/30 bg-emerald-500/5 dark:border-emerald-500/30'
-            : 'border-red-500/30 bg-red-500/5 dark:border-red-500/30'
+            : isInProgress
+              ? 'border-amber-500/30 bg-amber-500/5 dark:border-amber-500/30'
+              : 'border-red-500/30 bg-red-500/5 dark:border-red-500/30'
         }`}
       >
         <div className="flex min-w-0 flex-wrap items-center gap-2 text-xs">
@@ -158,10 +163,12 @@ export function TraceAttemptCard({
             className={`border px-1.5 py-0.5 text-xs font-bold ${
               isSuccess
                 ? 'border-emerald-600/40 bg-emerald-500/15 text-emerald-700 dark:text-emerald-400'
-                : 'border-red-600/40 bg-red-500/15 text-red-700 dark:text-red-400'
+                : isInProgress
+                  ? 'border-amber-600/40 bg-amber-500/15 text-amber-800 dark:text-amber-300'
+                  : 'border-red-600/40 bg-red-500/15 text-red-700 dark:text-red-400'
             }`}
           >
-            {isSuccess ? '成功' : '失败'}
+            {isSuccess ? '成功' : isInProgress ? '调用中' : '失败'}
           </span>
           {attempt.delayMs > 0 && (
             <span className="border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-xs text-amber-800 dark:text-amber-300">
@@ -173,10 +180,11 @@ export function TraceAttemptCard({
         <div className="flex flex-wrap items-center gap-3 font-mono text-xs text-zinc-600 dark:text-zinc-400">
           <span className="inline-flex items-center gap-1">
             <ClockIcon className="size-3" />
-            {formatTimeMs(attempt.startedAt)} → {formatTimeMs(attempt.finishedAt)}
+            {formatTimeMs(attempt.startedAt)} →{' '}
+            {isInProgress ? '进行中…' : formatTimeMs(attempt.finishedAt)}
           </span>
           <span className="font-sans font-bold text-zinc-950 dark:text-zinc-100">
-            耗时 {formatTraceDuration(attempt.durationMs)}
+            {isInProgress ? '耗时 进行中' : `耗时 ${formatTraceDuration(attempt.durationMs)}`}
           </span>
         </div>
       </div>
@@ -188,6 +196,12 @@ export function TraceAttemptCard({
           <span className="font-bold text-zinc-950 dark:text-zinc-100">{attempt.supplierName}</span>
           <span className="text-zinc-400">/</span>
           <span className="font-semibold">{attempt.channelName}</span>
+          {(attempt.supplierKeyLabel || attempt.supplierKeyHint) && (
+            <span className="border border-zinc-200 bg-zinc-50 px-1.5 py-0.5 font-mono text-xs text-zinc-700 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300">
+              密钥：{attempt.supplierKeyLabel ? `${attempt.supplierKeyLabel} ` : ''}
+              {attempt.supplierKeyHint ? `(${attempt.supplierKeyHint})` : ''}
+            </span>
+          )}
           <span className="text-zinc-400">·</span>
           <span className="border border-zinc-200 bg-zinc-100 px-1.5 py-0.5 font-mono text-xs font-bold dark:border-zinc-800 dark:bg-zinc-900">
             {attempt.model}
@@ -293,7 +307,7 @@ export function TraceAttemptCard({
               </>
             ) : (
               <span className="border border-zinc-300 px-1.5 py-0.5 text-xs text-zinc-600 dark:border-zinc-700 dark:text-zinc-400">
-                无响应（前置阶段或网络中断）
+                {isInProgress ? '等待上游响应中…' : '无响应（前置阶段或网络中断）'}
               </span>
             )}
           </div>

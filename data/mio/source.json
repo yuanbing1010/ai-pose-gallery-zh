@@ -1,0 +1,16 @@
+{
+  "origin": "https://sleepyzone.online/mio-design-archive/",
+  "data_url": "https://sleepyzone.online/mio-design-archive/data.json",
+  "repository": "https://github.com/sleepy-zone/mio-design-archive",
+  "author": "霧島澪",
+  "author_handle": "@Mio_2am",
+  "author_url": "https://x.com/Mio_2am",
+  "generated": "2026-11-18",
+  "snapshot_sha256": "aab98cc81e9042c9e3f264414dd32bb0d068ca3431a20a8b7070fc80b8f1592d",
+  "pose_volumes": 27,
+  "costume_volumes": 13,
+  "pose_count": 250,
+  "costume_count": 117,
+  "images": "remote-only; no image mirroring",
+  "copyright": "设计与图片版权归原网站（sleepyzone.online/mio-design-archive）及原作者 霧島澪（@Mio_2am）所有，禁止二次分发图片本体或商业再发布"
+}

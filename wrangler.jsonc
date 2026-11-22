@@ -6,6 +6,9 @@
   "observability": {
     "enabled": true
   },
+  "triggers": {
+    "crons": ["30 12 * * *"]
+  },
   "previews": {},
   // 部署前请先运行 `npx wrangler d1 create ai-pose-gallery-db` 与 `npx wrangler r2 bucket create ai-pose-gallery-bucket`
   // 并把返回的 database_id 填入下方 d1_databases[0].database_id，再通过 `wrangler secret put APP_ENCRYPTION_KEY` 设置加密密钥
@@ -28,6 +31,14 @@
       {
         "name": "US_RELAY",
         "class_name": "UsEgressRelay"
+      },
+      {
+        "name": "GENERATION_QUEUE",
+        "class_name": "GenerationQueueCoordinator"
+      },
+      {
+        "name": "GENERATION_RUNNER",
+        "class_name": "GenerationJobRunner"
       }
     ]
   },
@@ -36,6 +47,13 @@
       "tag": "v1",
       "new_sqlite_classes": [
         "UsEgressRelay"
+      ]
+    },
+    {
+      "tag": "v2",
+      "new_sqlite_classes": [
+        "GenerationQueueCoordinator",
+        "GenerationJobRunner"
       ]
     }
   ],

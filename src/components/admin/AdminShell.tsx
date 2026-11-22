@@ -6,10 +6,12 @@ import {
   CpuIcon,
   FileTextIcon,
   LayoutGridIcon,
+  ListOrderedIcon,
   LogOutIcon,
   MenuIcon,
   PaletteIcon,
   RefreshCwIcon,
+  ScanTextIcon,
   ServerIcon,
   ShieldAlertIcon,
   SlidersHorizontalIcon,
@@ -21,7 +23,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from '@/co
 import { ThemeToggle } from '@/components/theme/ThemeToggle'
 import { adminLogoutApi } from '@/lib/apiClient'
 import type { PublicUser } from '@/types/gallery'
-import { getAdminNavGroups, getAdminNavItems, type AdminTab } from './auditHelpers'
+import { getAdminNavGroups, type AdminTab } from './auditHelpers'
 
 const TAB_ICONS: Record<AdminTab, LucideIcon> = {
   overview: LayoutGridIcon,
@@ -30,10 +32,12 @@ const TAB_ICONS: Record<AdminTab, LucideIcon> = {
   suppliers: ServerIcon,
   api: CpuIcon,
   jobs: ActivityIcon,
+  queue: ListOrderedIcon,
   styles: PaletteIcon,
   access: SlidersHorizontalIcon,
   prompts: FileTextIcon,
   sanitize: ShieldAlertIcon,
+  descriptions: ScanTextIcon,
 }
 
 interface AdminShellProps {
@@ -61,7 +65,6 @@ export function AdminShell({
 }: AdminShellProps) {
   const navigate = useNavigate()
   const navGroups = getAdminNavGroups()
-  const navItems = getAdminNavItems()
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
 
   const handleNavClick = (tabId: AdminTab) => {
@@ -242,34 +245,9 @@ export function AdminShell({
                 <span>刷新</span>
               </button>
             )}
-            <ThemeToggle />
+            <ThemeToggle square />
           </div>
         </header>
-
-        {/* 移动端快捷切页胶囊带 */}
-        <nav
-          aria-label="移动端管理端快捷导航"
-          className="no-scrollbar flex items-center gap-1.5 overflow-x-auto border-b border-zinc-200 bg-zinc-50/70 px-4 py-2 text-xs md:hidden dark:border-zinc-800 dark:bg-zinc-900/40"
-        >
-          {navItems.map((item) => {
-            const active = activeTab === item.id
-            return (
-              <button
-                key={item.id}
-                type="button"
-                onClick={() => handleNavClick(item.id)}
-                className={`shrink-0 border px-2.5 py-1 font-medium whitespace-nowrap transition-colors ${
-                  active
-                    ? 'border-zinc-950 bg-zinc-950 text-white dark:border-zinc-100 dark:bg-zinc-100 dark:text-zinc-950'
-                    : 'border-zinc-200 bg-white text-zinc-700 hover:border-zinc-400 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300'
-                }`}
-              >
-                <span className="mr-1 font-mono opacity-75">{item.code}.</span>
-                <span>{item.label}</span>
-              </button>
-            )
-          })}
-        </nav>
 
         <main className="mx-auto w-full max-w-[1400px] min-w-0 flex-1 space-y-6 p-4 sm:p-6 lg:p-8">
           {children}

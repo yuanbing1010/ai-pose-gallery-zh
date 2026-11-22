@@ -13,6 +13,7 @@
     "build": "tsc -b && vite build",
     "build:dist": "node scripts/build-dist.mjs",
     "deploy": "node scripts/build-dist.mjs && wrangler deploy",
+    "sync:mio": "python scripts/import_mio.py --sync",
     "lint": "oxlint",
     "impeccable": "impeccable detect src/",
     "preview": "vite preview"

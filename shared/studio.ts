@@ -1,4 +1,4 @@
-export type ImageProviderId = 'gemini' | 'gpt' | 'grok'
+export type ImageProviderId = 'gemini' | 'gpt' | 'grok' | 'muse' | 'seedream'
 export type ImagePassMode = 'url' | 'base64'
 export type UserRole = 'user' | 'admin'
 export type UserStatus = 'active' | 'disabled'
@@ -8,12 +8,18 @@ export type CreditLedgerType =
   | 'admin_adjust'
   | 'generate_deduct'
   | 'generate_refund'
-export type GenerationStatus = 'processing' | 'succeeded' | 'failed'
+export type GenerationStatus = 'queued' | 'processing' | 'succeeded' | 'failed' | 'cancelled'
 
 export interface PoseItem {
-  source?: 'upload'
+  source?: 'upload' | 'mio'
   useDepth?: boolean
   r2Key?: string
+  来源?: string
+  来源地址?: string
+  原帖地址?: string
+  描述?: string
+  标签?: string[]
+  关键词?: string
   id: string
   体系: string
   姿势编号: string
@@ -45,13 +51,15 @@ export interface CostumeView {
 }
 
 export interface CostumeItem {
-  source?: 'upload' | 'charadb' | 'gia-anime' | 'shisei'
+  source?: 'upload' | 'charadb' | 'gia-anime' | 'shisei' | 'mio'
   r2Key?: string
   views?: CostumeView[]
   selectedView?: string
   一级分类?: '现实' | '二次元'
   来源?: string
   来源地址?: string
+  原帖地址?: string
+  描述?: string
   日文名称?: string
   敏感?: boolean
   id: string
@@ -97,8 +105,28 @@ export interface RecipeState {
   extraImages?: ExtraReferenceImage[]
 }
 
-export interface GptParams {
-  endpointMode: 'images_edits_json' | 'images_edits' | 'responses' | 'chat'
+export interface WaveSpeedChannelOptions {
+  /** 同步优先模式（enable_sync_mode）：单次请求最多等待约 105s，未完成时自动降级为异步轮询 */
+  wavespeedSyncMode?: boolean
+  /** 输出图片格式偏好（auto 时自动匹配各模型支持的输出格式） */
+  wavespeedOutputFormat?: 'auto' | 'png' | 'jpeg' | 'webp'
+  /** 随机种子（-1 或留空表示随机） */
+  wavespeedSeed?: number
+  /** 分辨率档位策略（auto 跟随前端自选并在未选时默认 1.5K；也可固定为 1k / 1.5k / 2k） */
+  wavespeedResolution?: 'auto' | '1k' | '1.5k' | '2k'
+  /** 参考图传输模式：stitched_single 仅传 1 张左中右拼合图（默认，省钱且支持单图模型）；multi 多图模型传独立原图 */
+  wavespeedRefMode?: 'stitched_single' | 'multi'
+}
+
+export interface DreaminaChannelOptions {
+  /** Dreamina 参考图传输模式：multi 传独立多参考图（默认，最多 6 张）；stitched_single 仅传 1 张左中右拼合图 */
+  dreaminaRefMode?: 'multi' | 'stitched_single'
+  /** Dreamina 取图清晰度：original 走 /v1/download 取全分辨率原图（默认推荐）；preview 走 /v1/proxy 快速取预览图 */
+  dreaminaOutputQuality?: 'original' | 'preview'
+}
+
+export interface GptParams extends WaveSpeedChannelOptions, DreaminaChannelOptions {
+  endpointMode: 'images_edits_json' | 'images_edits' | 'responses' | 'chat' | 'wavespeed' | 'dreamina'
   size: 'auto' | '1024x1536' | '1024x1024' | '1536x1024'
   quality: 'auto' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
   complexity?: 'auto' | 'low' | 'medium' | 'high'
@@ -108,18 +136,31 @@ export interface GptParams {
   moderation: 'auto' | 'low'
 }
 
-export interface GeminiParams {
-  endpointMode: 'native' | 'openai_chat' | 'openai_edits_json' | 'openai_edits'
+export interface GeminiParams extends WaveSpeedChannelOptions, DreaminaChannelOptions {
+  endpointMode: 'native' | 'openai_chat' | 'openai_edits_json' | 'openai_edits' | 'wavespeed' | 'dreamina'
   authMode?: 'auto' | 'bearer' | 'goog_key' | 'both'
   aspectRatio: '3:4' | '1:1' | '4:3' | '9:16' | '16:9'
-  imageSize: '1K' | '2K' | '4K'
+  imageSize: '1K' | '2K'
 }
 
-export interface GrokParams {
-  endpointMode: 'xai_edits' | 'openai_edits_json' | 'openai_edits' | 'openai_chat'
+export interface GrokParams extends WaveSpeedChannelOptions, DreaminaChannelOptions {
+  endpointMode: 'xai_edits' | 'openai_edits_json' | 'openai_edits' | 'openai_chat' | 'wavespeed' | 'dreamina'
   aspectRatio: '3:4' | '1:1' | '4:3' | '9:16' | '16:9' | 'auto'
   resolution: '1k' | '2k'
   quality: 'auto' | 'low' | 'medium'
+  responseFormat: 'b64_json' | 'url'
+}
+
+export interface MuseParams extends WaveSpeedChannelOptions, DreaminaChannelOptions {
+  endpointMode: 'muse_tasks' | 'openai_generations' | 'openai_edits_json' | 'openai_edits' | 'wavespeed' | 'dreamina'
+  aspectRatio: '3:4' | '1:1' | '4:3' | '9:16' | '16:9' | 'auto'
+  responseFormat: 'b64_json' | 'url'
+}
+
+export interface SeedreamParams extends WaveSpeedChannelOptions, DreaminaChannelOptions {
+  endpointMode: 'wavespeed' | 'dreamina' | 'openai_edits_json' | 'openai_edits' | 'openai_generations'
+  aspectRatio: '3:4' | '1:1' | '4:3' | '9:16' | '16:9' | 'auto'
+  resolution: '1k' | '1.5k' | '2k'
   responseFormat: 'b64_json' | 'url'
 }
 
@@ -127,6 +168,8 @@ export type ProviderParamsMap = {
   gemini: GeminiParams
   gpt: GptParams
   grok: GrokParams
+  muse: MuseParams
+  seedream: SeedreamParams
 }
 
 export interface ProviderModelOption {
@@ -134,7 +177,151 @@ export interface ProviderModelOption {
   label: string
 }
 
-export const PROVIDER_ORDER: ImageProviderId[] = ['gpt', 'grok', 'gemini']
+/** WaveSpeed API v3 精简模型目录（可在 GPT / Grok / Gemini 任一槽位下选用） */
+export const WAVESPEED_MODEL_OPTIONS: ProviderModelOption[] = [
+  {
+    value: 'bytedance/seedream-v5.5/edit',
+    label: 'ByteDance Seedream 5.5 Edit（即梦 5.5 · 多图/拼图旗舰）',
+  },
+  {
+    value: 'minimax/image-01/image-to-image',
+    label: 'MiniMax Image-01 I2I（单图/拼图图生图）',
+  },
+]
+
+/** Dreamina 浏览器桥 (scripts/dreamina-bridge) 模型目录（独立于 Muse，可在任意画师槽位下与 WaveSpeed 混配） */
+export const DREAMINA_MODEL_OPTIONS: ProviderModelOption[] = [
+  {
+    value: 'seedream-5.0-flash',
+    label: 'Seedream 5.0 Flash（网页默认主力 · 速度与质量均衡）',
+  },
+  {
+    value: 'seedream-5.0-pro',
+    label: 'Seedream 5.0 Pro（高精旗舰 · 需页面同步切换）',
+  },
+  {
+    value: 'seedream-5.5',
+    label: 'Seedream 5.5（若账号页面已开放 5.5 可选）',
+  },
+]
+
+/** 判断供应商地址是否属于自建 Dreamina Workers 服务 */
+export function isDreaminaBaseUrl(baseUrl: string): boolean {
+  const trimmed = baseUrl.trim()
+  if (!trimmed) return false
+  try {
+    const parsed = new URL(trimmed)
+    const host = parsed.hostname.toLowerCase()
+    return host.includes('dreamina')
+  } catch {
+    return /dreamina/i.test(trimmed)
+  }
+}
+
+/** 判断供应商地址是否属于 WaveSpeed API v3 接口 */
+export function isWaveSpeedBaseUrl(baseUrl: string): boolean {
+  const trimmed = baseUrl.trim()
+  if (!trimmed) return false
+  try {
+    const parsed = new URL(trimmed)
+    const host = parsed.hostname.toLowerCase()
+    const path = parsed.pathname.toLowerCase()
+    return host === 'api.wavespeed.ai' || host.endsWith('.wavespeed.ai') || /\/api\/v3(?:\/|$)/.test(path)
+  } catch {
+    return /wavespeed\.ai|\/api\/v3(?:\/|$)/i.test(trimmed)
+  }
+}
+
+/** 若供应商 Base URL 中直接带有 /api/v3/{model_id} 后缀，提取出对应的模型 ID */
+export function extractWaveSpeedModelFromUrl(baseUrl: string): string | null {
+  const trimmed = baseUrl.trim().replace(/\/+$/, '')
+  if (!trimmed) return null
+  const match = trimmed.match(/\/api\/v3\/(.+)$/i)
+  if (!match) return null
+  const rest = match[1].replace(/^\/+|\/+$/g, '')
+  if (!rest) return null
+  if (/^(?:predictions|media|models|balance)(?:\/|$)/i.test(rest)) return null
+  return rest
+}
+
+/** 根据厂商槽位与接口协议返回管理端可选的模型列表 */
+export function getChannelModelOptions(
+  providerId: ImageProviderId,
+  endpointMode?: string
+): ProviderModelOption[] {
+  if (endpointMode === 'wavespeed') {
+    return [
+      ...WAVESPEED_MODEL_OPTIONS,
+      { value: 'custom', label: '自定义模型 ID' },
+    ]
+  }
+  if (endpointMode === 'dreamina') {
+    return [
+      ...DREAMINA_MODEL_OPTIONS,
+      { value: 'custom', label: '自定义模型 ID' },
+    ]
+  }
+  return PROVIDER_META[providerId].models
+}
+
+/** 判断 WaveSpeed 模型是否仅接受单张输入图（需在多参考图时强制使用拼合图） */
+export function isWaveSpeedSingleImageModel(modelId: string): boolean {
+  const lower = modelId.trim().toLowerCase()
+  return (
+    lower === 'minimax/image-01/image-to-image' ||
+    /kontext|image-to-image|grok-imagine-image\/edit/.test(lower)
+  )
+}
+
+/** 判断指定渠道在当前参考图数量下是否应采用“单张左中右拼合参考图”模式 */
+export function isChannelStitchedSingleMode(
+  channel: { model: string; paramsJson?: string; params?: Record<string, unknown> },
+  refCount = 2
+): boolean {
+  if (refCount < 2) return false
+  let params: Record<string, unknown> = {}
+  if (channel.params && typeof channel.params === 'object') {
+    params = channel.params
+  } else if (typeof channel.paramsJson === 'string' && channel.paramsJson.trim()) {
+    try {
+      const parsed = JSON.parse(channel.paramsJson)
+      if (parsed && typeof parsed === 'object') {
+        params = parsed as Record<string, unknown>
+      }
+    } catch {
+      params = {}
+    }
+  }
+  if (params.endpointMode === 'dreamina') {
+    return (params.dreaminaRefMode as string | undefined) === 'stitched_single'
+  }
+  if (params.endpointMode !== 'wavespeed') return false
+  if (isWaveSpeedSingleImageModel(channel.model)) return true
+  return (params.wavespeedRefMode as string | undefined) !== 'multi'
+}
+
+/** 判断渠道是否属于各画师自家协议渠道（非 WaveSpeed / Dreamina 跨槽位通用协议） */
+export function isNativeArtistChannel(channel: {
+  paramsJson?: string
+  params?: Record<string, unknown>
+}): boolean {
+  let params: Record<string, unknown> = {}
+  if (channel.params && typeof channel.params === 'object') {
+    params = channel.params
+  } else if (typeof channel.paramsJson === 'string' && channel.paramsJson.trim()) {
+    try {
+      const parsed = JSON.parse(channel.paramsJson)
+      if (parsed && typeof parsed === 'object') {
+        params = parsed as Record<string, unknown>
+      }
+    } catch {
+      params = {}
+    }
+  }
+  return params.endpointMode !== 'wavespeed' && params.endpointMode !== 'dreamina'
+}
+
+export const PROVIDER_ORDER: ImageProviderId[] = ['gpt', 'grok', 'gemini', 'muse', 'seedream']
 
 export const PROVIDER_META: Record<
   ImageProviderId,
@@ -193,6 +380,31 @@ export const PROVIDER_META: Record<
       { value: 'custom', label: '自定义模型 ID' },
     ],
   },
+  muse: {
+    id: 'muse',
+    name: 'Muse Image',
+    shortName: 'Muse',
+    defaultBaseUrl: 'https://muse.geminirun.com/v1',
+    docUrl: 'https://muse.ai/',
+    models: [
+      { value: 'muse-image', label: 'muse-image（织梦主绘 · 支持多图参考）' },
+      { value: 'custom', label: '自定义模型 ID' },
+    ],
+  },
+  seedream: {
+    id: 'seedream',
+    name: 'ByteDance Seedream',
+    shortName: '即梦',
+    defaultBaseUrl: 'https://api.wavespeed.ai',
+    docUrl: 'https://jimeng.jianying.com/',
+    models: [
+      { value: 'bytedance/seedream-v5.5/edit', label: 'ByteDance Seedream 5.5 Edit（即梦 5.5 · 多图/拼图旗舰）' },
+      { value: 'seedream-5.0-flash', label: 'Seedream 5.0 Flash（网页默认主力 · 速度与质量均衡）' },
+      { value: 'seedream-5.0-pro', label: 'Seedream 5.0 Pro（高精旗舰）' },
+      { value: 'seedream-5.5', label: 'Seedream 5.5（网页 5.5 版）' },
+      { value: 'custom', label: '自定义模型 ID' },
+    ],
+  },
 }
 
 export const DEFAULT_PROVIDER_PARAMS: ProviderParamsMap = {
@@ -218,6 +430,23 @@ export const DEFAULT_PROVIDER_PARAMS: ProviderParamsMap = {
     authMode: 'auto',
     aspectRatio: '3:4',
     imageSize: '2K',
+  },
+  muse: {
+    endpointMode: 'muse_tasks',
+    aspectRatio: '3:4',
+    responseFormat: 'b64_json',
+  },
+  seedream: {
+    endpointMode: 'wavespeed',
+    aspectRatio: '3:4',
+    resolution: '2k',
+    responseFormat: 'b64_json',
+    wavespeedSyncMode: true,
+    wavespeedOutputFormat: 'auto',
+    wavespeedResolution: 'auto',
+    wavespeedRefMode: 'multi',
+    dreaminaRefMode: 'multi',
+    dreaminaOutputQuality: 'original',
   },
 }
 
@@ -250,6 +479,20 @@ export const STUDIO_ARTISTS: StudioArtistPersona[] = [
     specialty: '',
     bio: '',
     accent: '#E5A918',
+  },
+  {
+    id: 'muse',
+    name: '缪斯织梦师',
+    specialty: '',
+    bio: '',
+    accent: '#0064E0',
+  },
+  {
+    id: 'seedream',
+    name: '旋梦造境师',
+    specialty: '',
+    bio: '',
+    accent: '#06B6D4',
   },
 ]
 
@@ -284,14 +527,16 @@ export function getStudioArtist(id: ImageProviderId): StudioArtistPersona {
   return STUDIO_ARTISTS.find((a) => a.id === id) ?? STUDIO_ARTISTS[0]
 }
 
-export type StudioResolution = '1K' | '2K' | '4K'
+export type StudioResolution = '1K' | '1.5K' | '2K'
 
-export const STUDIO_RESOLUTION_ORDER: StudioResolution[] = ['1K', '2K', '4K']
+export const STUDIO_RESOLUTION_ORDER: StudioResolution[] = ['1K', '1.5K', '2K']
 
 export const PROVIDER_SUPPORTED_RESOLUTIONS: Record<ImageProviderId, StudioResolution[]> = {
   gpt: [],
   grok: ['1K', '2K'],
-  gemini: ['1K', '2K', '4K'],
+  gemini: ['1K', '2K'],
+  muse: [],
+  seedream: ['1K', '1.5K', '2K'],
 }
 
 export const STUDIO_RESOLUTION_META: Record<
@@ -299,8 +544,20 @@ export const STUDIO_RESOLUTION_META: Record<
   { label: string; hint: string; description: string }
 > = {
   '1K': { label: '1K', hint: '标准', description: '快速响应 · 构图试错与高性价比出图' },
+  '1.5K': { label: '1.5K', hint: '清晰', description: '性价比优选 · 细节更清晰且成本接近 1K' },
   '2K': { label: '2K', hint: '高清', description: '均衡推荐 · 细节锐度与速度的最佳平衡' },
-  '4K': { label: '4K', hint: '超清', description: '极致细节 · 精绘壁纸与复杂服饰纹理首选' },
+}
+
+export function normalizeStudioResolution(raw: unknown): StudioResolution | null {
+  if (typeof raw !== 'string') return null
+  const upper = raw.trim().toUpperCase()
+  if (upper === '1K' || upper === '1.5K' || upper === '2K') {
+    return upper
+  }
+  if (upper === '4K') {
+    return '2K'
+  }
+  return null
 }
 
 export interface ProfileResolutionOption {
@@ -310,7 +567,7 @@ export interface ProfileResolutionOption {
 }
 
 /**
- * 规范化模型档位的分辨率定价列表；对于不支持 1K/2K/4K 切换的厂商（如 GPT）返回空数组。
+ * 规范化模型档位的分辨率定价列表；对于不支持分辨率切换的厂商（如 GPT）返回空数组。
  */
 export function normalizeProfileResolutions(
   providerId: ImageProviderId,
@@ -338,7 +595,10 @@ export function normalizeProfileResolutions(
 
   const normalized = supported.map((res) => {
     const found = byRes.get(res)
-    return found ?? { resolution: res, enabled: true, creditCost: safeFallback }
+    if (found) return found
+    const fallback =
+      res === '1.5K' ? (byRes.get('1K')?.creditCost ?? safeFallback) : safeFallback
+    return { resolution: res, enabled: true, creditCost: fallback }
   })
 
   // 至少保证有 1 个分辨率处于开启状态
@@ -448,13 +708,65 @@ export function buildAspectRatioPatches(ratio: StudioAspectRatio): {
   gemini: Partial<GeminiParams>
   gpt: Partial<GptParams>
   grok: Partial<GrokParams>
+  muse: Partial<MuseParams>
+  seedream: Partial<SeedreamParams>
 } {
   const opt = STUDIO_ASPECT_RATIOS.find((r) => r.id === ratio) ?? STUDIO_ASPECT_RATIOS[0]
   return {
     gemini: { aspectRatio: opt.id },
     gpt: { size: opt.gptSize },
     grok: { aspectRatio: opt.id },
+    muse: { aspectRatio: opt.id },
+    seedream: { aspectRatio: opt.id },
   }
+}
+
+const ESTIMATED_PIXELS_1K: Record<StudioAspectRatio, [number, number]> = {
+  '1:1': [1024, 1024],
+  '3:4': [768, 1024],
+  '4:3': [1024, 768],
+  '9:16': [576, 1024],
+  '16:9': [1024, 576],
+}
+
+const ESTIMATED_PIXELS_1536: Record<StudioAspectRatio, [number, number]> = {
+  '1:1': [1536, 1536],
+  '3:4': [1152, 1536],
+  '4:3': [1536, 1152],
+  '9:16': [864, 1536],
+  '16:9': [1536, 864],
+}
+
+const ESTIMATED_PIXELS_2K: Record<StudioAspectRatio, [number, number]> = {
+  '1:1': [2048, 2048],
+  '3:4': [1536, 2048],
+  '4:3': [2048, 1536],
+  '9:16': [1152, 2048],
+  '16:9': [2048, 1152],
+}
+
+/** 估算当前画师、画幅比例与分辨率档位对应的输出像素尺寸 */
+export function getEstimatedOutputDimensions(
+  providerId: ImageProviderId,
+  ratio: StudioAspectRatio,
+  resolution?: StudioResolution | null
+): { width: number; height: number; label: string } {
+  if (providerId === 'gpt') {
+    const opt = STUDIO_ASPECT_RATIOS.find((r) => r.id === ratio) ?? STUDIO_ASPECT_RATIOS[0]
+    const [w, h] = opt.gptSize.split('x').map((n) => Number(n) || 1024)
+    return { width: w, height: h, label: `${w}×${h}` }
+  }
+  const tier =
+    resolution ??
+    (providerId === 'seedream' ? '2K' : providerId === 'gemini' || providerId === 'grok' ? '2K' : '1.5K')
+  const table =
+    tier === '1K'
+      ? ESTIMATED_PIXELS_1K
+      : tier === '1.5K'
+        ? ESTIMATED_PIXELS_1536
+        : ESTIMATED_PIXELS_2K
+  const [width, height] = table[ratio] ?? table['3:4']
+  return { width, height, label: `${width}×${height}` }
 }
 
 export const NONE_STYLE_PRESET = {
@@ -659,11 +971,6 @@ export type PromptConstraintCondition =
   | 'has_pose_strict'
   | 'has_pose_adaptive'
   | 'has_pose_and_others'
-  | 'has_pose_and_others_strict'
-  | 'has_pose_and_others_adaptive'
-  | 'pose_only'
-  | 'pose_only_strict'
-  | 'pose_only_adaptive'
   | 'has_portrait'
   | 'no_portrait'
   | 'has_costume'
@@ -681,15 +988,10 @@ export const PROMPT_CONSTRAINT_CONDITION_OPTIONS: Array<{
   label: string
 }> = [
   { value: 'always', label: '始终生效（全部场景）' },
-  { value: 'has_pose_and_others', label: '有姿势图且含其他参考图时' },
-  { value: 'has_pose_and_others_strict', label: '有姿势图且含其他参考图（严格锁姿势）' },
-  { value: 'has_pose_and_others_adaptive', label: '有姿势图且含其他参考图（姿势适配画风）' },
-  { value: 'pose_only', label: '仅传姿势图（无其他参考图）时' },
-  { value: 'pose_only_strict', label: '仅传姿势图（严格锁姿势）' },
-  { value: 'pose_only_adaptive', label: '仅传姿势图（姿势适配画风）' },
   { value: 'has_pose', label: '有姿势图时' },
   { value: 'has_pose_strict', label: '有姿势图时（严格锁姿势）' },
-  { value: 'has_pose_adaptive', label: '有姿势图时（姿势适配画风）' },
+  { value: 'has_pose_adaptive', label: '有姿势图时（开启姿势适配）' },
+  { value: 'has_pose_and_others', label: '有姿势图且含其他参考图时' },
   { value: 'has_portrait', label: '有人像图时' },
   { value: 'no_portrait', label: '无人像图时' },
   { value: 'has_costume', label: '有服装图时' },
@@ -699,6 +1001,14 @@ export const PROMPT_CONSTRAINT_CONDITION_OPTIONS: Array<{
 const VALID_CONSTRAINT_CONDITIONS = new Set<PromptConstraintCondition>(
   PROMPT_CONSTRAINT_CONDITION_OPTIONS.map((opt) => opt.value)
 )
+
+const LEGACY_CONSTRAINT_CONDITION_MAP: Record<string, PromptConstraintCondition> = {
+  has_pose_and_others_strict: 'has_pose_and_others',
+  has_pose_and_others_adaptive: 'has_pose_and_others',
+  pose_only: 'has_pose',
+  pose_only_strict: 'has_pose_strict',
+  pose_only_adaptive: 'has_pose_adaptive',
+}
 
 export const DEFAULT_PROMPT_CONSTRAINTS: PromptConstraintItem[] = [
   {
@@ -710,49 +1020,25 @@ export const DEFAULT_PROMPT_CONSTRAINTS: PromptConstraintItem[] = [
   {
     id: 'c_single_canvas',
     condition: 'always',
-    text: '整张图片必须为单一连续的完整画面，严禁分屏、拼贴、多宫格、左右对比或同一人物在画面中重复出现。',
+    text: '整张图仅为一个单一连续完整画面，严禁分屏、拼贴或同人重复出现。',
     enabled: true,
   },
   {
-    id: 'c_skin_proportion',
+    id: 'c_anatomy',
     condition: 'always',
-    text: '确保人物各露出部位肤色均匀一致，头部、颈部与身体比例自然协调，服装及饰品随实际姿势自然穿戴贴合；若姿势参考为半身或局部景别，优先保留该景别构图。',
+    text: '人物有且仅有左、右两条手臂、双手与左、右两条腿（共两条腿，绝不额外生出第三条腿或多余手臂），保持正常成年人头身与上下肢长度比例、肤色均匀及自然透视（构图偏窄时允许肢体末梢自然出画而非压短双腿）。',
     enabled: true,
   },
   {
-    id: 'c_subject_count_pose',
-    condition: 'has_pose_strict',
-    text: '画面中的人物数量与景别构图严格以{{姿势图}}为准（单人姿势图仅生成一位主体人物，除非额外要求另有说明），严禁擅自新增多余人物或分身。',
+    id: 'c_pose_count',
+    condition: 'has_pose',
+    text: '人物数量严格以{{姿势图}}为准，严禁擅自增减人物。',
     enabled: true,
   },
   {
-    id: 'c_subject_count_pose_adaptive',
-    condition: 'has_pose_adaptive',
-    text: '画面中的人物数量严格以{{姿势图}}为准（单人姿势图仅生成一位主体人物，除非额外要求另有说明），严禁擅自新增多余人物或分身；景别构图与镜头机位优先配合当前画风自然呈现。',
-    enabled: true,
-  },
-  {
-    id: 'c_pose_priority_others',
-    condition: 'has_pose_and_others_strict',
-    text: '人物的脸部倾斜角度、身体动作和姿势严格以{{姿势图}}为唯一事实依据（仅借鉴结构与朝向，不保留其无五官白模质感），忽略{{非姿势图}}中的原有动作与站位。',
-    enabled: true,
-  },
-  {
-    id: 'c_pose_priority_others_adaptive',
-    condition: 'has_pose_and_others_adaptive',
-    text: '以{{姿势图}}中的主体姿势与朝向为结构基础（不保留其无五官白模质感），忽略{{非姿势图}}中的原有动作与站位；允许为满足当前画风所需的拍摄视角与手持/交互动作（如举手机自拍、俯拍监控等）自然调整局部手臂动作与镜头角度。',
-    enabled: true,
-  },
-  {
-    id: 'c_pose_priority_only',
-    condition: 'pose_only_strict',
-    text: '人物的脸部倾斜角度、身体动作和姿势严格以{{姿势图}}为唯一事实依据。',
-    enabled: true,
-  },
-  {
-    id: 'c_pose_priority_only_adaptive',
-    condition: 'pose_only_adaptive',
-    text: '以{{姿势图}}中的主体姿势与朝向为基础参考，允许为满足当前画风所需的拍摄视角、景别构图与手持/交互动作（如举手机自拍、俯拍监控等）自然调整局部手臂动作与镜头角度。',
+    id: 'c_pose_ignore_others',
+    condition: 'has_pose_and_others',
+    text: '仅借鉴{{姿势图}}的动作骨架与四肢比例（不保留白模、线稿质感或边缘编号/残影），严格忽略{{非姿势图}}中的原有动作、站位、膝腿弯曲姿态或垂坠袜腿轮廓。',
     enabled: true,
   },
 ]
@@ -760,59 +1046,47 @@ export const DEFAULT_PROMPT_CONSTRAINTS: PromptConstraintItem[] = [
 export interface PromptTemplateConfig {
   intro: string
   poseClause: string
-  adaptivePoseClause: string
   costumeClause: string
-  portraitFullClause: string
-  portraitWithPoseOnlyClause: string
-  portraitOnlyClause: string
+  portraitClause: string
+  portraitOwnOutfitClause: string
   facelessClause: string
   defaultPersonClause: string
   extraClause: string
   adaptiveCostumeClause: string
-  adaptivePortraitFullClause: string
-  adaptivePortraitWithPoseOnlyClause: string
-  adaptivePortraitOnlyClause: string
-  adaptivePortraitWithOwnOutfitOnlyClause: string
-  adaptiveNoPoseRecompositionClause: string
+  adaptivePortraitClause: string
   adaptiveStyleSuffix: string
+  adaptivePoseClause: string
+  adaptiveNoPoseRecompositionClause: string
   adaptivePoseStyleSuffix: string
   constraints: PromptConstraintItem[]
 }
 
 export const DEFAULT_PROMPT_TEMPLATE: PromptTemplateConfig = {
   intro:
-    '请根据提供的 {{总数}} 张参考图（{{参考图序}}），生成单幅连续场景的人物{{媒介}}（整张图仅为一个完整画面，不要拆分成多格或左右对比图）：',
+    '请根据提供的 {{总数}} 张参考图（{{参考图序}}），生成单幅连续场景的人物{{媒介}}：',
   poseClause:
-    '让人物严格按照{{姿势图}}中人体模型的脸部倾斜角度、身体动作、头部朝向与镜头角度摆姿势。',
-  adaptivePoseClause:
-    '以{{姿势图}}中人体模型的主体站/坐姿、躯干朝向与核心肢体动态为基准参考，但允许根据当前画风所需的拍摄视角、镜头角度、景别构图与交互需求（如手持手机自拍、对镜举机、高角度监控等）自然调整局部手臂动作、头部朝向与镜头机位。',
+    '严格按照{{姿势图}}的头部朝向、身体动作、头身与四肢长度比例（尤其双腿各自的伸直或屈膝角度及前后层次）、景别构图与镜头角度摆姿势。',
   costumeClause:
-    '让人物穿上{{服装图}}中展示的整套服装和配饰，每件单品的颜色、款式、面料与配饰都以{{服装图}}为准。',
-  portraitFullClause:
-    '人物的身份长相、脸型、五官特征、神态、发型、发色与肤色严格以{{人像图}}为准（不沿用{{人像图}}的原始肢体动作与拍摄角度），并确保头身比例自然协调。',
-  portraitWithPoseOnlyClause:
-    '人物的身份长相、脸型、五官特征、神态、发型、发色、肤色与原有服装严格以{{人像图}}为准（不沿用{{人像图}}的原始肢体动作与拍摄角度），并确保头身比例自然协调。',
-  portraitOnlyClause:
-    '{{人像图}}中的人物，保持其面部特征、脸型、五官、发型、发色、肤色一致。',
+    '穿上{{服装图}}中的整套服装与配饰，配色、款式与面料细节以{{服装图}}为准。',
+  portraitClause:
+    '外貌、脸型五官、神态、发型发色与肤色严格以{{人像图}}为准。',
+  portraitOwnOutfitClause:
+    '沿用{{人像图}}中的原有服装穿搭。',
   facelessClause: '生成无五官展示人物，全身肤色自然统一。',
   defaultPersonClause: '生成五官清晰、肤色自然的单一人物。',
   extraClause: '{{附图列表}}，按标注或合理画面关系自然融入图像。',
   adaptiveCostumeClause:
-    '可参考{{服装图}}中的服装与配饰设计（大致保留配色与主要款式特征），无需拘泥于每处单品与面料的逐一还原，可随整体风格自然调整。',
-  adaptivePortraitFullClause:
-    '可参考{{人像图}}的发型、发色与整体人物神韵（不沿用{{人像图}}的原始肢体动作与拍摄角度），人物的长相、脸型、五官特征、神态与肤色等均可为契合风格适当调整，并确保头身比例自然协调。',
-  adaptivePortraitWithPoseOnlyClause:
-    '可参考{{人像图}}的发型、发色、神韵与大致穿搭印象（不沿用{{人像图}}的原始肢体动作与拍摄角度），人物的长相特征与服装配饰细节均可为契合风格适当调整，并确保头身比例自然协调。',
-  adaptivePortraitOnlyClause:
-    '可参考{{人像图}}的发型、发色与整体人物神韵，人物的面部特征、脸型、五官、神态与肤色等均可为契合风格适当调整。',
-  adaptivePortraitWithOwnOutfitOnlyClause:
-    '可参考{{人像图}}的发型、发色、神韵与大致穿搭印象，人物的面部特征与服饰配饰细节均可为契合风格适当调整。',
-  adaptiveNoPoseRecompositionClause:
-    '不沿用{{人像图}}原本的拍摄机位、景别与固定姿势，请根据当前画风所需的镜头视角与交互需求自然重新构图并调整动作。',
+    '参考{{服装图}}的配色与主要款式，细节可随当前风格自然调整。',
+  adaptivePortraitClause:
+    '参考{{人像图}}的发型发色与整体神韵，五官特征与肤色随当前风格自然适配调整。',
   adaptiveStyleSuffix:
-    '尽量让人物的脸部和服装为当前风格做出调整，以完全适配整体风格。',
+    '尽量让人物的外貌与服饰适配当前整体风格。',
+  adaptivePoseClause:
+    '参考{{姿势图}}的躯干朝向、重心与整体姿态，但必须优先按当前画风调整机位与手臂动作：人物有且仅有左右两条手臂，当画风需要单臂配合拍摄或互动时，必须直接改用其中一条手臂执行（不得完整照搬参考图的双手对称姿势，仅可保留另一条空余手臂做单侧动作）。',
+  adaptiveNoPoseRecompositionClause:
+    '不沿用{{人像图}}原本的机位、景别与站姿，按当前画风自然重新构图与动作。',
   adaptivePoseStyleSuffix:
-    '为充分呈现当前拍摄/画面风格，请优先保证该风格特有的镜头机位、景别透视与人物自然交互动作（如手持手机或对镜举机）。',
+    '优先满足该画风特有的镜头机位、景别透视与自然交互（交互动作直接占用人物原有双臂之一）。',
   constraints: DEFAULT_PROMPT_CONSTRAINTS.map((c) => ({ ...c })),
 }
 
@@ -823,19 +1097,6 @@ export function createDefaultPromptTemplate(): PromptTemplateConfig {
   }
 }
 
-const LEGACY_DEFAULT_FACE_VISIBILITY_CONSTRAINT =
-  '面部区域必须保持干净完整与清晰可见：除非参考姿势明确为纯背面仅见后脑勺，否则人物五官（眉眼、鼻、嘴）必须朝向合理且完全不被头发、刘海或阴影遮盖。'
-
-function splitLegacyBaseConstraints(raw: string): string[] {
-  const trimmed = raw.trim()
-  if (!trimmed) return []
-  const parts = trimmed
-    .split(/(?:^|(?<=[。！？；.!?\s]))\d+\s*[)）]\s*/)
-    .map((s) => s.trim())
-    .filter(Boolean)
-  return parts.length > 0 ? parts : [trimmed]
-}
-
 export function mergePromptTemplate(
   raw?: Partial<PromptTemplateConfig> | Record<string, unknown> | null,
   options?: { preserveWhitespace?: boolean }
@@ -843,12 +1104,24 @@ export function mergePromptTemplate(
   const src = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {}
   const preserveWhitespace = Boolean(options?.preserveWhitespace)
 
+  const normalizeStr = (val: unknown): string | null =>
+    typeof val === 'string'
+      ? preserveWhitespace
+        ? val.slice(0, 1500)
+        : val.trim().slice(0, 1500)
+      : null
+
   const pickString = (
-    key: Exclude<keyof PromptTemplateConfig, 'constraints'>
+    key: Exclude<keyof PromptTemplateConfig, 'constraints'>,
+    legacyFallbacks: string[] = []
   ): string => {
-    const val = src[key]
-    if (typeof val !== 'string') return DEFAULT_PROMPT_TEMPLATE[key]
-    return preserveWhitespace ? val.slice(0, 1500) : val.trim().slice(0, 1500)
+    const direct = normalizeStr(src[key])
+    if (direct !== null) return direct
+    for (const fbKey of legacyFallbacks) {
+      const fb = normalizeStr(src[fbKey])
+      if (fb !== null) return fb
+    }
+    return DEFAULT_PROMPT_TEMPLATE[key]
   }
 
   let constraints: PromptConstraintItem[]
@@ -863,10 +1136,11 @@ export function mergePromptTemplate(
       const text = preserveWhitespace ? rawText.slice(0, 1500) : rawText.trim().slice(0, 1500)
       if (!preserveWhitespace && !text) continue
       const rawCondition = typeof rec.condition === 'string' ? rec.condition : 'always'
+      const mappedCondition = LEGACY_CONSTRAINT_CONDITION_MAP[rawCondition] ?? rawCondition
       const condition: PromptConstraintCondition = VALID_CONSTRAINT_CONDITIONS.has(
-        rawCondition as PromptConstraintCondition
+        mappedCondition as PromptConstraintCondition
       )
-        ? (rawCondition as PromptConstraintCondition)
+        ? (mappedCondition as PromptConstraintCondition)
         : 'always'
       const enabled = typeof rec.enabled === 'boolean' ? rec.enabled : true
       const rawId =
@@ -881,54 +1155,6 @@ export function mergePromptTemplate(
       seenIds.add(id)
       constraints.push({ id, condition, text, enabled })
     }
-  } else if (
-    'baseConstraints' in src ||
-    'posePriorityConstraint' in src ||
-    'poseOnlyPriorityConstraint' in src ||
-    'faceVisibilityConstraint' in src
-  ) {
-    constraints = []
-    if (typeof src.baseConstraints === 'string') {
-      const parts = splitLegacyBaseConstraints(src.baseConstraints)
-      parts.forEach((part, idx) => {
-        constraints.push({
-          id: `c_base_${idx + 1}`,
-          condition: 'always',
-          text: part.slice(0, 1500),
-          enabled: true,
-        })
-      })
-    }
-    if (typeof src.posePriorityConstraint === 'string' && src.posePriorityConstraint.trim()) {
-      constraints.push({
-        id: 'c_pose_priority_others',
-        condition: 'has_pose_and_others',
-        text: src.posePriorityConstraint.trim().slice(0, 1500),
-        enabled: true,
-      })
-    }
-    if (
-      typeof src.poseOnlyPriorityConstraint === 'string' &&
-      src.poseOnlyPriorityConstraint.trim()
-    ) {
-      constraints.push({
-        id: 'c_pose_priority_only',
-        condition: 'pose_only',
-        text: src.poseOnlyPriorityConstraint.trim().slice(0, 1500),
-        enabled: true,
-      })
-    }
-    if (typeof src.faceVisibilityConstraint === 'string') {
-      const customFaceClause = src.faceVisibilityConstraint.trim()
-      if (customFaceClause && customFaceClause !== LEGACY_DEFAULT_FACE_VISIBILITY_CONSTRAINT) {
-        constraints.push({
-          id: 'c_custom_portrait',
-          condition: 'has_portrait',
-          text: customFaceClause.slice(0, 1500),
-          enabled: true,
-        })
-      }
-    }
   } else {
     constraints = DEFAULT_PROMPT_CONSTRAINTS.map((c) => ({ ...c }))
   }
@@ -936,21 +1162,17 @@ export function mergePromptTemplate(
   return {
     intro: pickString('intro'),
     poseClause: pickString('poseClause'),
-    adaptivePoseClause: pickString('adaptivePoseClause'),
     costumeClause: pickString('costumeClause'),
-    portraitFullClause: pickString('portraitFullClause'),
-    portraitWithPoseOnlyClause: pickString('portraitWithPoseOnlyClause'),
-    portraitOnlyClause: pickString('portraitOnlyClause'),
+    portraitClause: pickString('portraitClause', ['portraitFullClause']),
+    portraitOwnOutfitClause: pickString('portraitOwnOutfitClause'),
     facelessClause: pickString('facelessClause'),
     defaultPersonClause: pickString('defaultPersonClause'),
     extraClause: pickString('extraClause'),
     adaptiveCostumeClause: pickString('adaptiveCostumeClause'),
-    adaptivePortraitFullClause: pickString('adaptivePortraitFullClause'),
-    adaptivePortraitWithPoseOnlyClause: pickString('adaptivePortraitWithPoseOnlyClause'),
-    adaptivePortraitOnlyClause: pickString('adaptivePortraitOnlyClause'),
-    adaptivePortraitWithOwnOutfitOnlyClause: pickString('adaptivePortraitWithOwnOutfitOnlyClause'),
-    adaptiveNoPoseRecompositionClause: pickString('adaptiveNoPoseRecompositionClause'),
+    adaptivePortraitClause: pickString('adaptivePortraitClause', ['adaptivePortraitFullClause']),
     adaptiveStyleSuffix: pickString('adaptiveStyleSuffix'),
+    adaptivePoseClause: pickString('adaptivePoseClause'),
+    adaptiveNoPoseRecompositionClause: pickString('adaptiveNoPoseRecompositionClause'),
     adaptivePoseStyleSuffix: pickString('adaptivePoseStyleSuffix'),
     constraints,
   }
@@ -978,16 +1200,6 @@ function matchesConstraintCondition(
       return ctx.hasPose && ctx.adaptivePose
     case 'has_pose_and_others':
       return ctx.hasPose && ctx.hasOthersWithPose
-    case 'has_pose_and_others_strict':
-      return ctx.hasPose && ctx.hasOthersWithPose && !ctx.adaptivePose
-    case 'has_pose_and_others_adaptive':
-      return ctx.hasPose && ctx.hasOthersWithPose && ctx.adaptivePose
-    case 'pose_only':
-      return ctx.hasPose && !ctx.hasOthersWithPose
-    case 'pose_only_strict':
-      return ctx.hasPose && !ctx.hasOthersWithPose && !ctx.adaptivePose
-    case 'pose_only_adaptive':
-      return ctx.hasPose && !ctx.hasOthersWithPose && ctx.adaptivePose
     case 'has_portrait':
       return ctx.hasPortrait
     case 'no_portrait':
@@ -1614,6 +1826,140 @@ export function inspectPoseSanitizeForCloud(
   return evaluatePoseTitleSanitize(pose, sanitizeConfig, true)
 }
 
+export interface StitchedPanelDescriptor {
+  /** 从 1 起始的拼图面板编号 */
+  index: number
+  /** 零起始的原始参考槽位下标 */
+  zeroIndex: number
+  slot: 'pose' | 'costume' | 'portrait' | 'extra'
+  /** 面板所在方位文案（如 左侧 / 中间 / 右侧 或 第1格） */
+  positionLabel: string
+  /** 面板角色名（姿势 / 服装 / 人像 / 附加） */
+  roleLabel: string
+  /** 画布顶栏展示标签（如 图1 · 左侧 · 姿势） */
+  canvasTag: string
+  /** 画布顶栏副标题（经脱敏或原始名称） */
+  canvasSub: string
+  /** 拼合单图模式下在提示词中对应的指代文本（如 图1(左侧姿势区)） */
+  promptRef: string
+  /** 在拼合图总览句中的描述片段（如 图1[左侧]为姿势参考） */
+  summarySegment: string
+  /** 原始图片地址或路径 */
+  src: string
+}
+
+/** 生成三合一/多合一拼图的统一编号、方位顺序及画布/提示词映射 */
+export function buildStitchedPanelLayout(
+  recipe: RecipeState,
+  options?: { sanitizeForCloud?: boolean; poseSanitize?: Partial<PoseSanitizeConfig> | null }
+): StitchedPanelDescriptor[] {
+  const sanitizeForCloud = Boolean(options?.sanitizeForCloud)
+  const poseSanitize = options?.poseSanitize
+  const hasSanitizeRules = Boolean(poseSanitize)
+
+  const rawItems: Array<{
+    slot: StitchedPanelDescriptor['slot']
+    roleLabel: string
+    canvasSub: string
+    src: string
+  }> = []
+
+  if (recipe.pose) {
+    const depthSuffix = recipe.pose.useDepth && hasPoseDepthMap(recipe.pose) ? ' · 深度图' : ''
+    const poseName = sanitizeForCloud
+      ? hasSanitizeRules
+        ? sanitizePoseTitleForCloud(recipe.pose, poseSanitize) || '姿势参考'
+        : '姿势参考'
+      : recipe.pose.姿势名称
+    rawItems.push({
+      slot: 'pose',
+      roleLabel: '姿势',
+      canvasSub: sanitizeForCloud && !hasSanitizeRules
+        ? `姿势参考${depthSuffix}`
+        : `${poseName}（${recipe.pose.角度}${depthSuffix}）`,
+      src: poseImagePath(recipe.pose),
+    })
+  }
+  if (recipe.costume) {
+    const cat = sanitizeForCloud
+      ? hasSanitizeRules
+        ? sanitizeCloudTextSegment(recipe.costume.分类, poseSanitize)
+        : ''
+      : recipe.costume.分类
+    const name = sanitizeForCloud
+      ? hasSanitizeRules
+        ? sanitizeCloudTextSegment(recipe.costume.服装名称, poseSanitize) || '服装参考'
+        : '服装参考'
+      : recipe.costume.服装名称
+    rawItems.push({
+      slot: 'costume',
+      roleLabel: '服装',
+      canvasSub: cat ? `${cat} · ${name}` : name,
+      src: recipe.costume.预览图 || recipe.costume.原图 || recipe.costume.缩略图,
+    })
+  }
+  if (recipe.portrait) {
+    const title = sanitizeForCloud
+      ? hasSanitizeRules
+        ? sanitizeCloudTextSegment(recipe.portrait.标题, poseSanitize) || '人像参考'
+        : '人像参考'
+      : recipe.portrait.标题
+    rawItems.push({
+      slot: 'portrait',
+      roleLabel: '人像',
+      canvasSub: title,
+      src: recipe.portrait.原图 || recipe.portrait.缩略图,
+    })
+  }
+  for (const extra of recipe.extraImages || []) {
+    const extraName = sanitizeForCloud
+      ? hasSanitizeRules
+        ? sanitizeCloudTextSegment(extra.name, poseSanitize) || '附加参考图'
+        : '附加参考'
+      : extra.name || '自定义参考图'
+    rawItems.push({
+      slot: 'extra',
+      roleLabel: '附加',
+      canvasSub: extraName,
+      src: extra.url,
+    })
+  }
+
+  const total = rawItems.length
+  return rawItems.map((item, idx) => {
+    const num = idx + 1
+    let positionLabel = ''
+    if (total === 2) {
+      positionLabel = num === 1 ? '左侧' : '右侧'
+    } else if (total === 3) {
+      positionLabel = num === 1 ? '左侧' : num === 2 ? '中间' : '右侧'
+    } else if (total >= 4) {
+      positionLabel = num === 1 ? '第1格·最左' : num === total ? `第${num}格·最右` : `第${num}格`
+    }
+
+    const canvasTag = positionLabel
+      ? `图${num} · ${positionLabel} · ${item.roleLabel}`
+      : `图${num} · ${item.roleLabel}`
+    const promptRef = positionLabel ? `图${num}[${positionLabel}${item.roleLabel}区]` : '<IMAGE_0>'
+    const summarySegment = positionLabel
+      ? `图${num}[${positionLabel}]为${item.roleLabel}参考`
+      : `图${num}为${item.roleLabel}参考`
+
+    return {
+      index: num,
+      zeroIndex: idx,
+      slot: item.slot,
+      positionLabel,
+      roleLabel: item.roleLabel,
+      canvasTag,
+      canvasSub: item.canvasSub,
+      promptRef,
+      summarySegment,
+      src: item.src,
+    }
+  })
+}
+
 export function buildRecipePrompt(
   recipe: RecipeState,
   stylePreset = 'none',
@@ -1626,6 +1972,15 @@ export function buildRecipePrompt(
     styleNegativePrompt?: string
     allowFaceStyleShift?: boolean
     allowPoseStyleShift?: boolean
+    /** 为 true 且存在 >=2 张参考图时，生成“单张左中右编号拼合参考图 <IMAGE_0>”专属提示词 */
+    singleStitchedSheet?: boolean
+    /** 失败兜底降级时由视觉模型或数据库读取到的全部参考图文字描述（此时对应图片已从 recipe 中移除） */
+    textDescriptions?: {
+      pose?: string
+      costume?: string
+      portrait?: string
+      extras?: Array<{ name?: string; description: string }>
+    }
     promptTemplate?: Partial<PromptTemplateConfig> | null
     poseSanitize?: Partial<PoseSanitizeConfig> | null
     stylePresets?: StylePresetItem[]
@@ -1634,6 +1989,16 @@ export function buildRecipePrompt(
   }
 ): string {
   const tpl = mergePromptTemplate(promptOverrides?.promptTemplate)
+  const poseTextDesc = (promptOverrides?.textDescriptions?.pose || '').trim()
+  const costumeTextDesc = (promptOverrides?.textDescriptions?.costume || '').trim()
+  const portraitTextDesc = (promptOverrides?.textDescriptions?.portrait || '').trim()
+  const extraTextDescs = (promptOverrides?.textDescriptions?.extras || [])
+    .map((item) => ({
+      name: sanitizeCloudTextSegment(item.name || '', promptOverrides?.poseSanitize),
+      description: (item.description || '').trim(),
+    }))
+    .filter((item) => Boolean(item.description))
+
   let idx = 0
   const poseIdx = recipe.pose ? idx++ : null
   const costumeIdx = recipe.costume ? idx++ : null
@@ -1647,7 +2012,11 @@ export function buildRecipePrompt(
     poseIdx === null &&
     costumeIdx === null &&
     portraitIdx === null &&
-    extraRefs.length === 0
+    extraRefs.length === 0 &&
+    !poseTextDesc &&
+    !costumeTextDesc &&
+    !portraitTextDesc &&
+    extraTextDescs.length === 0
   ) {
     return '请先选择姿势/服装/人像或上传附加参考图。'
   }
@@ -1659,20 +2028,37 @@ export function buildRecipePrompt(
     (portraitIdx !== null ? 1 : 0) +
     extraRefs.length
 
-  const faceless = portraitIdx === null && costumeIdx !== null && poseIdx !== null
+  const useStitchedPrompt = Boolean(promptOverrides?.singleStitchedSheet && totalRefs >= 2)
+  const stitchedPanels = useStitchedPrompt
+    ? buildStitchedPanelLayout(recipe, {
+        sanitizeForCloud: true,
+        poseSanitize: promptOverrides?.poseSanitize,
+      })
+    : []
+
+  const hasAnyCostume = costumeIdx !== null || Boolean(costumeTextDesc)
+  const hasAnyPose = poseIdx !== null || Boolean(poseTextDesc)
+  const hasAnyPortrait = portraitIdx !== null || Boolean(portraitTextDesc)
+  const hasAnyExtra = extraRefs.length > 0 || extraTextDescs.length > 0
+  const faceless = !hasAnyPortrait && hasAnyCostume && hasAnyPose
   const bullets: string[] = []
 
-  const poseTagOrEmpty = poseIdx !== null ? refTag(poseIdx) : ''
-  const poseTitle = sanitizePoseTitleForCloud(recipe.pose, promptOverrides?.poseSanitize)
-  const poseClauseTag = poseTagOrEmpty
-    ? poseTitle
-      ? `${poseTagOrEmpty}(${poseTitle})`
-      : poseTagOrEmpty
-    : ''
-  const costumeTagOrEmpty = costumeIdx !== null ? refTag(costumeIdx) : ''
-  const portraitTagOrEmpty = portraitIdx !== null ? refTag(portraitIdx) : ''
+  const panelRef = (slotIdx: number | null) => {
+    if (slotIdx === null) return ''
+    if (!useStitchedPrompt) return refTag(slotIdx)
+    return stitchedPanels[slotIdx]?.promptRef || refTag(slotIdx)
+  }
+
+  const poseTagOrEmpty =
+    poseIdx !== null ? panelRef(poseIdx) : poseTextDesc ? '上文姿势描述' : ''
+  const costumeTagOrEmpty =
+    costumeIdx !== null ? panelRef(costumeIdx) : costumeTextDesc ? '上文服装描述' : ''
+  const portraitTagOrEmpty = panelRef(portraitIdx)
   const extraList = extraRefs
-    .map((item) => (item.name ? `${refTag(item.index)}（${item.name}）` : refTag(item.index)))
+    .map((item) => {
+      const tag = panelRef(item.index)
+      return item.name ? `${tag}（${item.name}）` : tag
+    })
     .join('、')
 
   const resolvedStyle = resolveStyleInfo(stylePreset, {
@@ -1688,11 +2074,28 @@ export function buildRecipePrompt(
   const applyPoseStyleShift = Boolean(promptOverrides?.allowPoseStyleShift && effectiveStylePrompt)
 
   if (poseIdx !== null) {
+    // 姿势适配模式下不附带文字标题（如“双V”“双手放锁骨”），避免文字标题与画风让臂规则冲突
+    const poseTitle = applyPoseStyleShift
+      ? ''
+      : sanitizePoseTitleForCloud(recipe.pose, promptOverrides?.poseSanitize)
+    const poseClauseTag = poseTitle ? `${poseTagOrEmpty}(${poseTitle})` : poseTagOrEmpty
     const poseTpl = applyPoseStyleShift ? tpl.adaptivePoseClause : tpl.poseClause
     const poseLine = renderPromptVars(poseTpl.replace(/\r\n?/g, '\n'), {
       姿势图: poseClauseTag,
     })
-    if (poseLine) bullets.push(`• 姿势：${poseLine}`)
+    const rawPoseDesc =
+      !applyPoseStyleShift && poseTitle && recipe.pose?.描述
+        ? sanitizeCloudTextSegment(recipe.pose.描述, promptOverrides?.poseSanitize)
+        : ''
+    const cleanPoseDesc = rawPoseDesc.replace(/[。！？；.!?;]+$/, '').trim()
+    const combinedPoseLine =
+      poseLine && cleanPoseDesc
+        ? `${poseLine.replace(/[。！？；.!?;]+$/, '').trim()}（动作要领：${cleanPoseDesc}）。`
+        : poseLine
+    if (combinedPoseLine) bullets.push(`• 姿势：${combinedPoseLine}`)
+  } else if (poseTextDesc) {
+    const textPoseLine = ensureSentenceEnd(poseTextDesc)
+    if (textPoseLine) bullets.push(`• 姿势：${textPoseLine}`)
   }
 
   if (costumeIdx !== null) {
@@ -1701,37 +2104,36 @@ export function buildRecipePrompt(
       服装图: costumeTagOrEmpty,
     })
     if (costumeLine) bullets.push(`• 服装：${costumeLine}`)
+  } else if (costumeTextDesc) {
+    const textCostumeLine = ensureSentenceEnd(costumeTextDesc)
+    if (textCostumeLine) bullets.push(`• 服装：${textCostumeLine}`)
   }
 
   if (portraitIdx !== null) {
-    const personTemplate = applyFaceStyleShift
-      ? poseIdx !== null && costumeIdx !== null
-        ? tpl.adaptivePortraitFullClause
-        : poseIdx !== null
-          ? tpl.adaptivePortraitWithPoseOnlyClause
-          : costumeIdx !== null
-            ? tpl.adaptivePortraitOnlyClause
-            : tpl.adaptivePortraitWithOwnOutfitOnlyClause
-      : poseIdx !== null && costumeIdx !== null
-        ? tpl.portraitFullClause
-        : poseIdx !== null
-          ? tpl.portraitWithPoseOnlyClause
-          : tpl.portraitOnlyClause
-    const personBaseLine = renderPromptVars(personTemplate.replace(/\r\n?/g, '\n'), {
-      人像图: portraitTagOrEmpty,
-      姿势图: poseTagOrEmpty,
-    })
-    const noPoseRecompLine =
-      poseIdx === null && applyPoseStyleShift
-        ? renderPromptVars(tpl.adaptiveNoPoseRecompositionClause.replace(/\r\n?/g, '\n'), {
+    const identityLine = renderPromptVars(
+      (applyFaceStyleShift ? tpl.adaptivePortraitClause : tpl.portraitClause).replace(/\r\n?/g, '\n'),
+      { 人像图: portraitTagOrEmpty }
+    )
+    const ownOutfitLine =
+      !hasAnyCostume
+        ? renderPromptVars(tpl.portraitOwnOutfitClause.replace(/\r\n?/g, '\n'), {
             人像图: portraitTagOrEmpty,
           })
         : ''
-    const personParts = [
-      personBaseLine ? ensureSentenceEnd(personBaseLine) : '',
-      noPoseRecompLine ? ensureSentenceEnd(noPoseRecompLine) : '',
-    ].filter(Boolean)
+    const recompositionLine =
+      !hasAnyPose && applyPoseStyleShift
+        ? renderPromptVars(
+            tpl.adaptiveNoPoseRecompositionClause.replace(/\r\n?/g, '\n'),
+            { 人像图: portraitTagOrEmpty }
+          )
+        : ''
+    const personParts = [identityLine, ownOutfitLine, recompositionLine]
+      .map((s) => ensureSentenceEnd(s.trim()))
+      .filter(Boolean)
     if (personParts.length > 0) bullets.push(`• 人物：${personParts.join('')}`)
+  } else if (portraitTextDesc) {
+    const textPortraitLine = ensureSentenceEnd(portraitTextDesc)
+    if (textPortraitLine) bullets.push(`• 人物：${textPortraitLine}`)
   } else {
     const personLine = renderPromptVars(
       (faceless ? tpl.facelessClause : tpl.defaultPersonClause).replace(/\r\n?/g, '\n'),
@@ -1745,6 +2147,13 @@ export function buildRecipePrompt(
       附图列表: extraList,
     })
     if (extraLine) bullets.push(`• 补充参考：${extraLine}`)
+  } else if (extraTextDescs.length > 0) {
+    const mergedExtras = extraTextDescs
+      .map((item) =>
+        item.name ? `[${item.name}] ${ensureSentenceEnd(item.description)}` : ensureSentenceEnd(item.description)
+      )
+      .join(' ')
+    bullets.push(`• 补充参考：结合以下附加参考画面细节与氛围描写自然融入画面：${mergedExtras}`)
   }
 
   if (effectiveStylePrompt) {
@@ -1765,15 +2174,17 @@ export function buildRecipePrompt(
     bullets.push(`• 额外要求：${ensureSentenceEnd(rawSceneNote)}`)
   }
 
-  const nonPoseTags = [costumeIdx, portraitIdx, ...extraRefs.map((item) => item.index)]
-    .filter((n): n is number => n !== null)
-    .map(refTag)
+  const nonPoseImageTags = [
+    costumeIdx !== null ? costumeTagOrEmpty : '',
+    portraitTagOrEmpty,
+    ...extraRefs.map((item) => panelRef(item.index)),
+  ].filter(Boolean)
   const conditionCtx = {
-    hasPose: poseIdx !== null,
-    hasCostume: costumeIdx !== null,
-    hasPortrait: portraitIdx !== null,
-    hasExtra: extraRefs.length > 0,
-    hasOthersWithPose: nonPoseTags.length > 0,
+    hasPose: hasAnyPose,
+    hasCostume: hasAnyCostume,
+    hasPortrait: hasAnyPortrait,
+    hasExtra: hasAnyExtra,
+    hasOthersWithPose: nonPoseImageTags.length > 0,
     adaptivePose: applyPoseStyleShift,
   }
   const constraintVars = {
@@ -1781,7 +2192,7 @@ export function buildRecipePrompt(
     服装图: costumeTagOrEmpty,
     人像图: portraitTagOrEmpty,
     附图列表: extraList,
-    非姿势图: joinChineseClauses(nonPoseTags, '或'),
+    非姿势图: joinChineseClauses(nonPoseImageTags, '或'),
   }
 
   const constraintItems: string[] = []
@@ -1792,6 +2203,16 @@ export function buildRecipePrompt(
     const rendered = renderPromptVars(item.text, constraintVars).trim()
     if (!rendered) continue
     constraintItems.push(`${nextConstraintNum++}) ${ensureSentenceEnd(rendered)}`)
+  }
+  if (useStitchedPrompt) {
+    constraintItems.push(
+      `${nextConstraintNum++}) 仅从拼合参考图<IMAGE_0>的各个分区提取动作、服饰与外貌特征，彻底去除原拼图自带的边框、色块分隔及编号文字，输出单一连贯画面。`
+    )
+  }
+  if (poseIdx === null && poseTextDesc && applyPoseStyleShift) {
+    constraintItems.push(
+      `${nextConstraintNum++}) 上文「姿势」中的文字细节仅作动态与重心参考；若其中双臂分配、局部手势或取景范围与「风格」表述冲突，须优先服从「风格」并顺滑重组为单侧或兼容动作，严禁叠加多余手臂。`
+    )
   }
   if (constraintItems.length > 0) {
     bullets.push(`• 约束：${constraintItems.join('')}`)
@@ -1810,13 +2231,20 @@ export function buildRecipePrompt(
     promptOverrides?.styleNegativePrompt ?? resolvedStyle.negativePrompt
   )
 
-  const headerTags = Array.from({ length: totalRefs }, (_, i) => refTag(i)).join('、')
-  const headerRefDesc = totalRefs === 1 ? headerTags : `依次为${headerTags}`
-  const introLine = renderPromptVars(tpl.intro.replace(/\r\n?/g, '\n'), {
-    总数: String(totalRefs),
-    参考图序: headerRefDesc,
-    媒介: subjectMedia,
-  })
+  const hasTextFallback = Boolean(
+    poseTextDesc || costumeTextDesc || portraitTextDesc || extraTextDescs.length > 0
+  )
+  const introLine = useStitchedPrompt
+    ? `请根据提供的 1 张多格拼合参考图（<IMAGE_0>，画幅按从左到右分为 ${totalRefs} 个编号区域：${stitchedPanels.map((p) => p.summarySegment).join('、')}），将各区域要素融合生成一幅单一完整的连续人物${subjectMedia}（严禁保留分格线、深色底框或标注文字）：`
+    : hasTextFallback
+      ? totalRefs > 0
+        ? `请根据提供的 ${totalRefs} 张参考图（${totalRefs === 1 ? refTag(0) : `依次为${Array.from({ length: totalRefs }, (_, i) => refTag(i)).join('、')}`}），并严格结合下文给出的文字描述，生成单幅连续场景的人物${subjectMedia}：`
+        : `请严格结合下文给出的人物外貌、姿态、服装与场景文字描述，进行纯文字生图，生成单幅连续场景的人物${subjectMedia}：`
+      : renderPromptVars(tpl.intro.replace(/\r\n?/g, '\n'), {
+          总数: String(totalRefs),
+          参考图序: totalRefs === 1 ? refTag(0) : `依次为${Array.from({ length: totalRefs }, (_, i) => refTag(i)).join('、')}`,
+          媒介: subjectMedia,
+        })
 
   const rawPrefix = (promptOverrides?.prefix || '').replace(/\r\n?/g, '\n').trim()
   const rawSuffix = (promptOverrides?.suffix || '').replace(/\r\n?/g, '\n').trim()
@@ -1834,9 +2262,16 @@ export function referenceImageUrl(src: string): string {
   return /^(data:|https?:\/\/|\/)/i.test(src) ? src : `/${src}`
 }
 
+export function hasPoseDepthMap(pose?: Pick<PoseItem, 'source' | '缩略图'> | null): boolean {
+  if (!pose) return false
+  if (pose.source === 'upload' || pose.source === 'mio') return false
+  const raw = pose.缩略图 || ''
+  return !/^(data:|https?:\/\/)/i.test(raw)
+}
+
 export function poseThumbPath(pose: PoseItem, useDepth = Boolean(pose.useDepth)): string {
   const raw = pose.缩略图
-  if (pose.source === 'upload' || !useDepth || /^(data:|https?:\/\/)/i.test(raw)) return raw
+  if (!hasPoseDepthMap(pose) || !useDepth) return raw
   const clean = raw.replace(/^\/+/, '')
   if (clean.startsWith('thumbs/depth/')) return raw
   if (clean.startsWith('thumbs/')) {
@@ -1847,7 +2282,7 @@ export function poseThumbPath(pose: PoseItem, useDepth = Boolean(pose.useDepth))
 
 export function poseImagePath(pose: PoseItem, useDepth = Boolean(pose.useDepth)): string {
   const raw = pose.原图 || pose.缩略图
-  if (pose.source === 'upload' || !useDepth || /^(data:|https?:\/\/)/i.test(raw)) return raw
+  if (!hasPoseDepthMap(pose) || !useDepth) return raw
   const clean = raw.replace(/^\/+/, '')
   if (clean.startsWith('img/depth/')) return raw
   if (clean.startsWith('img/')) {
@@ -1860,6 +2295,211 @@ export function poseImagePath(pose: PoseItem, useDepth = Boolean(pose.useDepth))
 // 平台配置与接口 DTO 类型
 // ---------------------------------------------------------------------------
 
+export type ReferenceDescriptionKind = 'pose' | 'costume' | 'portrait' | 'extra'
+
+export const DEFAULT_POSE_DESCRIBE_PROMPT =
+  '你是一名专业摄影造型与人体姿态分析师。请精准观察参考图中的人物姿态，用一段流畅、客观、精炼的简体中文（90~150字）概括动作造型与重心关系，涵盖：整体机位感与身体朝向、头部倾斜与视线方向、躯干动态与双肩姿态、双臂大致伸展走势与手部动作意象、以及下肢站坐蹲姿（未呈现下肢时只需说明身体直立或重心倾斜状态）。严格要求：1) 禁止输出“腿部未入镜”“仅拍摄至腰部”等锁死画幅裁剪的否定句，也不要逐根手指写死微动作，以便不同画风自由重构景别与双臂交互；2) 只描述空间动作与姿态关系，绝不提及白模、石膏人偶、网格线条、外貌五官、服装或背景；3) 全文采用中性雅正的摄影体态措辞，避免贴近敏感部位的生硬表述或易触发审核拦截的词汇。仅输出最终描述正文，不要任何前缀或列表符号。'
+
+export const DEFAULT_COSTUME_DESCRIBE_PROMPT =
+  '你是一名专业服装造型设计师。请精准观察参考图中的服装穿搭，用一段流畅、客观、得体的简体中文（90~160字）完整描述全套服饰细节，涵盖：整体穿搭风格与分层结构（如上装/内搭/外套/裙装/裤装等）、精确的主色调与辅色搭配、面料纹理与材质质感（如丝绒、缎面、针织、薄纱、蕾丝、皮革等）、领口/袖型/腰部剪裁与装饰配件，以及袜履头饰（如有）。严格要求：1) 仅描述服饰本身，完全忽略人物五官、肤色、身材评价与拍摄背景；2) 必须采用克制典雅的时装设计术语，对贴身或轻薄款服饰用客观版型与面料语言表达，绝不出现低俗、露骨或可能触发审核拦截的词汇。仅输出最终描述正文，不要任何前缀或标题。'
+
+export const DEFAULT_PORTRAIT_DESCRIBE_PROMPT =
+  '你是一名专业人像造型与特征描摹师。请精准观察参考图中的人物面部与发型造型，用一段流畅、客观、得体的简体中文（100~180字）准确描述人物外形核心特征，涵盖：性别特征与年龄气质、脸型轮廓与五官细节（眉形眼型、眼神神态、鼻梁唇形等）、肤色质感与妆容特点、以及发型发色详情（发长、卷直度、分缝刘海、扎发编发与发饰）。严格要求：1) 只描摹头部相貌、神态与发型，绝不描摹人物当前站姿动作、身体穿戴的服装，也不要描述拍摄背景；2) 必须采用中性雅正的人像描摹措辞，绝不使用敏感或可能触发审核拦截的词汇。仅输出最终描述正文，不要任何前缀或列表符号。'
+
+export const DEFAULT_EXTRA_DESCRIBE_PROMPT =
+  '你是一名专业视觉美术分析师。请精准观察该附加参考图中的视觉信息，用一段客观、清晰、安全合规的简体中文（80~140字）概括图中关键要素，涵盖：场景环境氛围、光线色彩基调、道具元素或画面构成关系，避免任何可能触发审核拦截的词汇。仅输出最终描述正文，不要任何前缀或标题。'
+
+export interface VisionFallbackConfig {
+  /** 是否在前台工作台常驻开启“图转文 · 纯文生图”功能 */
+  enabled: boolean
+  /** 优先复用的供应商 ID（留空则自动匹配模型对应的已启用渠道供应商） */
+  supplierId: string
+  /** 接口协议模式 */
+  endpointMode: 'gemini_native' | 'openai_chat'
+  /** Gemini 原生接口鉴权模式 */
+  authMode?: 'auto' | 'bearer' | 'goog_key' | 'both'
+  /** 视觉识别模型 ID（默认 gemini-4-hydrogen） */
+  model: string
+  /** 姿势图转文字指令提示词 */
+  poseDescribePrompt: string
+  /** 服装图转文字指令提示词 */
+  costumeDescribePrompt: string
+  /** 人像图转文字指令提示词 */
+  portraitDescribePrompt: string
+  /** 附加参考图转文字指令提示词 */
+  extraDescribePrompt: string
+}
+
+export function createDefaultVisionFallbackConfig(): VisionFallbackConfig {
+  return {
+    enabled: true,
+    supplierId: '',
+    endpointMode: 'gemini_native',
+    authMode: 'auto',
+    model: 'gemini-4-hydrogen',
+    poseDescribePrompt: DEFAULT_POSE_DESCRIBE_PROMPT,
+    costumeDescribePrompt: DEFAULT_COSTUME_DESCRIBE_PROMPT,
+    portraitDescribePrompt: DEFAULT_PORTRAIT_DESCRIBE_PROMPT,
+    extraDescribePrompt: DEFAULT_EXTRA_DESCRIBE_PROMPT,
+  }
+}
+
+export function mergeVisionFallbackConfig(
+  raw?: Partial<VisionFallbackConfig> | Record<string, unknown> | null
+): VisionFallbackConfig {
+  const def = createDefaultVisionFallbackConfig()
+  const src = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {}
+  const endpointMode =
+    src.endpointMode === 'openai_chat' || src.endpointMode === 'gemini_native'
+      ? src.endpointMode
+      : def.endpointMode
+  const authMode =
+    src.authMode === 'auto' ||
+    src.authMode === 'bearer' ||
+    src.authMode === 'goog_key' ||
+    src.authMode === 'both'
+      ? src.authMode
+      : def.authMode
+  return {
+    enabled: typeof src.enabled === 'boolean' ? src.enabled : def.enabled,
+    supplierId: typeof src.supplierId === 'string' ? src.supplierId.trim().slice(0, 120) : def.supplierId,
+    endpointMode,
+    authMode,
+    model:
+      typeof src.model === 'string' && src.model.trim()
+        ? src.model.trim().slice(0, 120)
+        : def.model,
+    poseDescribePrompt:
+      typeof src.poseDescribePrompt === 'string' && src.poseDescribePrompt.trim()
+        ? src.poseDescribePrompt.trim().slice(0, 2000)
+        : def.poseDescribePrompt,
+    costumeDescribePrompt:
+      typeof src.costumeDescribePrompt === 'string' && src.costumeDescribePrompt.trim()
+        ? src.costumeDescribePrompt.trim().slice(0, 2000)
+        : def.costumeDescribePrompt,
+    portraitDescribePrompt:
+      typeof src.portraitDescribePrompt === 'string' && src.portraitDescribePrompt.trim()
+        ? src.portraitDescribePrompt.trim().slice(0, 2000)
+        : def.portraitDescribePrompt,
+    extraDescribePrompt:
+      typeof src.extraDescribePrompt === 'string' && src.extraDescribePrompt.trim()
+        ? src.extraDescribePrompt.trim().slice(0, 2000)
+        : def.extraDescribePrompt,
+  }
+}
+
+export interface ReferenceDescriptionDTO {
+  id: string
+  kind: ReferenceDescriptionKind
+  refKey: string
+  sourceLabel: string
+  previewPath: string
+  description: string
+  sourceType: 'auto' | 'manual'
+  visionModel: string
+  visionSupplierId: string
+  createdAt: number
+  updatedAt: number
+}
+
+export type GenerationQueueWaitReason = 'model_busy' | 'user_busy' | 'global_busy'
+
+export interface GenerationQueueConfig {
+  /** 全站最大同时执行任务数 */
+  maxGlobalConcurrency: number
+  /** 单个画笔档位默认最大同时执行数 */
+  maxModelConcurrency: number
+  /** 按具体画笔档位 profileId 覆写最大同时执行数 */
+  profileConcurrencyOverrides: Record<string, number>
+  /** 单个用户最大同时执行数 */
+  maxUserConcurrency: number
+  /** 单个用户最多排队等待数 */
+  maxUserQueuedJobs: number
+  /** 全站排队队列总容量上限 */
+  maxQueueSize: number
+  /** 排队最长等待超时（秒），超时自动取消并全额退还积分 */
+  queueWaitTimeoutSec: number
+  /** 绘制执行超时（秒），超时自动回收并全额退还积分 */
+  processingTimeoutSec: number
+}
+
+export function createDefaultGenerationQueueConfig(): GenerationQueueConfig {
+  return {
+    maxGlobalConcurrency: 8,
+    maxModelConcurrency: 3,
+    profileConcurrencyOverrides: {},
+    maxUserConcurrency: 2,
+    maxUserQueuedJobs: 4,
+    maxQueueSize: 50,
+    queueWaitTimeoutSec: 600,
+    processingTimeoutSec: 360,
+  }
+}
+
+function clampQueueInt(val: unknown, fallback: number, min: number, max: number): number {
+  const num = typeof val === 'number' ? val : Number(val)
+  if (!Number.isFinite(num)) return fallback
+  return Math.min(max, Math.max(min, Math.round(num)))
+}
+
+export function mergeGenerationQueueConfig(
+  raw?: Partial<GenerationQueueConfig> | Record<string, unknown> | null
+): GenerationQueueConfig {
+  const def = createDefaultGenerationQueueConfig()
+  const src = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {}
+  const rawOverrides =
+    src.profileConcurrencyOverrides && typeof src.profileConcurrencyOverrides === 'object'
+      ? (src.profileConcurrencyOverrides as Record<string, unknown>)
+      : {}
+  const overrides: Record<string, number> = {}
+  for (const [k, v] of Object.entries(rawOverrides)) {
+    const key = k.trim()
+    if (!key) continue
+    const num = Number(v)
+    if (Number.isFinite(num) && num >= 1) {
+      overrides[key] = Math.min(20, Math.max(1, Math.round(num)))
+    }
+  }
+  return {
+    maxGlobalConcurrency: clampQueueInt(src.maxGlobalConcurrency, def.maxGlobalConcurrency, 1, 50),
+    maxModelConcurrency: clampQueueInt(src.maxModelConcurrency, def.maxModelConcurrency, 1, 20),
+    profileConcurrencyOverrides: overrides,
+    maxUserConcurrency: clampQueueInt(src.maxUserConcurrency, def.maxUserConcurrency, 1, 10),
+    maxUserQueuedJobs: clampQueueInt(src.maxUserQueuedJobs, def.maxUserQueuedJobs, 0, 20),
+    maxQueueSize: clampQueueInt(src.maxQueueSize, def.maxQueueSize, 1, 500),
+    queueWaitTimeoutSec: clampQueueInt(src.queueWaitTimeoutSec, def.queueWaitTimeoutSec, 60, 3600),
+    processingTimeoutSec: clampQueueInt(src.processingTimeoutSec, def.processingTimeoutSec, 30, 900),
+  }
+}
+
+export function resolveProfileConcurrencyLimit(
+  cfg: GenerationQueueConfig | null | undefined,
+  profileId?: string | null
+): number {
+  const resolved = cfg ?? createDefaultGenerationQueueConfig()
+  if (profileId && typeof resolved.profileConcurrencyOverrides[profileId] === 'number') {
+    return resolved.profileConcurrencyOverrides[profileId]
+  }
+  return resolved.maxModelConcurrency
+}
+
+export interface GenerationQueueInfo {
+  /** 全站排队位次（1 表示队首第 1 位） */
+  position: number
+  /** 前面还有多少个任务等待（position - 1） */
+  aheadCount: number
+  /** 当前全站排队总数 */
+  totalQueued: number
+  /** 同画笔档位内排队位次（1 表示第 1 位） */
+  modelPosition: number
+  /** 同画笔档位前面还有多少个任务 */
+  modelAheadCount: number
+  /** 当前主要等待原因 */
+  reason: GenerationQueueWaitReason
+  /** 入队时间戳 */
+  queuedAt: number
+}
+
 export interface PlatformConfig {
   registerBonusCredits: number
   allowRegistration: boolean
@@ -1869,6 +2509,9 @@ export interface PlatformConfig {
   defaultNegativePrompt: string
   promptTemplate?: PromptTemplateConfig
   poseSanitize?: PoseSanitizeConfig
+  visionFallback?: VisionFallbackConfig
+  textFallbackEnabled?: boolean
+  queueConfig?: GenerationQueueConfig
   styleCategories: StyleCategoryItem[]
   styleSubcategories: StyleSubcategoryItem[]
   stylePresets: StylePresetItem[]
@@ -1882,9 +2525,12 @@ export const DEFAULT_PLATFORM_CONFIG: PlatformConfig = {
   defaultStylePreset: 'none',
   defaultPromptPrefix: '',
   defaultPromptSuffix: '',
-  defaultNegativePrompt: '分屏，拼图，多宫格，多视图，对比图，重复人物，双胞胎',
+  defaultNegativePrompt: '分屏，拼图，多宫格，多视图，对比图，重复人物，双胞胎，多余手臂，多余肢体',
   promptTemplate: createDefaultPromptTemplate(),
   poseSanitize: createDefaultPoseSanitizeConfig(),
+  visionFallback: createDefaultVisionFallbackConfig(),
+  textFallbackEnabled: true,
+  queueConfig: createDefaultGenerationQueueConfig(),
   styleCategories: [
     { id: 'acg', label: 'ACG' },
     { id: 'photography', label: '摄影' },
@@ -2093,7 +2739,8 @@ export const DEFAULT_PLATFORM_CONFIG: PlatformConfig = {
       label: '自拍',
       poseMode: 'adaptive',
       prompt:
-        '真实手机前置摄像头自拍风格，近距离手持自拍视角，单手自然举起持握手机或伸向镜头进行自拍（可自然调整手臂动作以配合自拍机位），自然随意的生活化姿态与表情，轻微广角透视，真实细腻的皮肤纹理与自然瑕疵，手机计算摄影特有的清晰度与HDR效果，自然环境光，未经刻意修饰的色彩，原汁原味的日常手机自拍质感。',
+        '前置广角镜头近景自拍风格，由人物自身一侧手臂向镜头方向自然前伸出画（拍摄设备位于取景框之外，画面中只呈现人物肩臂自然延展至画面边缘）、另一侧手臂自然放松或做单侧姿态，自然随意的生活化姿态与表情，轻微广角透视，真实细腻的皮肤纹理与自然瑕疵，清晰的高动态范围计算摄影效果，自然环境光，未经刻意修饰的色彩，原汁原味的日常前置自拍质感。',
+      negativePrompt: '手机，智能手机，手持手机，握着手机，底部伸出的手，第三只手',
     },
     {
       id: 'photo_mirror_selfie',
@@ -2102,7 +2749,7 @@ export const DEFAULT_PLATFORM_CONFIG: PlatformConfig = {
       label: '对镜自拍',
       poseMode: 'adaptive',
       prompt:
-        '真实手机原相机镜面自拍风格，通过镜子反射拍摄人物，人物单手或双手自然举起手机对准镜面（可自然调整持机手臂动作，手机自然出现在镜面画面中），真实还原人物与镜面空间关系，自然随意的生活化姿态，真实细腻的皮肤与环境细节，手机计算摄影的清晰度与HDR效果，自然室内光线，未经刻意修饰的日常手机摄影质感。',
+        '真实手机原相机镜面自拍风格，通过镜子反射拍摄人物，单手持机对准镜面、另一侧自然配合姿态（手机自然出现在镜面画面中），真实还原人物与镜面空间关系，自然随意的生活化姿态，真实细腻的皮肤与环境细节，手机计算摄影的清晰度与HDR效果，自然室内光线，未经刻意修饰的日常手机摄影质感。',
     },
     {
       id: 'photo_pov',
@@ -2229,6 +2876,10 @@ export interface ProviderModelPublicInfo {
   defaultResolution: StudioResolution | null
   resolutions: Array<{ resolution: StudioResolution; creditCost: number }>
   isDefault: boolean
+  /** 当该档位下存在单图或 WaveSpeed 拼合省钱模式渠道时为 true，前端据此自动制备三合一拼图 */
+  needsStitchedSheet?: boolean
+  /** 当该档位下存在可用的自家协议（非 WaveSpeed）渠道时为 true，支持常驻“图转文 · 纯文生图” */
+  supportsTextFallback?: boolean
   sortOrder: number
 }
 
@@ -2259,12 +2910,49 @@ export interface SupplierChannelRef {
   model: string
 }
 
+export interface SupplierKeyDTO {
+  id: string
+  supplierId: string
+  label: string
+  apiKeyHint: string
+  enabled: boolean
+  cooldownUntil: number
+  lastError: string
+  lastUsedAt: number
+  createdAt: number
+  updatedAt: number
+}
+
+export interface SupplierQueriedModel {
+  id: string
+  ownedBy?: string
+}
+
+export function normalizeSupplierModelIds(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return []
+  const seen = new Set<string>()
+  const result: string[] = []
+  for (const item of raw) {
+    if (typeof item !== 'string') continue
+    const trimmed = item.trim().slice(0, 160)
+    if (!trimmed || trimmed === 'custom' || seen.has(trimmed)) continue
+    seen.add(trimmed)
+    result.push(trimmed)
+    if (result.length >= 500) break
+  }
+  return result
+}
+
 export interface SupplierDTO {
   id: string
   name: string
   baseUrl: string
   hasApiKey: boolean
   apiKeyHint: string
+  keyCount: number
+  activeKeyCount: number
+  keys: SupplierKeyDTO[]
+  models: string[]
   enabled: boolean
   note: string
   channelCount: number
@@ -2282,12 +2970,14 @@ export interface ProviderChannelDTO {
   supplierBaseUrl: string
   supplierEnabled: boolean
   supplierHasKey: boolean
+  keyIds: string[]
+  availableKeyCount?: number
   name: string
   enabled: boolean
   model: string
   customModel: string
   priority: number
-  params: GptParams | GeminiParams | GrokParams
+  params: GptParams | GeminiParams | GrokParams | MuseParams | SeedreamParams
   createdAt: number
   updatedAt: number
 }
@@ -2298,6 +2988,8 @@ export interface ModelProfileDTO {
   displayName: string
   badge: string
   tagline: string
+  defaultModel: string
+  defaultCustomModel: string
   enabled: boolean
   isDefault: boolean
   creditCost: number
@@ -2329,7 +3021,7 @@ export interface AdminProviderConfig {
   customModel: string
   hasApiKey: boolean
   apiKeyHint: string
-  params: GptParams | GeminiParams | GrokParams
+  params: GptParams | GeminiParams | GrokParams | MuseParams | SeedreamParams
   sortOrder: number
   updatedAt: number
 }
@@ -2370,6 +3062,7 @@ export interface GenerationSnapshot {
   aspectRatio: StudioAspectRatio
   resolution?: StudioResolution
   sceneNote?: string
+  textFallbackOnly?: boolean
   provider: ImageProviderId
   profileId?: string
   profileName?: string
@@ -2382,6 +3075,7 @@ export type GenerationAttemptTriggerType =
   | 'transient_retry'
   | 'fallback_retry'
   | 'compat_downgrade'
+  | 'text_fallback'
 
 export interface GenerationTraceReference {
   index: number
@@ -2401,12 +3095,15 @@ export interface GenerationAttemptTrace {
   previousError?: string | null
   delayMs: number
   startedAt: number
-  finishedAt: number
-  durationMs: number
+  finishedAt: number | null
+  durationMs: number | null
   channelId: string
   channelName: string
   supplierId: string
   supplierName: string
+  supplierKeyId?: string
+  supplierKeyLabel?: string
+  supplierKeyHint?: string
   provider: ImageProviderId
   model: string
   endpointMode: string
@@ -2428,7 +3125,7 @@ export interface GenerationAttemptTrace {
       bytes: number
     } | null
   } | null
-  outcome: 'succeeded' | 'failed'
+  outcome: 'in_progress' | 'succeeded' | 'failed'
   error: string | null
   retryable?: boolean | null
   safetyBlocked?: boolean | null
@@ -2436,9 +3133,12 @@ export interface GenerationAttemptTrace {
 
 export type GenerationLiveStage =
   | 'uploading'
+  | 'queued'
   | 'deducted'
   | 'resolving_refs'
+  | 'transcribing_refs'
   | 'generating'
+  | 'text_generating'
   | 'retrying'
   | 'downloading_output'
   | 'saving'
@@ -2453,6 +3153,22 @@ export interface GenerationLiveState {
   percent?: number
 }
 
+export interface GenerationTextFallbackInfo {
+  triggered: boolean
+  sourceJobId?: string | null
+  poseCacheHit?: boolean
+  costumeCacheHit?: boolean
+  portraitCacheHit?: boolean
+  extraCacheHits?: boolean[]
+  poseDescription?: string
+  costumeDescription?: string
+  portraitDescription?: string
+  extraDescriptions?: string[]
+  visionModel?: string
+  visionSupplierName?: string
+  error?: string
+}
+
 export interface GenerationAuditTrace {
   version: 1
   startedAt: number
@@ -2465,6 +3181,10 @@ export interface GenerationAuditTrace {
   requestedResolution?: StudioResolution | null
   imagePassMode: ImagePassMode
   sendStitchedSheet: boolean
+  textFallbackAvailable?: boolean
+  textFallbackChannelId?: string | null
+  textFallbackConsumedJobId?: string | null
+  textFallbackInfo?: GenerationTextFallbackInfo | null
   liveState?: GenerationLiveState | null
   promptBreakdown: {
     prefix: string
@@ -2483,6 +3203,8 @@ export interface GenerationAuditTrace {
     channelId: string
     channelName: string
     supplierName: string
+    supplierKeyHint?: string
+    supplierKeyLabel?: string
     model: string
     priority: number
   }>
@@ -2495,6 +3217,8 @@ export interface GenerationAuditTrace {
     winningChannelId: string
     winningChannelName: string
     winningSupplierName: string
+    winningSupplierKeyHint?: string
+    winningSupplierKeyLabel?: string
     winningModel: string
   } | null
   finalError?: string | null
@@ -2505,6 +3229,7 @@ export interface GenerationHistoryItem {
   userId?: string
   username?: string
   createdAt: number
+  startedAt?: number | null
   finishedAt?: number | null
   status: GenerationStatus
   creditsCost: number
@@ -2524,6 +3249,7 @@ export interface GenerationHistoryItem {
   imageUrl: string
   recipeSummary: string
   errorMessage?: string | null
+  queueInfo?: GenerationQueueInfo | null
   liveProgress?: GenerationLiveState | null
   snapshot?: GenerationSnapshot
   auditTrace?: GenerationAuditTrace | null
@@ -2558,6 +3284,7 @@ export interface AdminOverviewPayload {
   jobsSucceeded: number
   jobsFailed: number
   jobsProcessing: number
+  jobsQueued?: number
   redeemCodesTotal: number
   suppliersTotal: number
   profilesTotal?: number
@@ -2569,6 +3296,52 @@ export interface AdminOverviewPayload {
   trend7d?: AdminOverviewTrendPoint[]
   recentFailures?: AdminOverviewRecentFailureItem[]
   staleProcessingCount?: number
+}
+
+export interface AdminQueueJobItem {
+  id: string
+  userId: string
+  username: string
+  provider: ImageProviderId
+  profileId: string | null
+  profileName: string | null
+  resolution: StudioResolution | null
+  model: string
+  status: 'queued' | 'processing'
+  creditsCost: number
+  recipeSummary: string
+  createdAt: number
+  startedAt: number | null
+  queueInfo?: GenerationQueueInfo | null
+  liveStage?: GenerationLiveStage | null
+  liveMessage?: string | null
+}
+
+export interface AdminQueueModelStat {
+  key: string
+  provider: ImageProviderId
+  profileId: string | null
+  profileName: string
+  runningCount: number
+  queuedCount: number
+  concurrencyLimit: number
+  hasOverride: boolean
+  enabled: boolean
+}
+
+export interface AdminQueueSnapshotDTO {
+  now: number
+  config: GenerationQueueConfig
+  summary: {
+    globalRunning: number
+    globalQueued: number
+    maxGlobalConcurrency: number
+    maxQueueSize: number
+    activeUsers: number
+  }
+  runningJobs: AdminQueueJobItem[]
+  queuedJobs: AdminQueueJobItem[]
+  modelStats: AdminQueueModelStat[]
 }
 
 export interface AdminR2CleanupReport {
@@ -2591,5 +3364,30 @@ export interface AdminJobsStatsSummary {
   succeeded: number
   failed: number
   processing: number
+  queued?: number
+  cancelled?: number
   retried: number
+}
+
+export interface MioSyncStatus {
+  synced: boolean
+  generated: string | null
+  syncedAt: number | null
+  checkedAt: number | null
+  poseCount: number
+  costumeCount: number
+  poseVolumeCount: number
+  costumeVolumeCount: number
+  sourceSha256: string | null
+  lastError: string | null
+  archiveUrl: string
+  dataUrl: string
+  authorName: string
+  authorHandle: string
+  authorUrl: string
+}
+
+export interface MioGalleryPayload extends MioSyncStatus {
+  poses: PoseItem[]
+  costumes: CostumeItem[]
 }

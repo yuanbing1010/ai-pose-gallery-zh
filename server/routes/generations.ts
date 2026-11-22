@@ -1,38 +1,47 @@
 import { Hono } from 'hono'
 import {
   PROVIDER_ORDER,
-  buildRecipePrompt,
   formatUserFacingGenerationError,
   getEffectiveProfileCreditCost,
   getEffectiveStyleCatalog,
+  isChannelStitchedSingleMode,
+  isNativeArtistChannel,
+  mergeGenerationQueueConfig,
   mergeNegativePrompts,
+  mergeVisionFallbackConfig,
   resolveStyleInfo,
-  type GenerationAttemptTriggerType,
   type GenerationAuditTrace,
-  type GenerationLiveStage,
-  type GenerationLiveState,
   type GenerationSnapshot,
   type ImageProviderId,
   type RecipeState,
   type StudioAspectRatio,
   type StudioResolution,
 } from '../../shared/studio'
-import { UpstreamError, extractRecipeSources, runServerGeneration, type ResolvedSource } from '../aiProviders'
+import { extractRecipeSources, type ResolvedSource } from '../aiProviders'
 import {
-  deductCreditsAndCreateJob,
+  computeQueuePositions,
   getPlatformConfig,
+  listActiveQueueRows,
   mapJobRow,
-  markJobSucceeded,
   parseProfileRow,
   reapStaleProcessingJobs,
-  refundFailedJob,
   resolveProfileForGeneration,
   selectOrderedRunnableChannels,
-  updateJobTrace,
   type JobRow,
   type ProviderRow,
-  type RunnableChannel,
 } from '../db'
+import {
+  buildExecutionPlan,
+  buildGenerationPromptVariants,
+  executeGenerationJob,
+  type QueuedJobPayload,
+} from '../generationExecutor'
+import {
+  admitOrEnqueueViaCoordinator,
+  cancelQueuedJobViaCoordinator,
+  notifyJobFinished,
+  reconcileQueueViaCoordinator,
+} from '../generationQueue'
 import { requireAuth } from '../middleware'
 import type { AppEnv } from '../types'
 
@@ -44,7 +53,14 @@ generationRoutes.use('*', requireAuth)
 
 generationRoutes.get('/', async (c) => {
   const user = c.get('user')!
-  await reapStaleProcessingJobs(c.env.DB, user.id)
+  const reapRes = await reapStaleProcessingJobs(c.env.DB, user.id)
+  if (reapRes.reapedProcessing > 0 || reapRes.reapedQueued > 0) {
+    try {
+      c.executionCtx.waitUntil(reconcileQueueViaCoordinator(c.env))
+    } catch {
+      // non-worker environment
+    }
+  }
 
   const limit = Math.min(100, Math.max(1, Number(c.req.query('limit') || '60') || 60))
   const offset = Math.max(0, Number(c.req.query('offset') || '0') || 0)
@@ -63,9 +79,24 @@ generationRoutes.get('/', async (c) => {
       .first<{ credit_balance: number }>(),
   ])
 
+  const rows = listRes.results || []
+  const hasQueued = rows.some((r) => r.status === 'queued')
+  let queueMap = new Map<string, ReturnType<typeof computeQueuePositions> extends Map<string, infer V> ? V : never>()
+  if (hasQueued) {
+    const [activeRows, platform] = await Promise.all([
+      listActiveQueueRows(c.env.DB),
+      getPlatformConfig(c.env.DB),
+    ])
+    queueMap = computeQueuePositions(activeRows, mergeGenerationQueueConfig(platform.queueConfig))
+  }
+
   c.header('Cache-Control', 'no-store')
   return c.json({
-    items: (listRes.results || []).map((row) => mapJobRow(row)),
+    items: rows.map((row) =>
+      mapJobRow(row, {
+        queueInfo: row.status === 'queued' ? queueMap.get(row.id) ?? null : null,
+      })
+    ),
     total: countRes?.total ?? 0,
     creditBalance: userRes?.credit_balance ?? user.creditBalance,
   })
@@ -83,8 +114,55 @@ generationRoutes.get('/:id', async (c) => {
   if (row.user_id !== user.id && user.role !== 'admin') {
     return c.json({ error: { message: '无权查看该记录' } }, 403)
   }
+
+  let queueInfo = null
+  if (row.status === 'queued') {
+    const [activeRows, platform] = await Promise.all([
+      listActiveQueueRows(c.env.DB),
+      getPlatformConfig(c.env.DB),
+    ])
+    queueInfo =
+      computeQueuePositions(activeRows, mergeGenerationQueueConfig(platform.queueConfig)).get(row.id) ??
+      null
+  }
+
   c.header('Cache-Control', 'no-store')
-  return c.json({ job: mapJobRow(row) })
+  return c.json({ job: mapJobRow(row, { queueInfo }) })
+})
+
+generationRoutes.post('/:id/cancel', async (c) => {
+  const user = c.get('user')!
+  const id = c.req.param('id')
+  const res = await cancelQueuedJobViaCoordinator(c.env, {
+    jobId: id,
+    expectedUserId: user.role === 'admin' ? undefined : user.id,
+    reason: '用户已取消排队，积分已全额退还',
+    ledgerNote: '用户取消排队退还',
+  })
+
+  if (res.notFound) {
+    return c.json({ error: { message: '生成记录不存在' } }, 404)
+  }
+  if (res.forbidden) {
+    return c.json({ error: { message: '无权操作该排队任务' } }, 403)
+  }
+  if (!res.cancelled) {
+    const message =
+      res.alreadyStatus === 'processing'
+        ? '该任务已轮到并开始绘制，无法取消排队'
+        : res.alreadyStatus === 'cancelled'
+          ? '该任务已经取消排队'
+          : '该任务已完结，无法取消排队'
+    return c.json({ error: { message } }, 409)
+  }
+
+  c.header('Cache-Control', 'no-store')
+  return c.json({
+    ok: true,
+    job: res.job ? mapJobRow(res.job) : null,
+    refunded: res.refunded,
+    creditBalance: res.creditBalance ?? user.creditBalance,
+  })
 })
 
 generationRoutes.delete('/:id', async (c) => {
@@ -99,8 +177,8 @@ generationRoutes.delete('/:id', async (c) => {
   if (row.user_id !== user.id && user.role !== 'admin') {
     return c.json({ error: { message: '无权删除该记录' } }, 403)
   }
-  if (row.status === 'processing') {
-    return c.json({ error: { message: '进行中的任务无法删除' } }, 409)
+  if (row.status === 'processing' || row.status === 'queued') {
+    return c.json({ error: { message: '排队或绘制中的任务无法删除，请先取消排队或等待完成' } }, 409)
   }
 
   if (row.result_r2_key) {
@@ -127,6 +205,7 @@ generationRoutes.post('/', async (c) => {
     typeof body.idempotencyKey === 'string' && body.idempotencyKey.trim().length > 0
       ? body.idempotencyKey.trim().slice(0, 100)
       : crypto.randomUUID()
+  const textFallbackOnly = body.textFallbackOnly === true
 
   const provider = body.provider as ImageProviderId
   if (!PROVIDER_ORDER.includes(provider)) {
@@ -134,6 +213,7 @@ generationRoutes.post('/', async (c) => {
   }
 
   const platform = await getPlatformConfig(c.env.DB)
+  const visionCfg = mergeVisionFallbackConfig(platform.visionFallback)
   const styleCatalog = getEffectiveStyleCatalog(platform)
   const rawStyle = typeof body.stylePreset === 'string' ? body.stylePreset : platform.defaultStylePreset
   const stylePreset =
@@ -151,7 +231,10 @@ generationRoutes.post('/', async (c) => {
       ? body.sceneNote.replace(/\r\n?/g, '\n').trim().slice(0, 500)
       : ''
   const allowFaceStyleShift = body.allowFaceStyleShift === true
-  const allowPoseStyleShift = body.allowPoseStyleShift === true
+  const allowPoseStyleShift =
+    typeof body.allowPoseStyleShift === 'boolean'
+      ? body.allowPoseStyleShift
+      : resolvedStyleInfo.poseMode === 'adaptive'
   const stitchedR2Key = typeof body.stitchedR2Key === 'string' ? body.stitchedR2Key.trim() : undefined
 
   const recipe = (body.recipe || {}) as RecipeState
@@ -233,20 +316,40 @@ generationRoutes.post('/', async (c) => {
     )
   }
 
-  const primaryChannel = channels[0]
-  const finalPrompt = buildRecipePrompt(recipe, stylePreset, {
-    prefix: platform.defaultPromptPrefix,
-    suffix: platform.defaultPromptSuffix,
-    negativePrompt: platform.defaultNegativePrompt,
-    promptTemplate: platform.promptTemplate,
-    poseSanitize: platform.poseSanitize,
-    sceneNote,
-    allowFaceStyleShift,
-    allowPoseStyleShift,
-    stylePresets: platform.stylePresets,
-    styleCategories: platform.styleCategories,
-    styleSubcategories: platform.styleSubcategories,
-  })
+  let effectiveChannels = channels
+  if (textFallbackOnly) {
+    if (!visionCfg.enabled) {
+      return c.json({ error: { message: '当前暂未开启图转文生图功能' } }, 400)
+    }
+    const nativeChannels = channels.filter((ch) => isNativeArtistChannel(ch))
+    if (nativeChannels.length === 0) {
+      return c.json(
+        { error: { message: '当前画笔暂不支持图转文纯文生图模式，请换支画笔或换位AI小画家试试' } },
+        400
+      )
+    }
+    effectiveChannels = nativeChannels
+  }
+
+  const primaryChannel = effectiveChannels[0]
+  const executionPlan = buildExecutionPlan(effectiveChannels)
+  const primaryUsesStitchedSingle =
+    !textFallbackOnly &&
+    Boolean(extractedSources.stitched) &&
+    isChannelStitchedSingleMode(primaryChannel, extractedSources.refs.length)
+
+  const { promptBuildOptions, finalPrompt, multiPrompt, stitchedSinglePrompt } =
+    buildGenerationPromptVariants({
+      platform,
+      recipe,
+      stylePreset,
+      sceneNote,
+      allowFaceStyleShift,
+      allowPoseStyleShift,
+      primaryUsesStitchedSingle,
+      hasStitchedSheet: Boolean(extractedSources.stitched),
+      refCount: extractedSources.refs.length,
+    })
 
   const recipeSummary =
     [
@@ -266,18 +369,23 @@ generationRoutes.post('/', async (c) => {
     aspectRatio,
     ...(selectedResolution ? { resolution: selectedResolution } : {}),
     sceneNote: sceneNote || undefined,
+    ...(textFallbackOnly ? { textFallbackOnly: true } : {}),
     provider,
     profileId: profileRow.id,
     profileName: profileRow.display_name,
     model: primaryChannel.model,
   }
 
-  const initialSources =
-    platform.sendStitchedSheet && extractedSources.stitched
-      ? [...extractedSources.refs, extractedSources.stitched]
-      : extractedSources.refs
+  const initialSources = textFallbackOnly
+    ? extractedSources.refs
+    : primaryUsesStitchedSingle && extractedSources.stitched
+      ? [extractedSources.stitched]
+      : platform.sendStitchedSheet && extractedSources.stitched
+        ? [...extractedSources.refs, extractedSources.stitched]
+        : extractedSources.refs
 
   const createdAt = Date.now()
+  const traceChannels = effectiveChannels
   const auditTrace: GenerationAuditTrace = {
     version: 1,
     startedAt: createdAt,
@@ -289,12 +397,21 @@ generationRoutes.post('/', async (c) => {
     profileName: profileRow.display_name,
     requestedResolution: selectedResolution,
     imagePassMode: platform.imagePassMode,
-    sendStitchedSheet: platform.sendStitchedSheet,
+    sendStitchedSheet: textFallbackOnly
+      ? false
+      : platform.sendStitchedSheet || primaryUsesStitchedSingle,
+    ...(textFallbackOnly
+      ? {
+          textFallbackInfo: {
+            triggered: true,
+          },
+        }
+      : {}),
     liveState: {
       stage: 'deducted',
       message: '准备中…',
       attempt: 0,
-      totalAttempts: channels.length === 1 ? 3 : channels.length,
+      totalAttempts: executionPlan.length,
       startedAt: createdAt,
       stageStartedAt: createdAt,
       percent: 12,
@@ -317,11 +434,13 @@ generationRoutes.post('/', async (c) => {
       sourceKind: src.kind,
       rawPath: src.rawPath,
     })),
-    candidateChannels: channels.map((ch, idx) => ({
+    candidateChannels: traceChannels.map((ch, idx) => ({
       order: idx + 1,
       channelId: ch.channelId,
       channelName: ch.channelName,
       supplierName: ch.supplierName,
+      ...(ch.supplierKeyHint ? { supplierKeyHint: ch.supplierKeyHint } : {}),
+      ...(ch.supplierKeyLabel ? { supplierKeyLabel: ch.supplierKeyLabel } : {}),
       model: ch.model,
       priority: ch.priority,
     })),
@@ -331,57 +450,59 @@ generationRoutes.post('/', async (c) => {
   }
 
   const jobId = crypto.randomUUID()
-  let deductRes: { existing?: JobRow; creditBalance: number }
-  try {
-    deductRes = await deductCreditsAndCreateJob(c.env.DB, {
-      jobId,
-      userId: user.id,
-      idempotencyKey,
-      provider,
-      profileId: profileRow.id,
-      profileName: profileRow.display_name,
-      resolution: selectedResolution,
-      model: primaryChannel.model,
-      channelId: primaryChannel.channelId,
-      channelName: primaryChannel.channelName,
-      supplierId: primaryChannel.supplierId,
-      supplierName: primaryChannel.supplierName,
-      creditsCost: effectiveCreditCost,
-      prompt: finalPrompt,
-      recipeSummary,
-      aspectRatio,
-      stylePreset,
-      snapshotJson: JSON.stringify(snapshot),
-      traceJson: JSON.stringify(auditTrace),
-    })
-  } catch {
-    const freshUser = await c.env.DB.prepare(`SELECT credit_balance, status FROM users WHERE id = ?`)
-      .bind(user.id)
-      .first<{ credit_balance: number; status: string }>()
-    if (!freshUser || freshUser.status !== 'active') {
-      return c.json({ error: { message: '账号状态异常' } }, 403)
-    }
+  const requestOrigin = new URL(c.req.url).origin
+  const queuePayload: QueuedJobPayload = {
+    requestOrigin,
+    ...(stitchedR2Key ? { stitchedR2Key } : {}),
+    ...(textFallbackOnly ? { textFallbackOnly: true } : {}),
+  }
+
+  const admitRes = await admitOrEnqueueViaCoordinator(c.env, {
+    jobId,
+    userId: user.id,
+    idempotencyKey,
+    provider,
+    profileId: profileRow.id,
+    profileName: profileRow.display_name,
+    resolution: selectedResolution,
+    model: primaryChannel.model,
+    channelId: primaryChannel.channelId,
+    channelName: primaryChannel.channelName,
+    supplierId: primaryChannel.supplierId,
+    supplierName: primaryChannel.supplierName,
+    creditsCost: effectiveCreditCost,
+    prompt: finalPrompt,
+    recipeSummary,
+    aspectRatio,
+    stylePreset,
+    snapshotJson: JSON.stringify(snapshot),
+    traceJson: JSON.stringify(auditTrace),
+    queuePayloadJson: JSON.stringify(queuePayload),
+  })
+
+  if (admitRes.kind === 'error') {
     return c.json(
-      {
-        error: {
-          message: `积分不足：本次需要 ${effectiveCreditCost} 积分，当前剩余 ${freshUser.credit_balance} 积分`,
-          code: 'INSUFFICIENT_CREDITS',
-        },
-      },
-      402
+      { error: { message: admitRes.message, code: admitRes.code } },
+      admitRes.status
     )
   }
 
-  if (deductRes.existing) {
-    const ex = deductRes.existing
+  if (admitRes.kind === 'existing') {
+    const ex = admitRes.existing
+    if (ex.status === 'queued') {
+      return c.json({ error: { message: '相同请求已在排队队列中，请稍候查看作品集' } }, 409)
+    }
     if (ex.status === 'processing') {
       return c.json({ error: { message: '相同请求正在生成中，请稍候查看作品集' } }, 409)
     }
-    if (ex.status === 'failed') {
+    if (ex.status === 'failed' || ex.status === 'cancelled') {
       return c.json(
         {
           error: {
-            message: formatUserFacingGenerationError(ex.error_message, ex.provider, ex.profile_name),
+            message:
+              ex.status === 'cancelled'
+                ? ex.error_message || '该任务已取消排队'
+                : formatUserFacingGenerationError(ex.error_message, ex.provider, ex.profile_name),
           },
         },
         409
@@ -389,7 +510,7 @@ generationRoutes.post('/', async (c) => {
     }
     const job = mapJobRow(ex)
     const encoder = new TextEncoder()
-    const quick = `event: done\ndata: ${JSON.stringify({ job, creditBalance: deductRes.creditBalance })}\n\n`
+    const quick = `event: done\ndata: ${JSON.stringify({ job, creditBalance: admitRes.creditBalance })}\n\n`
     return new Response(encoder.encode(quick), {
       headers: {
         'Content-Type': 'text/event-stream; charset=utf-8',
@@ -398,8 +519,21 @@ generationRoutes.post('/', async (c) => {
     })
   }
 
-  const requestOrigin = new URL(c.req.url).origin
   const encoder = new TextEncoder()
+
+  if (admitRes.kind === 'queued') {
+    const queuedEvent = `event: queued\ndata: ${JSON.stringify({
+      job: admitRes.job,
+      creditBalance: admitRes.creditBalance,
+      queueInfo: admitRes.queueInfo,
+    })}\n\n`
+    return new Response(encoder.encode(queuedEvent), {
+      headers: {
+        'Content-Type': 'text/event-stream; charset=utf-8',
+        'Cache-Control': 'no-cache, no-transform',
+      },
+    })
+  }
 
   let streamClosed = false
   let heartbeatTimer: ReturnType<typeof setInterval> | undefined
@@ -439,319 +573,39 @@ generationRoutes.post('/', async (c) => {
       heartbeatTimer = setInterval(() => sendComment('keepalive'), 4000)
 
       const workPromise = (async () => {
-        const startedAt = createdAt
-        auditTrace.startedAt = startedAt
-        let lastAttemptedChannel: RunnableChannel = primaryChannel
-        const totalPlanned = channels.length === 1 ? 3 : channels.length
-
-        const publishProgress = async (
-          stage: GenerationLiveStage,
-          message: string,
-          percent: number,
-          opts?: {
-            attempt?: number
-            totalAttempts?: number
-            creditBalance?: number
-            persist?: boolean
-          }
-        ) => {
-          const nextLive: GenerationLiveState = {
-            stage,
-            message,
-            attempt: opts?.attempt ?? auditTrace.liveState?.attempt ?? 1,
-            totalAttempts: opts?.totalAttempts ?? totalPlanned,
-            startedAt,
-            stageStartedAt: Date.now(),
-            percent,
-          }
-          auditTrace.liveState = nextLive
-          sendEvent('progress', {
-            ...nextLive,
-            jobId,
-            ...(typeof opts?.creditBalance === 'number'
-              ? { creditBalance: opts.creditBalance }
-              : {}),
-          })
-          if (opts?.persist) {
-            await updateJobTrace(c.env.DB, jobId, JSON.stringify(auditTrace))
-          }
-        }
-
         try {
-          await publishProgress(
-            'deducted',
-            '准备中…',
-            14,
-            { attempt: 0, creditBalance: deductRes.creditBalance }
-          )
-
-          // 构建执行队列：多渠道优先故障转移；单渠道允许瞬态重试最多 3 次
-          const executionPlan: Array<{
-            channel: RunnableChannel
-            delayMs: number
-            triggerType: GenerationAttemptTriggerType
-          }> =
-            channels.length === 1
-              ? [
-                  { channel: channels[0], delayMs: 0, triggerType: 'initial' },
-                  { channel: channels[0], delayMs: 1500, triggerType: 'transient_retry' },
-                  { channel: channels[0], delayMs: 3000, triggerType: 'transient_retry' },
-                ]
-              : channels.map((ch, idx) => ({
-                  channel: ch,
-                  delayMs: 0,
-                  triggerType: idx === 0 ? 'initial' : 'failover_switch',
-                }))
-
-          let output: { bytes: Uint8Array; mime: string; ext: string } | null = null
-          let winningChannel: RunnableChannel | null = null
-          const attemptLogs: string[] = []
-          let lastErr: unknown = null
-
-          for (let idx = 0; idx < executionPlan.length; idx++) {
-            const step = executionPlan[idx]
-            lastAttemptedChannel = step.channel
-            if (idx > 0) {
-              if (Date.now() - startedAt > 140_000) break
-              if (step.delayMs > 0) {
-                await publishProgress(
-                  'retrying',
-                  '正在绘制中…',
-                  Math.min(72, 42 + idx * 10),
-                  { attempt: idx + 1, persist: true }
-                )
-                await new Promise((resolve) => setTimeout(resolve, step.delayMs))
-              }
-            }
-
-            const prevErrMsg = lastErr instanceof Error ? lastErr.message : lastErr ? String(lastErr) : null
-            const prevChannel = idx > 0 ? executionPlan[idx - 1].channel : null
-            const triggerReason =
-              idx === 0
-                ? channels.length > 1
-                  ? `首次调度（共 ${channels.length} 条可用渠道，按优先级选中「${step.channel.channelName}」）`
-                  : `首次调度（单渠道「${step.channel.channelName}」）`
-                : step.triggerType === 'failover_switch'
-                  ? `上一渠道「${prevChannel?.channelName || ''} (${prevChannel?.model || ''})」调用失败，自动切换至备用渠道「${step.channel.channelName}」`
-                  : `第 ${idx} 次请求出现可重试异常，等待 ${(step.delayMs / 1000).toFixed(1)}s 后进行第 ${idx + 1} 次自动重试`
-
-            try {
-              const attemptMsg = idx === 0 ? '正在准备参考素材…' : '正在绘制中…'
-
-              await publishProgress(
-                idx === 0 ? 'resolving_refs' : 'retrying',
-                attemptMsg,
-                idx === 0 ? 24 : Math.min(72, 42 + idx * 10),
-                { attempt: idx + 1, persist: idx > 0 }
-              )
-
-              output = await runServerGeneration({
-                env: c.env,
-                channel: step.channel,
-                prompt: finalPrompt,
-                recipe,
-                userId: user.id,
-                aspectRatio,
-                resolution: selectedResolution,
-                imagePassMode: platform.imagePassMode,
-                requestOrigin,
-                stitchedR2Key: platform.sendStitchedSheet ? stitchedR2Key : undefined,
-                traceContext: {
-                  nextAttemptIndex: () => auditTrace.attempts.length + 1,
-                  triggerType: step.triggerType,
-                  triggerReason,
-                  previousError: prevErrMsg,
-                  delayMs: step.delayMs,
-                  onReferencesResolved: (resolvedRefs) => {
-                    auditTrace.references = resolvedRefs
-                  },
-                  onStage: async (phase, phaseMsg) => {
-                    if (phase === 'resolving_refs') {
-                      if (idx === 0) {
-                        await publishProgress('resolving_refs', phaseMsg, 28, { attempt: idx + 1 })
-                      }
-                    } else if (phase === 'generating') {
-                      await publishProgress(
-                        idx === 0 ? 'generating' : 'retrying',
-                        '正在绘制中…',
-                        idx === 0 ? 45 : Math.min(74, 48 + idx * 10),
-                        { attempt: idx + 1, persist: true }
-                      )
-                    } else if (phase === 'downloading_output') {
-                      await publishProgress('downloading_output', phaseMsg, 82, {
-                        attempt: idx + 1,
-                        persist: true,
-                      })
-                    }
-                  },
-                  onAttempt: (attempt) => {
-                    auditTrace.attempts.push(attempt)
-                  },
-                },
-              })
-              winningChannel = step.channel
-              break
-            } catch (err) {
-              lastErr = err
-              const msg = err instanceof Error ? err.message : '未知错误'
-              attemptLogs.push(`[${step.channel.channelName}(${step.channel.supplierName}/${step.channel.model})] ${msg}`)
-              await updateJobTrace(c.env.DB, jobId, JSON.stringify(auditTrace))
-              if (err instanceof UpstreamError && err.safetyBlocked) {
-                // 内容合规拦截不跨渠道重试
-                break
-              }
-              if (channels.length === 1 && err instanceof UpstreamError && !err.retryable) {
-                // 单渠道遇到明确的不可重试参数/鉴权错误不盲目重复
-                break
-              }
-            }
-          }
-
-          // 若多渠道全部失败且至少有瞬态错误且时间宽裕，对首条渠道再兜底重试一次
-          if (
-            !output &&
-            channels.length > 1 &&
-            Date.now() - startedAt < 110_000 &&
-            lastErr instanceof UpstreamError &&
-            !lastErr.safetyBlocked &&
-            lastErr.retryable
-          ) {
-            lastAttemptedChannel = channels[0]
-            const prevErrMsg = lastErr instanceof Error ? lastErr.message : '未知错误'
-            await publishProgress(
-              'retrying',
-              '正在绘制中…',
-              76,
-              { attempt: executionPlan.length + 1, persist: true }
-            )
-            await new Promise((resolve) => setTimeout(resolve, 1500))
-            try {
-              output = await runServerGeneration({
-                env: c.env,
-                channel: channels[0],
-                prompt: finalPrompt,
-                recipe,
-                userId: user.id,
-                aspectRatio,
-                resolution: selectedResolution,
-                imagePassMode: platform.imagePassMode,
-                requestOrigin,
-                stitchedR2Key: platform.sendStitchedSheet ? stitchedR2Key : undefined,
-                traceContext: {
-                  nextAttemptIndex: () => auditTrace.attempts.length + 1,
-                  triggerType: 'fallback_retry',
-                  triggerReason: `全部 ${channels.length} 条候选渠道均调用失败，延迟 1.5s 后回切首条渠道「${channels[0].channelName}」进行兜底重试`,
-                  previousError: prevErrMsg,
-                  delayMs: 1500,
-                  onReferencesResolved: (resolvedRefs) => {
-                    auditTrace.references = resolvedRefs
-                  },
-                  onStage: async (phase, phaseMsg) => {
-                    if (phase === 'downloading_output') {
-                      await publishProgress('downloading_output', phaseMsg, 84, {
-                        attempt: executionPlan.length + 1,
-                        persist: true,
-                      })
-                    }
-                  },
-                  onAttempt: (attempt) => {
-                    auditTrace.attempts.push(attempt)
-                  },
-                },
-              })
-              winningChannel = channels[0]
-            } catch (err) {
-              lastErr = err
-              const msg = err instanceof Error ? err.message : '未知错误'
-              attemptLogs.push(`[兜底重试 ${channels[0].channelName}] ${msg}`)
-              await updateJobTrace(c.env.DB, jobId, JSON.stringify(auditTrace))
-            }
-          }
-
-          if (!output || !winningChannel) {
-            const combinedRaw = attemptLogs.join(' | ') || (lastErr instanceof Error ? lastErr.message : '生成失败')
-            throw new Error(combinedRaw)
-          }
-
-          await publishProgress('saving', '正在保存成图…', 92, { persist: true })
-
-          const r2Key = `generations/${user.id}/${jobId}.${output.ext}`
-          await c.env.BUCKET.put(r2Key, output.bytes, {
-            httpMetadata: { contentType: output.mime },
-            customMetadata: {
-              userId: user.id,
-              jobId,
-              provider,
-              profileId: profileRow.id,
-              channelId: winningChannel.channelId,
-            },
-          })
-
-          const finishedAt = Date.now()
-          auditTrace.finishedAt = finishedAt
-          auditTrace.totalDurationMs = Math.max(0, finishedAt - startedAt)
-          auditTrace.finalError = null
-          auditTrace.liveState = null
-          auditTrace.result = {
-            r2Key,
-            mime: output.mime,
-            bytes: output.bytes.byteLength,
-            winningAttemptIndex: auditTrace.attempts[auditTrace.attempts.length - 1]?.attemptIndex ?? 1,
-            winningChannelId: winningChannel.channelId,
-            winningChannelName: winningChannel.channelName,
-            winningSupplierName: winningChannel.supplierName,
-            winningModel: winningChannel.model,
-          }
-
-          const updatedRow = await markJobSucceeded(c.env.DB, {
+          await executeGenerationJob({
+            env: c.env,
             jobId,
-            resultR2Key: r2Key,
-            resultMime: output.mime,
-            resultBytes: output.bytes.byteLength,
-            model: winningChannel.model,
-            channelId: winningChannel.channelId,
-            channelName: winningChannel.channelName,
-            supplierId: winningChannel.supplierId,
-            supplierName: winningChannel.supplierName,
-            traceJson: JSON.stringify(auditTrace),
-          })
-
-          if (!updatedRow) {
-            throw new Error('任务状态写入失败')
-          }
-
-          sendEvent('done', {
-            job: mapJobRow(updatedRow),
-            creditBalance: deductRes.creditBalance,
-          })
-        } catch (err) {
-          const rawMessage = err instanceof Error ? err.message : '生成失败，请稍后重试'
-          const finishedAt = Date.now()
-          auditTrace.finishedAt = finishedAt
-          auditTrace.totalDurationMs = Math.max(0, finishedAt - startedAt)
-          auditTrace.creditsRefunded = effectiveCreditCost
-          auditTrace.finalError = rawMessage
-          auditTrace.liveState = null
-          const refundRes = await refundFailedJob(c.env.DB, jobId, rawMessage, {
-            traceJson: JSON.stringify(auditTrace),
-            model: lastAttemptedChannel.model,
-            channelId: lastAttemptedChannel.channelId,
-            channelName: lastAttemptedChannel.channelName,
-            supplierId: lastAttemptedChannel.supplierId,
-            supplierName: lastAttemptedChannel.supplierName,
-          })
-          sendEvent('error', {
-            message: formatUserFacingGenerationError(
-              rawMessage,
-              provider,
-              profileRow.display_name
-            ),
-            refunded: refundRes.refunded,
-            creditBalance: refundRes.creditBalance ?? deductRes.creditBalance,
-            jobId,
+            userId: user.id,
+            provider,
+            profileRow,
+            selectedResolution,
+            effectiveCreditCost,
+            creditBalanceAfterDeduct: admitRes.creditBalance,
+            channels: effectiveChannels,
+            executionPlan,
+            textFallbackOnly,
+            recipe,
+            extractedSources,
+            stylePreset,
+            aspectRatio,
+            stitchedR2Key,
+            requestOrigin,
+            platform,
+            promptBuildOptions,
+            multiPrompt,
+            stitchedSinglePrompt,
+            auditTrace,
+            startedAt: Date.now(),
+            onEvent: sendEvent,
           })
         } finally {
-          closeStream()
+          try {
+            await notifyJobFinished(c.env, jobId)
+          } finally {
+            closeStream()
+          }
         }
       })()
 
@@ -771,7 +625,6 @@ generationRoutes.post('/', async (c) => {
     headers: {
       'Content-Type': 'text/event-stream; charset=utf-8',
       'Cache-Control': 'no-cache, no-transform',
-      'X-Accel-Buffering': 'no',
     },
   })
 })

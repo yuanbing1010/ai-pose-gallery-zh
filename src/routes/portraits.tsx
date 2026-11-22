@@ -16,6 +16,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { portraitsQuery } from '@/api/gallery'
 import { PortraitCard } from '@/components/cards/PortraitCard'
 import { EmptyState } from '@/components/common/EmptyState'
+import { GalleryDensityControl } from '@/components/common/GalleryDensityControl'
 import { HorizontalFilterStrip } from '@/components/common/HorizontalFilterStrip'
 import { ShowcaseDialog, ShowcaseStageTabs } from '@/components/common/ShowcaseDialog'
 import { ScrollToTopButton } from '@/components/common/ScrollToTopButton'
@@ -24,11 +25,32 @@ import { GlowCard3D } from '@/components/costumes/GlowCard3D'
 import { PortraitFilterModal } from '@/components/portraits/PortraitFilterModal'
 import { Skeleton } from '@/components/ui/skeleton'
 import { getPortraitAccent } from '@/lib/cardAccents'
+import { galleryGridClassName, useGalleryDesktopCols } from '@/lib/galleryDensity'
+import { downloadFileName, referenceImageUrl } from '@/lib/recipeImages'
 import { cn } from '@/lib/utils'
 import { useStudio } from '@/store/studioStore'
 
+export interface PortraitsSearchParams {
+  section?: '正脸参考' | '造型氛围'
+  hair?: string
+  style?: string
+  hot?: boolean
+  q?: string
+}
+
 export const Route = createFileRoute('/portraits')({
   staticData: { title: '人像颜值库' },
+  validateSearch: (raw: Record<string, unknown>): PortraitsSearchParams => {
+    const out: PortraitsSearchParams = {}
+    if (raw.section === '正脸参考' || raw.section === '造型氛围') out.section = raw.section
+    if (typeof raw.hair === 'string' && raw.hair.trim()) out.hair = raw.hair.trim()
+    if (typeof raw.style === 'string' && raw.style.trim() && raw.style !== 'all') {
+      out.style = raw.style.trim()
+    }
+    if (raw.hot === true || raw.hot === 'true' || raw.hot === '1') out.hot = true
+    if (typeof raw.q === 'string' && raw.q) out.q = raw.q
+    return out
+  },
   loader: ({ context }) => context.queryClient.ensureQueryData(portraitsQuery),
   pendingComponent: () => (
     <div className="space-y-5">
@@ -41,7 +63,7 @@ export const Route = createFileRoute('/portraits')({
         <Skeleton className="h-14 w-72 rounded-xl" />
       </div>
       <Skeleton className="h-10 w-full rounded-xl" />
-      <div className="grid grid-cols-2 gap-x-4 gap-y-6 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+      <div className="grid grid-cols-2 gap-x-4 gap-y-6 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
         {Array.from({ length: 10 }).map((_, idx) => (
           <Skeleton key={idx} className="aspect-[4/5] rounded-[20px]" />
         ))}
@@ -56,12 +78,42 @@ const HAIRS = ['短发', '中发', '中长发', '长发'] as const
 function PortraitsPage() {
   const { data: portraits } = useSuspenseQuery(portraitsQuery)
   const { recipe, togglePortrait } = useStudio()
+  const search = Route.useSearch()
+  const navigate = Route.useNavigate()
 
-  const [section, setSection] = useState<'' | '正脸参考' | '造型氛围'>('')
-  const [hair, setHair] = useState('')
-  const [styleName, setStyleName] = useState('all')
-  const [onlyHot, setOnlyHot] = useState(false)
-  const [query, setQuery] = useState('')
+  const section: '' | '正脸参考' | '造型氛围' = search.section ?? ''
+  const hair = search.hair ?? ''
+  const styleName = search.style ?? 'all'
+  const onlyHot = Boolean(search.hot)
+  const query = search.q ?? ''
+
+  const updateSearch = (patch: Partial<PortraitsSearchParams>) => {
+    void navigate({
+      search: (prev) => {
+        const next: PortraitsSearchParams = { ...prev, ...patch }
+        if (!next.section) delete next.section
+        if (!next.hair) delete next.hair
+        if (!next.style || next.style === 'all') delete next.style
+        if (!next.hot) delete next.hot
+        if (!next.q) delete next.q
+        return next
+      },
+      replace: true,
+    })
+  }
+
+  const setSection = (next: '' | '正脸参考' | '造型氛围') =>
+    updateSearch({ section: next || undefined })
+  const setHair = (next: string) => updateSearch({ hair: next || undefined })
+  const setStyleName = (next: string) =>
+    updateSearch({ style: next === 'all' ? undefined : next })
+  const setOnlyHot = (updater: boolean | ((prev: boolean) => boolean)) => {
+    const nextVal = typeof updater === 'function' ? updater(onlyHot) : updater
+    updateSearch({ hot: nextVal || undefined })
+  }
+  const setQuery = (next: string) => updateSearch({ q: next || undefined })
+
+  const [desktopCols, setDesktopCols] = useGalleryDesktopCols()
   const [shown, setShown] = useState(60)
   const [filterOpen, setFilterOpen] = useState(false)
   const [viewerNav, setViewerNav] = useState<{ index: number | null; dir: 1 | -1 }>({
@@ -132,12 +184,16 @@ function PortraitsPage() {
 
   const hasActiveFilters = Boolean(activeFilterCount > 0 || query.trim())
 
+  const allStyleCount = useMemo(() => {
+    const names = new Set<string>()
+    for (const p of portraits) {
+      if (p.发型名称) names.add(p.发型名称)
+    }
+    return names.size
+  }, [portraits])
+
   const resetFilters = () => {
-    setSection('')
-    setHair('')
-    setStyleName('all')
-    setOnlyHot(false)
-    setQuery('')
+    void navigate({ search: {}, replace: true })
     setShown(60)
   }
 
@@ -146,6 +202,7 @@ function PortraitsPage() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (viewerOpen && viewerIndex !== null && filtered.length) {
+        if (viewerStageMode === 'zoom') return
         if (e.key === 'ArrowRight') {
           setViewerNav({ index: (viewerIndex + 1) % filtered.length, dir: 1 })
           return
@@ -174,7 +231,7 @@ function PortraitsPage() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [viewerOpen, viewerIndex, filtered.length])
+  }, [viewerOpen, viewerIndex, viewerStageMode, filtered.length])
 
   return (
     <div className="space-y-5">
@@ -189,7 +246,7 @@ function PortraitsPage() {
             人像颜值库
           </h1>
           <p className="text-xs text-muted-foreground sm:text-sm">
-            51 款日系发型细分 · 当前匹配{' '}
+            {allStyleCount} 款日系发型细分 · 当前匹配{' '}
             <span className="font-mono font-medium text-foreground">{filtered.length.toLocaleString('zh-CN')}</span> 张
           </p>
         </div>
@@ -314,6 +371,8 @@ function PortraitsPage() {
             <span>Top 10 人气</span>
           </button>
 
+          <GalleryDensityControl value={desktopCols} onChange={setDesktopCols} />
+
           {hasActiveFilters && (
             <button
               type="button"
@@ -383,6 +442,10 @@ function PortraitsPage() {
             )
           })}
 
+          {styleOptions.length > 0 && (
+            <span aria-hidden="true" className="mx-1 h-4 w-px shrink-0 bg-border" />
+          )}
+
           {styleOptions.slice(0, 12).map((s) => {
             const isActive = styleName === s.label
             return (
@@ -412,7 +475,7 @@ function PortraitsPage() {
       {filtered.length === 0 ? (
         <EmptyState title="没有找到匹配的人像参考" description="试试更换发型关键词或重置筛选" />
       ) : (
-        <div className="grid grid-cols-2 gap-x-4 gap-y-6 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+        <div className={galleryGridClassName(desktopCols)}>
           {filtered.slice(0, shown).map((item, idx) => (
             <PortraitCard
               key={item.id}
@@ -438,6 +501,13 @@ function PortraitsPage() {
           </button>
         </div>
       )}
+
+      {/* 底部来源说明 */}
+      <footer className="space-y-1 rounded-2xl border border-border bg-card px-4 py-3 text-xs text-muted-foreground">
+        <p>
+          人像颜值与日系发型细分图集：精选正脸参考与造型氛围人像素材，支持按发长与细节发型检索并直接锁入角色合成台配方。
+        </p>
+      </footer>
 
       {/* 双栏命令筛选面板 */}
       <PortraitFilterModal
@@ -478,6 +548,7 @@ function PortraitsPage() {
       {currentItem && viewerIndex !== null && (() => {
         const picked = recipe.portrait?.id === currentItem.id
         const accent = getPortraitAccent(currentItem.分区, currentItem.发长, currentItem.热门)
+        const fullImageUrl = referenceImageUrl(currentItem.原图)
 
         return (
           <ShowcaseDialog
@@ -493,10 +564,10 @@ function PortraitsPage() {
             picked={picked}
             pickLabel={picked ? '已在配方中（点击移除）' : '锁入角色配方'}
             onTogglePick={() => togglePortrait(currentItem)}
-            downloadHref={`/${currentItem.原图}`}
-            downloadName={`${currentItem.id}.webp`}
+            downloadHref={fullImageUrl}
+            downloadName={downloadFileName(currentItem.id, currentItem.原图, 'webp')}
             downloadLabel="下载高清原图"
-            externalHref={`/${currentItem.原图}`}
+            externalHref={fullImageUrl}
             externalLabel="新窗口打开"
             stageTopLeft={
               <ShowcaseStageTabs
@@ -537,7 +608,7 @@ function PortraitsPage() {
                     </>
                   )}
                   <GlowCard3D
-                    imageUrl={`/${currentItem.原图}`}
+                    imageUrl={fullImageUrl}
                     alt={currentItem.标题}
                     direction={viewerNav.dir}
                   />
@@ -545,7 +616,7 @@ function PortraitsPage() {
               ) : (
                 <div className="w-full pt-2">
                   <ZoomViewport
-                    imageUrl={`/${currentItem.原图}`}
+                    imageUrl={fullImageUrl}
                     alt={currentItem.标题}
                     className="min-h-0 h-[56dvh] rounded-2xl border border-border bg-card dark:border-white/12 dark:bg-[#161620] p-3"
                   />
@@ -569,7 +640,7 @@ function PortraitsPage() {
             sidebarBody={
               <div className="space-y-5">
                 {currentItem.热门 && (
-                  <div className="inline-flex items-center gap-1.5 rounded-full bg-[#E5A918]/15 px-3 py-1 text-xs font-semibold text-[#E5A918] ring-1 ring-[#E5A918]/30">
+                  <div className="inline-flex items-center gap-1.5 rounded-full bg-[#E5A918]/15 px-3 py-1 text-xs font-semibold text-[#7A5200] ring-1 ring-[#E5A918]/30 dark:text-[#E5A918]">
                     <FlameIcon className="size-3.5" />
                     <span>Top 10 人气缪斯</span>
                   </div>

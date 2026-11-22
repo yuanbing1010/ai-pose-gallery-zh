@@ -2,7 +2,9 @@ import {
   DEFAULT_PROVIDER_PARAMS,
   PROVIDER_META,
   buildAspectRatioPatches,
+  isChannelStitchedSingleMode,
   poseImagePath,
+  type DreaminaChannelOptions,
   type GeminiParams,
   type GenerationAttemptTrace,
   type GenerationAttemptTriggerType,
@@ -11,12 +13,25 @@ import {
   type GptParams,
   type GrokParams,
   type ImagePassMode,
+  type ImageProviderId,
+  type MuseParams,
+  type SeedreamParams,
   type RecipeState,
+  type ReferenceDescriptionDTO,
+  type ReferenceDescriptionKind,
   type StudioAspectRatio,
   type StudioResolution,
+  type VisionFallbackConfig,
+  type WaveSpeedChannelOptions,
 } from '../shared/studio'
 import { base64ToBytes, bytesToBase64, detectImageFormat } from './crypto'
-import type { RunnableChannel } from './db'
+import {
+  findReferenceDescriptionByKey,
+  updateReferenceDescriptionManual,
+  upsertAutoReferenceDescription,
+  type RunnableChannel,
+  type VisionFallbackTarget,
+} from './db'
 import type { Env } from './types'
 import { isPrivateOrLocalHostname, sanitizeGalleryAssetPath, validateExternalImageUrl } from './validation'
 
@@ -98,7 +113,7 @@ function classifySource(
   meta: { slot: ResolvedSource['slot']; label: string }
 ): ResolvedSource | null {
   if (r2Key) {
-    if (!r2Key.startsWith(`uploads/${userId}/`)) {
+    if (!r2Key.startsWith(`uploads/${userId}/`) && !r2Key.startsWith(`generations/${userId}/`)) {
       throw new Error('无权引用其他用户上传的图片')
     }
     return { kind: 'r2', r2Key, slot: meta.slot, label: meta.label, rawPath: r2Key }
@@ -350,6 +365,38 @@ export function buildGeminiNativeEndpoint(baseUrl: string, model: string): {
   }
 }
 
+function buildGeminiNativeAuthRequest(
+  baseUrl: string,
+  model: string,
+  apiKey: string,
+  authMode: 'auto' | 'bearer' | 'goog_key' | 'both' = 'auto'
+): { url: string; headers: Record<string, string> } {
+  const { endpointUrl, isOfficialGoogle } = buildGeminiNativeEndpoint(baseUrl, model)
+  const isOAuthToken = /^ya29\./i.test(apiKey)
+
+  const useQueryKey =
+    authMode === 'goog_key' ||
+    authMode === 'both' ||
+    (authMode === 'auto' && isOfficialGoogle && !isOAuthToken)
+  const useGoogHeader =
+    authMode === 'goog_key' ||
+    authMode === 'both' ||
+    (authMode === 'auto' && !isOAuthToken)
+  const useBearer =
+    authMode === 'bearer' ||
+    authMode === 'both' ||
+    (authMode === 'auto' && (!isOfficialGoogle || isOAuthToken))
+
+  const url = useQueryKey
+    ? `${endpointUrl}${endpointUrl.includes('?') ? '&' : '?'}key=${encodeURIComponent(apiKey)}`
+    : endpointUrl
+
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+  if (useGoogHeader) headers['x-goog-api-key'] = apiKey
+  if (useBearer) headers.Authorization = `Bearer ${apiKey}`
+  return { url, headers }
+}
+
 function normalizeV1Base(baseUrl: string): string {
   const stripped = baseUrl
     .trim()
@@ -440,8 +487,17 @@ function isRetryableStatus(status: number): boolean {
   return status === 408 || status === 425 || status === 429 || status >= 500
 }
 
+function isUnsupportedParamError(message: string): boolean {
+  return /does not support|unsupported|unrecognized|unknown (?:parameter|field)|extra (?:inputs?|fields?) (?:are|is) not permitted|additional properties|unexpected keyword|invalid (?:parameter|field|value)|is not allowed/i.test(
+    message
+  )
+}
+
 function isSafetyOrPolicyError(message: string): boolean {
-  return /safety|prohibited|content_policy|moderation|blocked|nsfw|sexual|policy/i.test(message)
+  if (isUnsupportedParamError(message)) return false
+  return /safety|prohibited|content_policy|content_filter|moderation_blocked|moderation_details|content[-_\s]?moderat(?:ed|ion)|\bmoderation\b|moderated|blocked|nsfw|sexual|policy|cannot generate|unable to generate|can't generate|违规|敏感|审核|拦截|模型未生成媒体|没能生成|无法生成/i.test(
+    message
+  )
 }
 
 const GEO_RESTRICTED_HOSTS = new Set([
@@ -494,7 +550,12 @@ async function sendViaUsRelay(
   })
 }
 
-async function devProxyAwareFetch(url: string, init: RequestInit, env?: Env): Promise<Response> {
+export async function devProxyAwareFetch(
+  url: string,
+  init: RequestInit,
+  env?: Env,
+  timeoutMs?: number
+): Promise<Response> {
   const req = new Request(url, init)
   const method = (req.method || 'POST').toUpperCase()
   const bodyBuf =
@@ -502,9 +563,24 @@ async function devProxyAwareFetch(url: string, init: RequestInit, env?: Env): Pr
 
   if (env?.DEV_ASSETS_ORIGIN) {
     const headers = new Headers()
-    for (const key of ['content-type', 'authorization', 'x-goog-api-key']) {
-      const val = req.headers.get(key)
-      if (val) headers.set(key, val)
+    const directKeys = new Set(['content-type', 'authorization', 'x-goog-api-key'])
+    const extraHeaders: Record<string, string> = {}
+    req.headers.forEach((val, key) => {
+      const lower = key.toLowerCase()
+      if (directKeys.has(lower)) {
+        headers.set(lower, val)
+      } else if (
+        !['host', 'connection', 'content-length', 'transfer-encoding'].includes(lower) &&
+        !lower.startsWith('x-dev-')
+      ) {
+        extraHeaders[key] = val
+      }
+    })
+    if (Object.keys(extraHeaders).length > 0) {
+      headers.set('x-dev-extra-headers', JSON.stringify(extraHeaders))
+    }
+    if (typeof timeoutMs === 'number' && Number.isFinite(timeoutMs) && timeoutMs > 0) {
+      headers.set('x-dev-timeout-ms', String(Math.round(timeoutMs)))
     }
     headers.set('x-dev-target-url', url)
     headers.set('x-dev-method', method)
@@ -519,6 +595,7 @@ async function devProxyAwareFetch(url: string, init: RequestInit, env?: Env): Pr
 
     let lastErr: unknown
     for (const origin of devOrigins) {
+      if (init.signal?.aborted) break
       try {
         return await fetch(`${origin}/__dev_upstream_fetch`, {
           method: 'POST',
@@ -528,6 +605,7 @@ async function devProxyAwareFetch(url: string, init: RequestInit, env?: Env): Pr
         })
       } catch (err) {
         lastErr = err
+        if (init.signal?.aborted) break
       }
     }
     throw lastErr ?? new Error('本地开发代理连接失败')
@@ -554,16 +632,45 @@ async function devProxyAwareFetch(url: string, init: RequestInit, env?: Env): Pr
   return directRes
 }
 
-async function fetchUpstream(url: string, init: RequestInit, env: Env): Promise<{ res: Response; json: any }> {
-  let res: Response
+async function fetchUpstream(
+  url: string,
+  init: RequestInit,
+  env: Env,
+  timeoutMs = 60_000
+): Promise<{ res: Response; json: any }> {
+  const controller = new AbortController()
+  const timeoutErr = new Error(`请求超过 ${Math.round(timeoutMs / 1000)} 秒未返回完整响应`)
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const timeoutPromise = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      try {
+        controller.abort(timeoutErr)
+      } catch {
+        // ignore abort error
+      }
+      reject(timeoutErr)
+    }, timeoutMs)
+  })
   try {
-    res = await devProxyAwareFetch(url, { ...init, signal: AbortSignal.timeout(75_000) }, env)
+    return await Promise.race([
+      (async () => {
+        const res = await devProxyAwareFetch(
+          url,
+          { ...init, signal: controller.signal },
+          env,
+          timeoutMs
+        )
+        const json = await readUpstreamJson(res)
+        return { res, json }
+      })(),
+      timeoutPromise,
+    ])
   } catch (err) {
     const msg = err instanceof Error ? err.message : '网络请求异常'
     throw new UpstreamError(`上游网络或超时异常：${msg}`, true)
+  } finally {
+    if (timer) clearTimeout(timer)
   }
-  const json = await readUpstreamJson(res)
-  return { res, json }
 }
 
 function appendMultipartImages(
@@ -639,7 +746,7 @@ function sanitizeValueForAudit(val: unknown, keyName?: string, depth = 0): unkno
         return `${prefix}[省略 ${b64Len} 字符 (~${kb} KB)]`
       }
     }
-    if ((keyName === 'b64_json' || keyName === 'data' || keyName === 'result') && val.length > 200) {
+    if ((keyName === 'b64_json' || keyName === 'data' || keyName === 'result' || keyName === 'outputs') && val.length > 200 && !/^https?:\/\//i.test(val)) {
       const kb = ((val.length * 3) / 4 / 1024).toFixed(1)
       return `[Base64 · ${val.length} 字符 (~${kb} KB)]`
     }
@@ -667,8 +774,13 @@ function sanitizeValueForAudit(val: unknown, keyName?: string, depth = 0): unkno
 }
 
 function summarizeUpstreamError(json: any, status: number): string {
+  const topError =
+    typeof json?.error === 'string' && json.error.trim()
+      ? json.error.trim()
+      : json?.error?.message
   return (
-    json?.error?.message ||
+    json?.data?.error ||
+    topError ||
     json?.message ||
     json?.code ||
     json?._raw ||
@@ -676,11 +788,372 @@ function summarizeUpstreamError(json: any, status: number): string {
   )
 }
 
+interface WaveSpeedModelSpec {
+  imageMode: 'none' | 'single' | 'array'
+  maxImages: number
+  sizeMode: 'aspect_resolution' | 'size' | 'aspect_only' | 'none'
+  resolutions?: readonly string[]
+  minDim?: number
+  maxDim?: number
+  outputFormats?: readonly ('png' | 'jpeg' | 'webp' | 'gif')[]
+  supportsSeed?: boolean
+  maxPromptChars?: number
+}
+
+const WAVESPEED_MODEL_SPECS: Record<string, WaveSpeedModelSpec> = {
+  'bytedance/seedream-v5.5/edit': {
+    imageMode: 'array',
+    maxImages: 10,
+    sizeMode: 'aspect_resolution',
+    resolutions: ['1k', '1.5k', '2k'],
+    outputFormats: ['jpeg', 'png'],
+  },
+  'minimax/image-01/image-to-image': {
+    imageMode: 'single',
+    maxImages: 1,
+    sizeMode: 'size',
+    minDim: 512,
+    maxDim: 2048,
+    supportsSeed: true,
+    maxPromptChars: 1500,
+  },
+}
+
+/** 规范化 WaveSpeed 模型 ID */
+function resolveWaveSpeedModelId(rawModel: string): string {
+  return rawModel.trim().replace(/^\/+/, '')
+}
+
+/** 根据 WaveSpeed 模型 ID 获取精确约束或推断自定义模型默认规格 */
+function getWaveSpeedModelSpec(modelId: string): WaveSpeedModelSpec {
+  const exact = WAVESPEED_MODEL_SPECS[modelId]
+  if (exact) return exact
+
+  const lower = modelId.toLowerCase()
+  if (/\/text-to-image$/.test(lower)) {
+    return {
+      imageMode: 'none',
+      maxImages: 0,
+      sizeMode: 'aspect_resolution',
+      resolutions: ['1k', '2k', '4k'],
+      outputFormats: ['png', 'jpeg', 'webp'],
+    }
+  }
+  if (/kontext|image-to-image|x-ai\/grok-imagine-image\/edit/.test(lower)) {
+    return {
+      imageMode: 'single',
+      maxImages: 1,
+      sizeMode: 'size',
+      minDim: 512,
+      maxDim: 2048,
+      outputFormats: ['png', 'jpeg', 'webp'],
+      supportsSeed: true,
+    }
+  }
+  return {
+    imageMode: 'array',
+    maxImages: 10,
+    sizeMode: 'aspect_resolution',
+    resolutions: ['1k', '2k', '4k'],
+    outputFormats: ['png', 'jpeg'],
+  }
+}
+
+/** 从供应商 Base URL 提取 WaveSpeed /api/v3 根路径并构造提交、轮询与文件上传地址 */
+function buildWaveSpeedEndpoints(baseUrl: string): {
+  apiV3Root: string
+  submitUrl: (modelId: string) => string
+  pollUrl: (taskId: string) => string
+  mediaUploadUrl: string
+} {
+  const trimmed = baseUrl.trim().replace(/\/+$/, '')
+  const match = trimmed.match(/^(.*?\/api\/v3)(?:\/.*)?$/i)
+  const apiV3Root = match ? match[1] : `${trimmed}/api/v3`
+  return {
+    apiV3Root,
+    submitUrl: (modelId: string) => `${apiV3Root}/${modelId.trim().replace(/^\/+/, '')}`,
+    pollUrl: (taskId: string) => `${apiV3Root}/predictions/${encodeURIComponent(taskId)}/result`,
+    mediaUploadUrl: `${apiV3Root}/media/uploads`,
+  }
+}
+
+/** 按比例与目标分辨率计算符合 WaveSpeed 模型上下限的 "W*H" 像素字符串 */
+function computeWaveSpeedPixelSize(
+  aspectRatio: StudioAspectRatio,
+  resolution: StudioResolution | null | undefined,
+  minDim: number,
+  maxDim: number
+): string {
+  const resTier = resolution || '1.5K'
+  const round8 = (n: number) => Math.max(8, Math.round(n / 8) * 8)
+
+  const presets1k: Record<StudioAspectRatio, [number, number]> = {
+    '1:1': [1024, 1024],
+    '3:4': [768, 1024],
+    '4:3': [1024, 768],
+    '9:16': [576, 1024],
+    '16:9': [1024, 576],
+  }
+  const presets2kLarge: Record<StudioAspectRatio, [number, number]> = {
+    '1:1': [2048, 2048],
+    '3:4': [1728, 2304],
+    '4:3': [2304, 1728],
+    '9:16': [1440, 2560],
+    '16:9': [2560, 1440],
+  }
+  const presets2kStd: Record<StudioAspectRatio, [number, number]> = {
+    '1:1': [2048, 2048],
+    '3:4': [1536, 2048],
+    '4:3': [2048, 1536],
+    '9:16': [1152, 2048],
+    '16:9': [2048, 1152],
+  }
+  const presets1536: Record<StudioAspectRatio, [number, number]> = {
+    '1:1': [1536, 1536],
+    '3:4': [1152, 1536],
+    '4:3': [1536, 1152],
+    '9:16': [864, 1536],
+    '16:9': [1536, 864],
+  }
+  let [w, h] =
+    resTier === '1K'
+      ? presets1k[aspectRatio]
+      : resTier === '1.5K'
+        ? presets1536[aspectRatio]
+        : maxDim >= 2560
+          ? presets2kLarge[aspectRatio]
+          : maxDim >= 2048
+            ? presets2kStd[aspectRatio]
+            : presets1536[aspectRatio]
+
+  const minSide = Math.min(w, h)
+  if (minSide < minDim) {
+    const scale = minDim / minSide
+    w = round8(w * scale)
+    h = round8(h * scale)
+  }
+  const maxSide = Math.max(w, h)
+  if (maxSide > maxDim) {
+    const scale = maxDim / maxSide
+    w = round8(w * scale)
+    h = round8(h * scale)
+  }
+  w = Math.max(minDim, Math.min(maxDim, w))
+  h = Math.max(minDim, Math.min(maxDim, h))
+  return `${w}*${h}`
+}
+
+/** 解析 WaveSpeed 允许的 resolution 枚举（自动向下或向上钳制到模型支持范围） */
+function pickWaveSpeedResolution(
+  allowed: readonly string[] | undefined,
+  requested: StudioResolution | null | undefined
+): string | undefined {
+  if (!allowed || allowed.length === 0) return undefined
+  const desired = (requested || '1.5K').toLowerCase()
+  if (allowed.includes(desired)) return desired
+  const order = ['0.5k', '1k', '1.5k', '2k', '4k', '8k']
+  const desiredRank = order.indexOf(desired)
+  let best = allowed[0]
+  let bestDist = Infinity
+  for (const cand of allowed) {
+    const rank = order.indexOf(cand)
+    const dist = rank >= 0 && desiredRank >= 0 ? Math.abs(rank - desiredRank) : 99
+    if (dist < bestDist) {
+      bestDist = dist
+      best = cand
+    }
+  }
+  return best
+}
+
+/** 适配单图拼合占位符及模型提示词长度上限（如 MiniMax Image-01 限制 1500 字符） */
+function formatWaveSpeedPrompt(
+  prompt: string,
+  spec: WaveSpeedModelSpec,
+  selectedCount: number,
+  usedCollapsedStitched: boolean
+): string {
+  let formatted = prompt
+  if (usedCollapsedStitched && selectedCount === 1) {
+    formatted = formatted.replace(/<IMAGE_\d+>/gi, '<IMAGE_0>')
+  }
+  if (spec.maxPromptChars && formatted.length > spec.maxPromptChars) {
+    formatted = formatted.slice(0, spec.maxPromptChars).trimEnd()
+  }
+  return formatted
+}
+
+/** 使用 WaveSpeed Presigned /api/v3/media/uploads 上传本地或 R2 参考图，失败时自动退回 Base64 Data URL */
+async function uploadWaveSpeedMediaIfNeeded(
+  item: { source: ResolvedSource; ref: string; loaded?: LoadedImage },
+  mediaUploadUrl: string,
+  apiKey: string,
+  env: Env
+): Promise<string> {
+  if (!item.loaded) return item.ref
+  const loaded = item.loaded
+  try {
+    const ext = loaded.ext || 'png'
+    const filename = `ref-${item.source.slot}.${ext}`
+    const metaRes = await devProxyAwareFetch(
+      mediaUploadUrl,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          filename,
+          size: loaded.bytes.byteLength,
+          content_type: loaded.mime,
+        }),
+        signal: AbortSignal.timeout(25_000),
+      },
+      env,
+      25_000
+    )
+    if (!metaRes.ok) return item.ref
+    const metaJson = await readUpstreamJson(metaRes)
+    const uploadUrlRaw = metaJson?.data?.upload?.url || metaJson?.data?.upload_url
+    const downloadUrlRaw = metaJson?.data?.download_url || metaJson?.data?.url
+    const safeUploadUrl = typeof uploadUrlRaw === 'string' ? validateExternalImageUrl(uploadUrlRaw) : null
+    const safeDownloadUrl = typeof downloadUrlRaw === 'string' ? validateExternalImageUrl(downloadUrlRaw) : null
+    if (!safeUploadUrl || !safeDownloadUrl) return item.ref
+
+    const putHeaders: Record<string, string> = {}
+    const signedHeaders = metaJson?.data?.upload?.headers
+    if (signedHeaders && typeof signedHeaders === 'object') {
+      for (const [k, v] of Object.entries(signedHeaders as Record<string, unknown>)) {
+        const lower = k.toLowerCase()
+        if (
+          typeof v === 'string' &&
+          v &&
+          lower !== 'authorization' &&
+          lower !== 'host' &&
+          lower !== 'content-length'
+        ) {
+          putHeaders[k] = v
+        }
+      }
+    }
+    if (!Object.keys(putHeaders).some((k) => k.toLowerCase() === 'content-type')) {
+      putHeaders['Content-Type'] = loaded.mime
+    }
+
+    const putRes = await devProxyAwareFetch(
+      safeUploadUrl.toString(),
+      {
+        method: 'PUT',
+        headers: putHeaders,
+        body: loaded.bytes,
+        signal: AbortSignal.timeout(40_000),
+      },
+      env,
+      40_000
+    )
+    if (!putRes.ok) return item.ref
+    return safeDownloadUrl.toString()
+  } catch {
+    return item.ref
+  }
+}
+
+/** 从 WaveSpeed 任务响应或输出数组中提取成图 URL 或标准 Data URL */
+function extractWaveSpeedOutput(json: any): string | null {
+  const dataObj = json?.data && !Array.isArray(json.data) ? json.data : json
+  const outputs = Array.isArray(dataObj?.outputs) ? dataObj.outputs : []
+  for (const entry of outputs) {
+    if (typeof entry === 'string' && entry.trim()) {
+      const s = entry.trim()
+      if (/^(?:https?:\/\/|data:image\/)/i.test(s)) return s
+      if (s.length > 64) return `data:image/png;base64,${s}`
+    } else if (entry && typeof entry === 'object') {
+      const candidate = entry.url || entry.image_url || entry.download_url
+      if (typeof candidate === 'string' && candidate.trim()) return candidate.trim()
+      if (typeof entry.b64_json === 'string' && entry.b64_json.trim()) {
+        return `data:image/png;base64,${entry.b64_json.trim()}`
+      }
+    }
+  }
+  return extractUniversalImage(json)
+}
+
+/** 解析 HTTP Retry-After 响应头为毫秒数（限定在 1s~10s） */
+function parseRetryAfterMs(res: Response, fallbackMs: number): number {
+  const raw = res.headers.get('retry-after')
+  if (!raw) return fallbackMs
+  const seconds = Number(raw)
+  if (Number.isFinite(seconds) && seconds > 0) {
+    return Math.min(10_000, Math.max(1_000, Math.round(seconds * 1000)))
+  }
+  return fallbackMs
+}
+
+/** 遇到未知/自定义 WaveSpeed 模型的 HTTP 400 参数校验失败时尝试就地兼容降级字段 */
+function adaptWaveSpeedPayloadOn400(payload: Record<string, unknown>, message: string): boolean {
+  if (!message) return false
+  let changed = false
+
+  if (/\bimage\b.*is a required|field required.*\bimage\b|missing.*\bimage\b/i.test(message) && Array.isArray(payload.images)) {
+    const first = payload.images[0]
+    delete payload.images
+    if (first !== undefined) payload.image = first
+    return true
+  }
+  if (/\bimages\b.*is a required|field required.*\bimages\b|missing.*\bimages\b/i.test(message) && typeof payload.image === 'string') {
+    payload.images = [payload.image]
+    delete payload.image
+    return true
+  }
+
+  // 提取校验消息中指出的具体未允许字段名并剔除
+  const fieldMatches = message.matchAll(/['"`]([a-z_][a-z0-9_]*)['"`]\s*(?:was unexpected|is not allowed|not permitted|unknown|unsupported|unexpected)/gi)
+  for (const m of fieldMatches) {
+    const field = m[1]
+    if (field && field !== 'prompt' && field in payload) {
+      delete payload[field]
+      changed = true
+    }
+  }
+  if (changed) return true
+
+  // 针对未显式点名字段的额外属性错误按保守顺序剥离可选字段
+  if (/additional properties|extra (?:inputs?|fields?)|unsupported|unknown/i.test(message)) {
+    for (const optKey of [
+      'complexity',
+      'input_fidelity',
+      'background',
+      'strength',
+      'seed',
+      'output_format',
+      'quality',
+      'resolution',
+      'size',
+      'aspect_ratio',
+    ]) {
+      if (optKey in payload) {
+        delete payload[optKey]
+        return true
+      }
+    }
+  }
+
+  return false
+}
+
+/** 将 0 起始的 `<IMAGE_k>` 占位符转为 1 起始的 `图1`/`图2`（供 GPT Image、Grok Imagine、Dreamina 等按 1 起始顺序解析参考图的模型使用） */
+function replaceImageTagsWithOneBased(prompt: string): string {
+  return prompt
+    .replace(/<IMAGE_(\d+)>/gi, (_match, numStr) => `图${Number(numStr) + 1}`)
+    .trim()
+}
+
 /**
  * 为 Grok 准备参考图数组与提示词：
  * 1. Grok 最多支持 5 张参考图；
- * 2. 若提示词已使用 <IMAGE_0>/<IMAGE_1>...（新标准模板或自定义占位符），直接保持原顺序与原中文提示词直出；
- * 3. 若提示词仍使用旧版 `图1/图2/...`，兼容将其转为 0 起始的 <IMAGE_k>（并在多图时将姿势图置于 <IMAGE_0>）。
+ * 2. `grok-imagine-image-2.0` 按 `images` 数组 1 起始自然顺序解析多图（`<IMAGE_0>` 为视频模型语法），
+ *    因此将 `<IMAGE_k>` 转为 `图(k+1)`，并在仅使用旧版 `图1/图2/...` 时将姿势图置为 `图1`。
  */
 function prepareGrokInputs(
   prompt: string,
@@ -692,7 +1165,7 @@ function prepareGrokInputs(
   const rawRefs = resolvedAll.slice(0, 5)
   const hasExplicitTags = /<IMAGE_\d+>/i.test(prompt)
   if (hasExplicitTags || rawRefs.length <= 1) {
-    return { refsLimited: rawRefs, grokPrompt: prompt }
+    return { refsLimited: rawRefs, grokPrompt: replaceImageTagsWithOneBased(prompt) }
   }
 
   const poseIdxInRaw = rawRefs.findIndex((item) => item.source.slot === 'pose')
@@ -707,20 +1180,805 @@ function prepareGrokInputs(
       : indexedRefs
 
   const refsLimited = orderedRefs.map((entry) => entry.item)
-  const origNumToNewIdx = new Map<number, number>(
-    orderedRefs.map((entry, newIdx) => [entry.origNum, newIdx]),
+  const origNumToNewNum = new Map<number, number>(
+    orderedRefs.map((entry, newIdx) => [entry.origNum, newIdx + 1]),
   )
 
   const grokPrompt = prompt
     .replace(/(?<![\dA-Za-z])图([1-9]\d*)(?!\d)/g, (match, numStr) => {
-      const mappedIdx = origNumToNewIdx.get(Number(numStr))
-      return mappedIdx !== undefined ? ` <IMAGE_${mappedIdx}> ` : match
+      const mappedNum = origNumToNewNum.get(Number(numStr))
+      return mappedNum !== undefined ? `图${mappedNum}` : match
     })
-    .replace(/([（(【[：:])\s+(<IMAGE_\d+>)/g, '$1$2')
-    .replace(/(<IMAGE_\d+>)\s+([（(）)】\]：:，,。；;、])/g, '$1$2')
     .replace(/ {2,}/g, ' ')
+    .trim()
 
   return { refsLimited, grokPrompt }
+}
+
+/**
+ * 预处理 Muse 2 API 输入：
+ * 1. 参考图上限 10 张；
+ * 2. muse2api 通过 1 起始的 `[图N]` 识别提示词与附件索引映射，
+ *    将主提示词中的 0 起始 `<IMAGE_k>` 转换为 `[图(k+1)]`，并将 `图1/图2/...` 统一转换为 `[图1]/[图2]/...`；
+ * 3. 明确指示直接执行图像生成，避免 Muse 网页智能体只回文字建议。
+ */
+function prepareMuseInputs(
+  prompt: string,
+  resolvedAll: Array<{ source: ResolvedSource; ref: string; loaded?: LoadedImage }>
+): {
+  refsLimited: Array<{ source: ResolvedSource; ref: string; loaded?: LoadedImage }>
+  musePrompt: string
+} {
+  const refsLimited = resolvedAll.slice(0, 10)
+  const converted = prompt
+    .replace(/<IMAGE_(\d+)>/gi, (_match, numStr) => `[图${Number(numStr) + 1}]`)
+    .replace(/\[(?:图|图片)([1-9]\d*)\]/g, '[图$1]')
+    .replace(/(?<![[\dA-Za-z])图([1-9]\d*)(?!\d|\])/g, '[图$1]')
+    .trim()
+  const musePrompt = `${converted}\n• 输出指令：请直接调用图像生成能力绘制并输出唯一一张最终成图，不要回复纯文字方案、建议或询问。`
+  return { refsLimited, musePrompt }
+}
+
+/** 执行 Muse 2 API 异步生图任务 (/v1/images/tasks -> 轮询 /v1/images/tasks/{task_id})，彻底规避反代长连接超时 */
+async function runMuseTaskGeneration(args: {
+  env: Env
+  v1BaseUrl: string
+  apiKey: string
+  model: string
+  prompt: string
+  aspectRatio: StudioAspectRatio
+  museCfg: MuseParams
+  refsLimited: Array<{ source: ResolvedSource; ref: string; loaded?: LoadedImage }>
+  trackedFetch: (spec: TrackedFetchSpec) => Promise<{ res: Response; json: any }>
+  attemptState: { current: GenerationAttemptTrace | null }
+  emitPendingFailure: (errMsg: string, retryable: boolean | null, safetyBlocked: boolean | null) => void
+  onStage?: GenerationTraceContext['onStage']
+}): Promise<{ res: Response; json: any; outputRef: string | null }> {
+  const {
+    env,
+    v1BaseUrl,
+    apiKey,
+    model,
+    prompt,
+    aspectRatio,
+    museCfg,
+    refsLimited,
+    trackedFetch,
+    attemptState,
+    emitPendingFailure,
+    onStage,
+  } = args
+
+  const payload: Record<string, unknown> = {
+    model,
+    prompt,
+    aspect_ratio: !museCfg.aspectRatio || museCfg.aspectRatio === 'auto' ? aspectRatio : museCfg.aspectRatio,
+    response_format: museCfg.responseFormat || 'b64_json',
+  }
+  if (refsLimited.length > 0) {
+    payload.images = refsLimited.map((item) => item.ref)
+  }
+
+  const { res, json } = await trackedFetch({
+    url: `${v1BaseUrl}/images/tasks`,
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify(payload),
+    auditParams: payload,
+    timeoutMs: 90_000,
+  })
+
+  if (!res.ok) {
+    const errMsg = summarizeUpstreamError(json, res.status)
+    const fullMsg = `[${PROVIDER_META.muse.shortName}] ${errMsg}`
+    const safety = isSafetyOrPolicyError(errMsg)
+    const retryable = isRetryableStatus(res.status) && !safety
+    emitPendingFailure(fullMsg, retryable, safety)
+    throw new UpstreamError(fullMsg, retryable, res.status, safety)
+  }
+
+  const taskId = String(json?.task_id || json?.id || json?.data?.task_id || json?.data?.id || '').trim()
+  if (taskId && attemptState.current?.response && !attemptState.current.response.requestId) {
+    attemptState.current.response.requestId = taskId
+  }
+
+  const immediateStatus = typeof json?.status === 'string' ? json.status.toLowerCase() : ''
+  const immediateOut = extractUniversalImage(json)
+  if ((immediateStatus === 'completed' || !immediateStatus) && immediateOut) {
+    return { res, json, outputRef: immediateOut }
+  }
+
+  if (!taskId) {
+    const errMsg = summarizeUpstreamError(json, res.status || 502)
+    const fullMsg = `[${PROVIDER_META.muse.shortName}] 未返回异步任务 ID：${errMsg}`
+    emitPendingFailure(fullMsg, false, false)
+    throw new UpstreamError(fullMsg, false, res.status || 502, false)
+  }
+
+  const pollUrl = `${v1BaseUrl}/images/tasks/${encodeURIComponent(taskId)}`
+  const pollStartedAt = Date.now()
+  const maxPollDurationMs = 120_000
+  let consecutivePollErrors = 0
+  let pollIdx = 0
+
+  while (Date.now() - pollStartedAt < maxPollDurationMs) {
+    const waitMs = pollIdx === 0 ? 5_000 : 4_000
+    await new Promise((resolve) => setTimeout(resolve, waitMs))
+    pollIdx += 1
+
+    await onStage?.('generating', '缪斯织梦绘制中…')
+
+    let pollRes: Response
+    let pollJson: any
+    try {
+      const fetched = await fetchUpstream(
+        pollUrl,
+        {
+          method: 'GET',
+          headers: { Authorization: `Bearer ${apiKey}` },
+        },
+        env,
+        25_000
+      )
+      pollRes = fetched.res
+      pollJson = fetched.json
+    } catch (err) {
+      consecutivePollErrors += 1
+      if (consecutivePollErrors <= 4) {
+        continue
+      }
+      const msg = err instanceof Error ? err.message : '轮询任务状态超时'
+      const fullMsg = `[${PROVIDER_META.muse.shortName}] ${msg}`
+      emitPendingFailure(fullMsg, false, false)
+      throw new UpstreamError(fullMsg, false, 504, false)
+    }
+
+    if (!pollRes.ok) {
+      const errMsg = summarizeUpstreamError(pollJson, pollRes.status)
+      if (isRetryableStatus(pollRes.status) && consecutivePollErrors < 4) {
+        consecutivePollErrors += 1
+        continue
+      }
+      const safety = isSafetyOrPolicyError(errMsg)
+      const fullMsg = `[${PROVIDER_META.muse.shortName}] ${errMsg}`
+      if (attemptState.current) {
+        attemptState.current.response = {
+          status: pollRes.status,
+          ok: false,
+          requestId: taskId,
+          body: sanitizeValueForAudit(pollJson),
+          outputSummary: null,
+        }
+      }
+      emitPendingFailure(fullMsg, false, safety)
+      throw new UpstreamError(fullMsg, false, pollRes.status, safety)
+    }
+
+    consecutivePollErrors = 0
+    const pollStatus = typeof pollJson?.status === 'string' ? pollJson.status.toLowerCase() : ''
+
+    if (pollStatus === 'completed') {
+      if (attemptState.current) {
+        attemptState.current.response = {
+          status: pollRes.status,
+          ok: true,
+          requestId: taskId,
+          body: sanitizeValueForAudit(pollJson),
+          outputSummary: null,
+        }
+      }
+      return { res: pollRes, json: pollJson, outputRef: extractUniversalImage(pollJson) }
+    }
+
+    if (pollStatus === 'failed' || pollStatus === 'cancelled' || pollStatus === 'timeout') {
+      const errMsg = summarizeUpstreamError(pollJson, 502)
+      const safety = isSafetyOrPolicyError(errMsg)
+      const retryable = !safety && /timeout|502|503|busy|overload|拥挤|繁忙|重绘|重试/i.test(errMsg)
+      const fullMsg = `[${PROVIDER_META.muse.shortName}] ${errMsg}`
+      if (attemptState.current) {
+        attemptState.current.response = {
+          status: pollRes.status,
+          ok: false,
+          requestId: taskId,
+          body: sanitizeValueForAudit(pollJson),
+          outputSummary: null,
+        }
+      }
+      emitPendingFailure(fullMsg, retryable, safety)
+      throw new UpstreamError(fullMsg, retryable, 502, safety)
+    }
+  }
+
+  const timeoutMsg = `[${PROVIDER_META.muse.shortName}] 生成任务轮询超时 (task: ${taskId})`
+  emitPendingFailure(timeoutMsg, true, false)
+  throw new UpstreamError(timeoutMsg, true, 504, false)
+}
+
+interface TrackedFetchSpec {
+  url: string
+  headers: Record<string, string>
+  body: BodyInit
+  auditParams: Record<string, unknown>
+  timeoutMs?: number
+  triggerOverride?: {
+    triggerType: GenerationAttemptTriggerType
+    triggerReason: string
+    previousError: string
+  }
+}
+
+/** 将平台标准 `<IMAGE_k>` 占位符转为 Dreamina 易理解的 `图1`/`图2`（不附带任何 Muse 专用后缀） */
+function formatDreaminaPrompt(prompt: string): string {
+  return replaceImageTagsWithOneBased(prompt)
+}
+
+/** 统一执行 Dreamina 浏览器桥 (scripts/dreamina-bridge: /v1/images/generations -> 轮询 -> /v1/download 取原图) */
+async function runDreaminaGeneration(args: {
+  env: Env
+  provider: ImageProviderId
+  baseUrl: string
+  apiKey: string
+  rawModel: string
+  prompt: string
+  aspectRatio?: string | null
+  resolution?: string | null
+  resolvedAll: Array<{ source: ResolvedSource; ref: string; loaded?: LoadedImage }>
+  dreaminaOpts: DreaminaChannelOptions
+  trackedFetch: (spec: TrackedFetchSpec) => Promise<{ res: Response; json: any }>
+  attemptState: { current: GenerationAttemptTrace | null }
+  emitPendingFailure: (errMsg: string, retryable: boolean | null, safetyBlocked: boolean | null) => void
+  onStage?: GenerationTraceContext['onStage']
+}): Promise<{ res: Response; json: any; outputRef: string | null }> {
+  const {
+    env,
+    provider,
+    baseUrl,
+    apiKey,
+    rawModel,
+    prompt,
+    aspectRatio,
+    resolution,
+    resolvedAll,
+    dreaminaOpts,
+    trackedFetch,
+    attemptState,
+    emitPendingFailure,
+    onStage,
+  } = args
+
+  const v1 = normalizeV1Base(baseUrl)
+  const origin = new URL(baseUrl).origin
+  const model = rawModel.trim() || 'seedream-5.0-flash'
+  const selectedRefs = resolvedAll.slice(0, 6)
+
+  const payload: Record<string, unknown> = {
+    model,
+    prompt: formatDreaminaPrompt(prompt),
+  }
+  if (aspectRatio && aspectRatio.trim()) {
+    payload.aspect_ratio = aspectRatio.trim()
+  }
+  if (resolution && resolution.trim()) {
+    payload.resolution = resolution.trim()
+  }
+  if (selectedRefs.length > 0) {
+    payload.ref_images = selectedRefs.map((item) => item.ref)
+  }
+
+  const bridgeHeaders: Record<string, string> = {
+    'x-bridge-token': apiKey,
+    Authorization: `Bearer ${apiKey}`,
+  }
+
+  const { res, json } = await trackedFetch({
+    url: `${v1}/images/generations`,
+    headers: {
+      'Content-Type': 'application/json',
+      ...bridgeHeaders,
+    },
+    body: JSON.stringify(payload),
+    auditParams: payload,
+    timeoutMs: 90_000,
+  })
+
+  if (!res.ok) {
+    const errMsg = summarizeUpstreamError(json, res.status)
+    const fullMsg = `[${PROVIDER_META[provider].shortName}] ${errMsg}`
+    const safety = isSafetyOrPolicyError(errMsg)
+    const nonRetryable = res.status === 401 || res.status === 403 || /invalid token/i.test(errMsg)
+    const retryable = isRetryableStatus(res.status) && !safety && !nonRetryable
+    emitPendingFailure(fullMsg, retryable, safety)
+    throw new UpstreamError(fullMsg, retryable, res.status, safety)
+  }
+
+  const taskId = String(json?.id || json?.task_id || '').trim()
+  if (taskId && attemptState.current?.response && !attemptState.current.response.requestId) {
+    attemptState.current.response.requestId = taskId
+  }
+
+  if (!taskId) {
+    const errMsg = summarizeUpstreamError(json, res.status || 502)
+    const fullMsg = `[${PROVIDER_META[provider].shortName}] Dreamina 桥未返回任务 ID：${errMsg}`
+    emitPendingFailure(fullMsg, false, false)
+    throw new UpstreamError(fullMsg, false, res.status || 502, false)
+  }
+
+  const pollUrl = `${v1}/images/generations/${encodeURIComponent(taskId)}`
+  const pollStartedAt = Date.now()
+  const maxPollDurationMs = 300_000
+  let consecutivePollErrors = 0
+  let pollIdx = 0
+
+  while (Date.now() - pollStartedAt < maxPollDurationMs) {
+    const waitMs = Math.min(4_000, 2_500 + pollIdx * 500)
+    await new Promise((resolve) => setTimeout(resolve, waitMs))
+    pollIdx += 1
+
+    let pollRes: Response
+    let pollJson: any
+    try {
+      const fetched = await fetchUpstream(
+        pollUrl,
+        {
+          method: 'GET',
+          headers: bridgeHeaders,
+        },
+        env,
+        35_000
+      )
+      pollRes = fetched.res
+      pollJson = fetched.json
+    } catch (err) {
+      consecutivePollErrors += 1
+      if (consecutivePollErrors <= 4) {
+        continue
+      }
+      const msg = err instanceof Error ? err.message : 'Dreamina 桥轮询任务状态超时'
+      const fullMsg = `[${PROVIDER_META[provider].shortName}] ${msg}`
+      emitPendingFailure(fullMsg, false, false)
+      throw new UpstreamError(fullMsg, false, 504, false)
+    }
+
+    if (!pollRes.ok) {
+      const errMsg = summarizeUpstreamError(pollJson, pollRes.status)
+      if (isRetryableStatus(pollRes.status) && consecutivePollErrors < 4) {
+        consecutivePollErrors += 1
+        continue
+      }
+      const safety = isSafetyOrPolicyError(errMsg)
+      const fullMsg = `[${PROVIDER_META[provider].shortName}] ${errMsg}`
+      if (attemptState.current) {
+        attemptState.current.response = {
+          status: pollRes.status,
+          ok: false,
+          requestId: taskId,
+          body: sanitizeValueForAudit(pollJson),
+          outputSummary: null,
+        }
+      }
+      emitPendingFailure(fullMsg, false, safety)
+      throw new UpstreamError(fullMsg, false, pollRes.status, safety)
+    }
+
+    consecutivePollErrors = 0
+    const pollStatus = typeof pollJson?.status === 'string' ? pollJson.status.toLowerCase() : ''
+    const pollStage = typeof pollJson?.stage === 'string' && pollJson.stage.trim() ? pollJson.stage.trim() : '正在绘制中…'
+    await onStage?.('generating', pollStage)
+
+    if (pollStatus === 'succeeded' || pollStatus === 'completed') {
+      const firstImg = Array.isArray(pollJson?.images) ? pollJson.images[0] : null
+      const preferPreview = dreaminaOpts.dreaminaOutputQuality === 'preview'
+      const relPath =
+        firstImg && typeof firstImg === 'object'
+          ? preferPreview
+            ? firstImg.proxy || firstImg.download
+            : firstImg.download || firstImg.proxy
+          : null
+
+      let outputRef: string | null = null
+      if (typeof relPath === 'string' && relPath.trim()) {
+        await onStage?.('downloading_output', preferPreview ? '正在获取生成结果…' : '正在触发原图下载…')
+        const imgUrl = relPath.startsWith('http') ? relPath : `${origin}${relPath.startsWith('/') ? '' : '/'}${relPath}`
+        try {
+          const imgRes = await devProxyAwareFetch(
+            imgUrl,
+            { method: 'GET', headers: bridgeHeaders, signal: AbortSignal.timeout(90_000) },
+            env,
+            90_000
+          )
+          const loadedOut = await readResponseImage(imgRes, MAX_OUTPUT_IMAGE_BYTES)
+          outputRef = `data:${loadedOut.mime};base64,${bytesToBase64(loadedOut.bytes)}`
+        } catch (dlErr) {
+          // 原图下载失败且已有预览代理时尝试降级一次 /v1/proxy，仍失败再抛错
+          if (!preferPreview && typeof firstImg?.proxy === 'string' && firstImg.proxy.trim()) {
+            const proxyUrl = `${origin}${firstImg.proxy.startsWith('/') ? '' : '/'}${firstImg.proxy}`
+            const proxyRes = await devProxyAwareFetch(
+              proxyUrl,
+              { method: 'GET', headers: bridgeHeaders, signal: AbortSignal.timeout(45_000) },
+              env,
+              45_000
+            )
+            const loadedProxy = await readResponseImage(proxyRes, MAX_OUTPUT_IMAGE_BYTES)
+            outputRef = `data:${loadedProxy.mime};base64,${bytesToBase64(loadedProxy.bytes)}`
+          } else {
+            const msg = dlErr instanceof Error ? dlErr.message : '原图下载失败'
+            const fullMsg = `[${PROVIDER_META[provider].shortName}] ${msg}`
+            emitPendingFailure(fullMsg, false, false)
+            throw new UpstreamError(fullMsg, false, 502, false)
+          }
+        }
+      } else if (typeof firstImg === 'string') {
+        outputRef = firstImg
+      } else if (typeof firstImg?.url === 'string') {
+        outputRef = firstImg.url
+      } else {
+        outputRef = extractUniversalImage(pollJson)
+      }
+
+      if (attemptState.current) {
+        attemptState.current.response = {
+          status: pollRes.status,
+          ok: true,
+          requestId: taskId,
+          body: sanitizeValueForAudit(pollJson),
+          outputSummary: null,
+        }
+      }
+      return { res: pollRes, json: pollJson, outputRef }
+    }
+
+    if (pollStatus === 'failed' || pollStatus === 'cancelled' || pollStatus === 'timeout') {
+      const errMsg =
+        typeof pollJson?.error === 'string' && pollJson.error.trim()
+          ? pollJson.error.trim()
+          : summarizeUpstreamError(pollJson, 502)
+      const safety = isSafetyOrPolicyError(errMsg)
+      const authOrConfig = /未登录|登录|invalid token|CDP|连接失败|no-prompt-input|no-submit-button/i.test(errMsg)
+      const retryable = !safety && !authOrConfig && /timeout|超时/i.test(errMsg)
+      const fullMsg = `[${PROVIDER_META[provider].shortName}] ${errMsg}`
+      if (attemptState.current) {
+        attemptState.current.response = {
+          status: pollRes.status,
+          ok: false,
+          requestId: taskId,
+          body: sanitizeValueForAudit(pollJson),
+          outputSummary: null,
+        }
+      }
+      emitPendingFailure(fullMsg, retryable, safety)
+      throw new UpstreamError(fullMsg, retryable, 502, safety)
+    }
+  }
+
+  const timeoutMsg = `[${PROVIDER_META[provider].shortName}] Dreamina 桥生成任务轮询超时 (task: ${taskId})`
+  emitPendingFailure(timeoutMsg, false, false)
+  throw new UpstreamError(timeoutMsg, false, 504, false)
+}
+
+/** 统一执行 WaveSpeed API v3 提交、同步等待与异步轮询流程（支持 GPT/Grok/Gemini 任意槽位与精选模型） */
+async function runWaveSpeedGeneration(args: {
+  env: Env
+  provider: ImageProviderId
+  baseUrl: string
+  apiKey: string
+  rawModel: string
+  prompt: string
+  aspectRatio: StudioAspectRatio
+  resolution?: StudioResolution | null
+  resolvedAll: Array<{ source: ResolvedSource; ref: string; loaded?: LoadedImage }>
+  geminiCfg: GeminiParams
+  grokCfg: GrokParams
+  wsOpts: WaveSpeedChannelOptions
+  trackedFetch: (spec: TrackedFetchSpec) => Promise<{ res: Response; json: any }>
+  attemptState: { current: GenerationAttemptTrace | null }
+  emitPendingFailure: (errMsg: string, retryable: boolean | null, safetyBlocked: boolean | null) => void
+  onStage?: GenerationTraceContext['onStage']
+}): Promise<{ res: Response; json: any; outputRef: string | null }> {
+  const {
+    env,
+    provider,
+    baseUrl,
+    apiKey,
+    rawModel,
+    prompt,
+    aspectRatio,
+    resolution,
+    resolvedAll,
+    geminiCfg,
+    grokCfg,
+    wsOpts,
+    trackedFetch,
+    attemptState,
+    emitPendingFailure,
+    onStage,
+  } = args
+
+  const effectiveModel = resolveWaveSpeedModelId(rawModel)
+  const spec = getWaveSpeedModelSpec(effectiveModel)
+  const endpoints = buildWaveSpeedEndpoints(baseUrl)
+
+  const refsOnly = resolvedAll.filter((item) => item.source.slot !== 'stitched')
+  const stitchedItem = resolvedAll.find((item) => item.source.slot === 'stitched')
+
+  let selectedRefs: Array<{ source: ResolvedSource; ref: string; loaded?: LoadedImage }> = []
+  let usedCollapsedStitched = false
+  if (spec.imageMode === 'single') {
+    if (refsOnly.length > 1 && stitchedItem) {
+      selectedRefs = [stitchedItem]
+      usedCollapsedStitched = true
+    } else if (refsOnly[0] || resolvedAll[0]) {
+      selectedRefs = [refsOnly[0] || resolvedAll[0]]
+    }
+  } else if (spec.imageMode === 'array') {
+    if (resolvedAll.length <= spec.maxImages) {
+      selectedRefs = resolvedAll
+    } else {
+      selectedRefs = refsOnly.slice(0, spec.maxImages)
+    }
+  }
+
+  const uploadedUrls = await Promise.all(
+    selectedRefs.map((item) =>
+      uploadWaveSpeedMediaIfNeeded(item, endpoints.mediaUploadUrl, apiKey, env)
+    )
+  )
+
+  const configuredWsRes = wsOpts.wavespeedResolution
+  const fallbackAutoResolution: StudioResolution =
+    resolution ??
+    (provider === 'grok'
+      ? (grokCfg.resolution.toUpperCase() as StudioResolution)
+      : provider === 'gemini'
+        ? geminiCfg.imageSize
+        : '1.5K')
+  const targetResolution: StudioResolution =
+    configuredWsRes === '1k'
+      ? '1K'
+      : configuredWsRes === '1.5k'
+        ? '1.5K'
+        : configuredWsRes === '2k'
+          ? '2K'
+          : fallbackAutoResolution
+
+  const payload: Record<string, unknown> = {
+    prompt: formatWaveSpeedPrompt(prompt, spec, uploadedUrls.length, usedCollapsedStitched),
+  }
+  if (spec.imageMode === 'single' && uploadedUrls[0]) {
+    payload.image = uploadedUrls[0]
+  } else if (spec.imageMode === 'array' && uploadedUrls.length > 0) {
+    payload.images = uploadedUrls
+  }
+
+  if (spec.sizeMode === 'aspect_resolution') {
+    payload.aspect_ratio = aspectRatio
+    const pickedRes = pickWaveSpeedResolution(spec.resolutions, targetResolution)
+    if (pickedRes) payload.resolution = pickedRes
+  } else if (spec.sizeMode === 'aspect_only') {
+    payload.aspect_ratio = aspectRatio
+  } else if (spec.sizeMode === 'size') {
+    payload.size = computeWaveSpeedPixelSize(
+      aspectRatio,
+      targetResolution,
+      spec.minDim ?? 256,
+      spec.maxDim ?? 2048
+    )
+  }
+
+  if (
+    spec.outputFormats &&
+    spec.outputFormats.length > 0 &&
+    wsOpts.wavespeedOutputFormat &&
+    wsOpts.wavespeedOutputFormat !== 'auto' &&
+    (spec.outputFormats as readonly string[]).includes(wsOpts.wavespeedOutputFormat)
+  ) {
+    payload.output_format = wsOpts.wavespeedOutputFormat
+  }
+
+  if (spec.supportsSeed && typeof wsOpts.wavespeedSeed === 'number' && Number.isFinite(wsOpts.wavespeedSeed) && wsOpts.wavespeedSeed >= 0) {
+    payload.seed = Math.floor(wsOpts.wavespeedSeed)
+  }
+
+  const useSyncMode = wsOpts.wavespeedSyncMode === true
+  if (useSyncMode) {
+    payload.enable_sync_mode = true
+  }
+  payload.enable_base64_output = false
+
+  const submitUrl = endpoints.submitUrl(effectiveModel)
+  const jsonHeaders = {
+    'Content-Type': 'application/json',
+    Authorization: `Bearer ${apiKey}`,
+  }
+
+  let res!: Response
+  let json: any
+  let lastTriggerOverride: TrackedFetchSpec['triggerOverride'] | undefined
+
+  // 允许对 429 限流（未创建任务）与未知自定义模型的 HTTP 400 参数兼容做有限自动调整
+  for (let submitTry = 0; submitTry < 3; submitTry++) {
+    try {
+      ;({ res, json } = await trackedFetch({
+        url: submitUrl,
+        headers: jsonHeaders,
+        body: JSON.stringify(payload),
+        auditParams: { ...payload },
+        timeoutMs: useSyncMode ? 90_000 : 45_000,
+        triggerOverride: lastTriggerOverride,
+      }))
+    } catch (err) {
+      // 按 WaveSpeed 官方规范，POST 发生不确定超时/网络中断时不自动重发以免重复扣费
+      if (err instanceof UpstreamError) {
+        throw new UpstreamError(err.message, false, err.status ?? 504, err.safetyBlocked)
+      }
+      throw new UpstreamError('WaveSpeed 提交请求超时或网络中断', false, 504, false)
+    }
+
+    if (res.ok) break
+
+    const errMsg = summarizeUpstreamError(json, res.status)
+    const errCode = Number(json?.code || json?.data?.code || 0)
+
+    if (res.status === 429 && submitTry < 2) {
+      const waitMs = parseRetryAfterMs(res, 2500)
+      emitPendingFailure(`[${PROVIDER_META[provider].shortName}] ${errMsg}`, true, false)
+      await new Promise((resolve) => setTimeout(resolve, waitMs))
+      lastTriggerOverride = {
+        triggerType: 'transient_retry',
+        triggerReason: `WaveSpeed 触发限流 (429)，等待 ${(waitMs / 1000).toFixed(1)}s 后重发`,
+        previousError: errMsg,
+      }
+      continue
+    }
+
+    if (res.status === 400 && submitTry < 2 && adaptWaveSpeedPayloadOn400(payload, errMsg)) {
+      emitPendingFailure(`[${PROVIDER_META[provider].shortName}] ${errMsg}`, true, false)
+      lastTriggerOverride = {
+        triggerType: 'compat_downgrade',
+        triggerReason: `模型 ${effectiveModel} 拒绝部分参数（${errMsg.slice(0, 80)}），已自动精简不兼容字段并重新提交`,
+        previousError: errMsg,
+      }
+      continue
+    }
+
+    const safety = errCode === 1200 || isSafetyOrPolicyError(errMsg)
+    const fullMsg = `[${PROVIDER_META[provider].shortName}] ${errMsg}`
+    emitPendingFailure(fullMsg, false, safety)
+    throw new UpstreamError(fullMsg, false, res.status, safety)
+  }
+
+  const dataObj = json?.data && !Array.isArray(json.data) ? json.data : json
+  const submitCode = Number(json?.code || dataObj?.code || 200)
+  const submitStatus = typeof dataObj?.status === 'string' ? dataObj.status.toLowerCase() : ''
+  const taskId = typeof dataObj?.id === 'string' ? dataObj.id.trim() : ''
+  if (taskId && attemptState.current?.response && !attemptState.current.response.requestId) {
+    attemptState.current.response.requestId = taskId
+  }
+
+  if (submitStatus === 'failed' || submitStatus === 'cancelled' || submitStatus === 'timeout' || submitStatus === 'deleted') {
+    const errMsg = summarizeUpstreamError(json, res.status || 400)
+    const safety = submitCode === 1200 || isSafetyOrPolicyError(errMsg)
+    const fullMsg = `[${PROVIDER_META[provider].shortName}] ${errMsg}`
+    emitPendingFailure(fullMsg, false, safety)
+    throw new UpstreamError(fullMsg, false, res.status || 400, safety)
+  }
+
+  const immediateOutput = extractWaveSpeedOutput(json)
+  if ((submitStatus === 'completed' || !submitStatus) && immediateOutput) {
+    return { res, json, outputRef: immediateOutput }
+  }
+
+  if (!taskId) {
+    const errMsg = summarizeUpstreamError(json, res.status || 502)
+    const safety = submitCode === 1200 || isSafetyOrPolicyError(errMsg)
+    const fullMsg = `[${PROVIDER_META[provider].shortName}] WaveSpeed 未返回任务 ID：${errMsg}`
+    emitPendingFailure(fullMsg, false, safety)
+    throw new UpstreamError(fullMsg, false, res.status || 502, safety)
+  }
+
+  const pollUrl = endpoints.pollUrl(taskId)
+  const pollStartedAt = Date.now()
+  const maxPollDurationMs = 110_000
+  let consecutivePollErrors = 0
+  let pollIdx = 0
+
+  while (Date.now() - pollStartedAt < maxPollDurationMs) {
+    const waitMs = Math.min(3500, 2000 + pollIdx * 500)
+    await new Promise((resolve) => setTimeout(resolve, waitMs))
+    pollIdx += 1
+
+    await onStage?.('generating', '正在绘制中…')
+
+    let pollRes: Response
+    let pollJson: any
+    try {
+      const fetched = await fetchUpstream(
+        pollUrl,
+        {
+          method: 'GET',
+          headers: { Authorization: `Bearer ${apiKey}` },
+        },
+        env,
+        25_000
+      )
+      pollRes = fetched.res
+      pollJson = fetched.json
+    } catch (err) {
+      consecutivePollErrors += 1
+      if (consecutivePollErrors <= 4) {
+        continue
+      }
+      const msg = err instanceof Error ? err.message : '轮询任务状态超时'
+      const fullMsg = `[${PROVIDER_META[provider].shortName}] ${msg}`
+      emitPendingFailure(fullMsg, false, false)
+      throw new UpstreamError(fullMsg, false, 504, false)
+    }
+
+    if (!pollRes.ok) {
+      const errMsg = summarizeUpstreamError(pollJson, pollRes.status)
+      if (isRetryableStatus(pollRes.status) && consecutivePollErrors < 4) {
+        consecutivePollErrors += 1
+        if (pollRes.status === 429) {
+          const retryMs = parseRetryAfterMs(pollRes, 3000)
+          await new Promise((resolve) => setTimeout(resolve, retryMs))
+        }
+        continue
+      }
+      const safety = Number(pollJson?.code || 0) === 1200 || isSafetyOrPolicyError(errMsg)
+      const fullMsg = `[${PROVIDER_META[provider].shortName}] ${errMsg}`
+      if (attemptState.current) {
+        attemptState.current.response = {
+          status: pollRes.status,
+          ok: false,
+          requestId: taskId,
+          body: sanitizeValueForAudit(pollJson),
+          outputSummary: null,
+        }
+      }
+      emitPendingFailure(fullMsg, false, safety)
+      throw new UpstreamError(fullMsg, false, pollRes.status, safety)
+    }
+
+    consecutivePollErrors = 0
+    const pollData = pollJson?.data && !Array.isArray(pollJson.data) ? pollJson.data : pollJson
+    const pollStatus = typeof pollData?.status === 'string' ? pollData.status.toLowerCase() : ''
+    const pollCode = Number(pollJson?.code || pollData?.code || 200)
+
+    if (pollStatus === 'completed') {
+      if (attemptState.current) {
+        attemptState.current.response = {
+          status: pollRes.status,
+          ok: true,
+          requestId: taskId,
+          body: sanitizeValueForAudit(pollJson),
+          outputSummary: null,
+        }
+      }
+      return { res: pollRes, json: pollJson, outputRef: extractWaveSpeedOutput(pollJson) }
+    }
+
+    if (pollStatus === 'failed' || pollStatus === 'cancelled' || pollStatus === 'timeout' || pollStatus === 'deleted') {
+      const errMsg = summarizeUpstreamError(pollJson, 400)
+      const safety = pollCode === 1200 || isSafetyOrPolicyError(errMsg)
+      const fullMsg = `[${PROVIDER_META[provider].shortName}] ${errMsg}`
+      if (attemptState.current) {
+        attemptState.current.response = {
+          status: pollRes.status,
+          ok: false,
+          requestId: taskId,
+          body: sanitizeValueForAudit(pollJson),
+          outputSummary: null,
+        }
+      }
+      emitPendingFailure(fullMsg, false, safety)
+      throw new UpstreamError(fullMsg, false, 400, safety)
+    }
+  }
+
+  const timeoutMsg = `[${PROVIDER_META[provider].shortName}] WaveSpeed 生成任务轮询超时 (task: ${taskId})`
+  emitPendingFailure(timeoutMsg, false, false)
+  throw new UpstreamError(timeoutMsg, false, 504, false)
 }
 
 export async function runServerGeneration(params: {
@@ -734,6 +1992,10 @@ export async function runServerGeneration(params: {
   imagePassMode: ImagePassMode
   requestOrigin: string
   stitchedR2Key?: string
+  /** 非单图拼合模式下是否也随多参考图额外附带三合一拼图（默认兼容开启，由平台 sendStitchedSheet 控制） */
+  includeStitchedWithMulti?: boolean
+  /** 失败兜底去图重试时允许零张参考图（全文字生图） */
+  allowZeroImages?: boolean
   traceContext?: GenerationTraceContext
 }): Promise<{ bytes: Uint8Array; mime: string; ext: string }> {
   const {
@@ -747,6 +2009,8 @@ export async function runServerGeneration(params: {
     imagePassMode,
     requestOrigin,
     stitchedR2Key,
+    includeStitchedWithMulti = true,
+    allowZeroImages = false,
     traceContext,
   } = params
 
@@ -764,22 +2028,38 @@ export async function runServerGeneration(params: {
 
   const ratioPatches = buildAspectRatioPatches(aspectRatio)
   const { refs, stitched } = extractRecipeSources(recipe, userId, stitchedR2Key)
-  if (refs.length === 0) {
+  if (!allowZeroImages && refs.length === 0) {
     throw new UpstreamError('请至少选择或上传 1 张参考图', false)
   }
 
-  const allSources = stitched ? [...refs, stitched] : refs
+  const useStitchedSingle = isChannelStitchedSingleMode(
+    { model, params: rawParams },
+    refs.length
+  )
+  if (useStitchedSingle && refs.length >= 2 && !stitched) {
+    throw new UpstreamError('当前渠道需发送左中右拼合参考图，请刷新生图工作台后重试', false)
+  }
+
+  const allSources =
+    useStitchedSingle && stitched
+      ? [stitched]
+      : stitched && includeStitchedWithMulti
+        ? [...refs, stitched]
+        : refs
   const canPassPublicUrls = imagePassMode === 'url' && isPublicHttpsOrigin(requestOrigin)
 
   const gptCfg: GptParams = { ...DEFAULT_PROVIDER_PARAMS.gpt, ...rawParams, ...ratioPatches.gpt }
   const geminiCfg: GeminiParams = { ...DEFAULT_PROVIDER_PARAMS.gemini, ...rawParams, ...ratioPatches.gemini }
   const grokCfg: GrokParams = { ...DEFAULT_PROVIDER_PARAMS.grok, ...rawParams, ...ratioPatches.grok }
+  const museCfg: MuseParams = { ...DEFAULT_PROVIDER_PARAMS.muse, ...rawParams, ...ratioPatches.muse }
+  const seedreamCfg: SeedreamParams = { ...DEFAULT_PROVIDER_PARAMS.seedream, ...rawParams, ...ratioPatches.seedream }
 
-  if (resolution === '1K' || resolution === '2K' || resolution === '4K') {
-    geminiCfg.imageSize = resolution
-  }
   if (resolution === '1K' || resolution === '2K') {
+    geminiCfg.imageSize = resolution
     grokCfg.resolution = resolution.toLowerCase() as '1k' | '2k'
+    seedreamCfg.resolution = resolution.toLowerCase() as '1k' | '1.5k' | '2k'
+  } else if (resolution === '1.5K') {
+    seedreamCfg.resolution = '1.5k'
   }
 
   const endpointMode =
@@ -787,24 +2067,34 @@ export async function runServerGeneration(params: {
       ? gptCfg.endpointMode
       : provider === 'gemini'
         ? geminiCfg.endpointMode
-        : grokCfg.endpointMode
+        : provider === 'grok'
+          ? grokCfg.endpointMode
+          : provider === 'muse'
+            ? museCfg.endpointMode
+            : seedreamCfg.endpointMode
 
   const usesMultipart =
     (provider === 'gpt' && gptCfg.endpointMode === 'images_edits') ||
     (provider === 'gemini' && geminiCfg.endpointMode === 'openai_edits') ||
-    (provider === 'grok' && grokCfg.endpointMode === 'openai_edits')
+    (provider === 'grok' && grokCfg.endpointMode === 'openai_edits') ||
+    (provider === 'muse' && museCfg.endpointMode === 'openai_edits') ||
+    (provider === 'seedream' && seedreamCfg.endpointMode === 'openai_edits')
 
   const forceBytes =
     (provider === 'gemini' && (geminiCfg.endpointMode === 'native' || geminiCfg.endpointMode === 'openai_edits')) ||
     (provider === 'gpt' && gptCfg.endpointMode === 'images_edits') ||
-    (provider === 'grok' && grokCfg.endpointMode === 'openai_edits')
+    (provider === 'grok' && grokCfg.endpointMode === 'openai_edits') ||
+    (provider === 'muse' && museCfg.endpointMode === 'openai_edits') ||
+    (provider === 'seedream' && seedreamCfg.endpointMode === 'openai_edits')
 
   const resolveRefValue = async (
     src: ResolvedSource
   ): Promise<{ source: ResolvedSource; ref: string; loaded?: LoadedImage }> => {
-    if (!forceBytes && canPassPublicUrls) {
+    if (!forceBytes && imagePassMode === 'url') {
       if (src.kind === 'https') return { source: src, ref: src.url }
-      if (src.kind === 'gallery') return { source: src, ref: `${requestOrigin.replace(/\/+$/, '')}/${src.path}` }
+      if (src.kind === 'gallery' && canPassPublicUrls) {
+        return { source: src, ref: `${requestOrigin.replace(/\/+$/, '')}/${src.path}` }
+      }
     }
     const loaded = await loadImageAsset(src, env)
     return { source: src, ref: loaded.dataUrl, loaded }
@@ -846,6 +2136,9 @@ export async function runServerGeneration(params: {
         channelName: channel.channelName,
         supplierId: channel.supplierId,
         supplierName: channel.supplierName,
+        ...(channel.supplierKeyId ? { supplierKeyId: channel.supplierKeyId } : {}),
+        ...(channel.supplierKeyLabel ? { supplierKeyLabel: channel.supplierKeyLabel } : {}),
+        ...(channel.supplierKeyHint ? { supplierKeyHint: channel.supplierKeyHint } : {}),
         provider,
         model,
         endpointMode,
@@ -885,17 +2178,7 @@ export async function runServerGeneration(params: {
     attemptState.current = null
   }
 
-  const trackedFetch = async (spec: {
-    url: string
-    headers: Record<string, string>
-    body: BodyInit
-    auditParams: Record<string, unknown>
-    triggerOverride?: {
-      triggerType: GenerationAttemptTriggerType
-      triggerReason: string
-      previousError: string
-    }
-  }): Promise<{ res: Response; json: any }> => {
+  const trackedFetch = async (spec: TrackedFetchSpec): Promise<{ res: Response; json: any }> => {
     const startedAt = Date.now()
     const triggerType = spec.triggerOverride?.triggerType ?? traceContext?.triggerType ?? 'initial'
     const triggerReason = spec.triggerOverride?.triggerReason ?? traceContext?.triggerReason ?? '首次调度'
@@ -911,12 +2194,15 @@ export async function runServerGeneration(params: {
           previousError,
           delayMs,
           startedAt,
-          finishedAt: startedAt,
-          durationMs: 0,
+          finishedAt: null,
+          durationMs: null,
           channelId: channel.channelId,
           channelName: channel.channelName,
           supplierId: channel.supplierId,
           supplierName: channel.supplierName,
+          ...(channel.supplierKeyId ? { supplierKeyId: channel.supplierKeyId } : {}),
+          ...(channel.supplierKeyLabel ? { supplierKeyLabel: channel.supplierKeyLabel } : {}),
+          ...(channel.supplierKeyHint ? { supplierKeyHint: channel.supplierKeyHint } : {}),
           provider,
           model,
           endpointMode,
@@ -927,13 +2213,16 @@ export async function runServerGeneration(params: {
             params: sanitizeValueForAudit(spec.auditParams) as Record<string, unknown>,
           },
           response: null,
-          outcome: 'failed',
+          outcome: 'in_progress',
           error: null,
           retryable: null,
           safetyBlocked: null,
         }
       : null
     attemptState.current = attempt
+    if (attempt) {
+      traceContext?.onAttempt(attempt)
+    }
 
     try {
       await traceContext?.onStage?.('generating', '正在绘制中…')
@@ -944,7 +2233,8 @@ export async function runServerGeneration(params: {
           headers: spec.headers,
           body: spec.body,
         },
-        env
+        env,
+        spec.timeoutMs ?? 60_000
       )
       if (attempt) {
         const requestId =
@@ -972,20 +2262,133 @@ export async function runServerGeneration(params: {
 
   let res: Response
   let json: any
+  let waveSpeedOutputRef: string | null = null
+
+  // ===========================================================================
+  // 0. WaveSpeed API v3 统一异步 / 同步通道（适配 GPT / Grok / Gemini 任一槽位）
+  // ===========================================================================
+  if (endpointMode === 'wavespeed') {
+    const wsResult = await runWaveSpeedGeneration({
+      env,
+      provider,
+      baseUrl,
+      apiKey,
+      rawModel: model,
+      prompt,
+      aspectRatio,
+      resolution,
+      resolvedAll,
+      geminiCfg,
+      grokCfg,
+      wsOpts: rawParams as WaveSpeedChannelOptions,
+      trackedFetch,
+      attemptState,
+      emitPendingFailure,
+      onStage: traceContext?.onStage,
+    })
+    res = wsResult.res
+    json = wsResult.json
+    waveSpeedOutputRef = wsResult.outputRef
+  }
+
+  // ===========================================================================
+  // 0b. Dreamina 浏览器桥异步通道（独立于 Muse，支持任一槽位，可与 WaveSpeed 混配）
+  // ===========================================================================
+  else if (endpointMode === 'dreamina') {
+    const dreaminaRatio =
+      provider === 'seedream' && seedreamCfg.aspectRatio && seedreamCfg.aspectRatio !== 'auto'
+        ? seedreamCfg.aspectRatio
+        : aspectRatio
+    const dreaminaResolution =
+      resolution || (provider === 'seedream' ? seedreamCfg.resolution : undefined)
+    const dreaminaResult = await runDreaminaGeneration({
+      env,
+      provider,
+      baseUrl,
+      apiKey,
+      rawModel: model,
+      prompt,
+      aspectRatio: dreaminaRatio,
+      resolution: dreaminaResolution,
+      resolvedAll,
+      dreaminaOpts: rawParams as DreaminaChannelOptions,
+      trackedFetch,
+      attemptState,
+      emitPendingFailure,
+      onStage: traceContext?.onStage,
+    })
+    res = dreaminaResult.res
+    json = dreaminaResult.json
+    waveSpeedOutputRef = dreaminaResult.outputRef
+  }
 
   // ===========================================================================
   // 1. OpenAI GPT Image
   // ===========================================================================
-  if (provider === 'gpt') {
+  else if (provider === 'gpt') {
     const v1 = normalizeV1Base(baseUrl)
+    const gptPrompt = replaceImageTagsWithOneBased(prompt)
     // OpenAI GPT-Image-2 / 2.5 / 2.6 / chatgpt-image-latest 默认高保真，禁止传 input_fidelity
     const supportsInputFidelity = /^gpt-image-1(?:\.5|-mini)?(?:$|[-_])/i.test(model)
     const supportsComplexity = /^gpt-image-2\.6/i.test(model)
 
-    if (gptCfg.endpointMode === 'images_edits_json') {
+    if ((gptCfg.endpointMode === 'images_edits_json' || gptCfg.endpointMode === 'images_edits') && resolvedAll.length === 0) {
+      const payload: Record<string, unknown> = { model, prompt: gptPrompt }
+      if (gptCfg.size !== 'auto') payload.size = gptCfg.size
+      if (gptCfg.quality !== 'auto') payload.quality = gptCfg.quality
+      if (supportsComplexity && gptCfg.complexity && gptCfg.complexity !== 'auto') {
+        payload.complexity = gptCfg.complexity
+      }
+      if (gptCfg.background !== 'auto') payload.background = gptCfg.background
+      if (gptCfg.outputFormat) payload.output_format = gptCfg.outputFormat
+      if (gptCfg.moderation !== 'auto') payload.moderation = gptCfg.moderation
+      const genHeaders = {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+      }
+      ;({ res, json } = await trackedFetch({
+        url: `${v1}/images/generations`,
+        headers: genHeaders,
+        body: JSON.stringify(payload),
+        auditParams: { ...payload },
+      }))
+      if (res.status === 400) {
+        const firstErr = summarizeUpstreamError(json, res.status)
+        const rawJsonStr = JSON.stringify(json)
+        if (!isSafetyOrPolicyError(firstErr) && !isSafetyOrPolicyError(rawJsonStr)) {
+          const removed: string[] = []
+          if (payload.complexity !== undefined && /complexity/i.test(rawJsonStr)) {
+            delete payload.complexity
+            removed.push('complexity')
+          }
+          if (payload.moderation !== undefined && /moderation/i.test(rawJsonStr)) {
+            delete payload.moderation
+            removed.push('moderation')
+          }
+          if (payload.output_format !== undefined && /output_format/i.test(rawJsonStr)) {
+            delete payload.output_format
+            removed.push('output_format')
+          }
+          if (removed.length > 0) {
+            emitPendingFailure(`[HTTP 400 参数兼容] ${firstErr}`, true, false)
+            ;({ res, json } = await trackedFetch({
+              url: `${v1}/images/generations`,
+              headers: genHeaders,
+              body: JSON.stringify(payload),
+              auditParams: { ...payload },
+              triggerOverride: {
+                triggerType: 'compat_downgrade',
+                triggerReason: `文生图上游返回 HTTP 400 参数不兼容，自动剔除 [${removed.join(', ')}] 后同渠道降级重试`,
+                previousError: firstErr,
+              },
+            }))
+          }
+        }
+      }
+    } else if (gptCfg.endpointMode === 'images_edits_json') {
       const payload: Record<string, unknown> = {
         model,
-        prompt,
+        prompt: gptPrompt,
         images: resolvedAll.map((item) => ({ image_url: item.ref })),
       }
       if (gptCfg.size !== 'auto') payload.size = gptCfg.size
@@ -1008,44 +2411,48 @@ export async function runServerGeneration(params: {
         body: JSON.stringify(payload),
         auditParams: { ...payload },
       }))
-      if (res.status === 400 && /input_fidelity|complexity|moderation/i.test(JSON.stringify(json))) {
-        const msg = JSON.stringify(json)
-        const removed: string[] = []
-        if (/input_fidelity/i.test(msg)) {
-          delete payload.input_fidelity
-          removed.push('input_fidelity')
-        }
-        if (/complexity/i.test(msg)) {
-          delete payload.complexity
-          removed.push('complexity')
-        }
-        if (/moderation/i.test(msg)) {
-          delete payload.moderation
-          removed.push('moderation')
-        }
+      if (res.status === 400) {
         const firstErr = summarizeUpstreamError(json, res.status)
-        emitPendingFailure(`[HTTP 400 参数兼容] ${firstErr}`, true, false)
-        ;({ res, json } = await trackedFetch({
-          url: `${v1}/images/edits`,
-          headers,
-          body: JSON.stringify(payload),
-          auditParams: { ...payload },
-          triggerOverride: {
-            triggerType: 'compat_downgrade',
-            triggerReason: `上游返回 HTTP 400 参数不兼容，自动剔除 [${removed.join(', ')}] 后同渠道降级重试`,
-            previousError: firstErr,
-          },
-        }))
+        const rawJsonStr = JSON.stringify(json)
+        if (!isSafetyOrPolicyError(firstErr) && !isSafetyOrPolicyError(rawJsonStr)) {
+          const removed: string[] = []
+          if (payload.input_fidelity !== undefined && /input_fidelity/i.test(rawJsonStr)) {
+            delete payload.input_fidelity
+            removed.push('input_fidelity')
+          }
+          if (payload.complexity !== undefined && /complexity/i.test(rawJsonStr)) {
+            delete payload.complexity
+            removed.push('complexity')
+          }
+          if (payload.moderation !== undefined && /moderation/i.test(rawJsonStr)) {
+            delete payload.moderation
+            removed.push('moderation')
+          }
+          if (removed.length > 0) {
+            emitPendingFailure(`[HTTP 400 参数兼容] ${firstErr}`, true, false)
+            ;({ res, json } = await trackedFetch({
+              url: `${v1}/images/edits`,
+              headers,
+              body: JSON.stringify(payload),
+              auditParams: { ...payload },
+              triggerOverride: {
+                triggerType: 'compat_downgrade',
+                triggerReason: `上游返回 HTTP 400 参数不兼容，自动剔除 [${removed.join(', ')}] 后同渠道降级重试`,
+                previousError: firstErr,
+              },
+            }))
+          }
+        }
       }
     } else if (gptCfg.endpointMode === 'images_edits') {
       const buildFd = (skipInputFidelity = false) => {
         const fd = new FormData()
         fd.append('model', model)
-        fd.append('prompt', prompt)
+        fd.append('prompt', gptPrompt)
         const imgSummaries = appendMultipartImages(fd, resolvedAll, 'image[]')
         const summary: Record<string, unknown> = {
           model,
-          prompt,
+          prompt: gptPrompt,
           'image[]': imgSummaries,
         }
         if (gptCfg.size !== 'auto') {
@@ -1086,7 +2493,13 @@ export async function runServerGeneration(params: {
         body: first.fd,
         auditParams: first.summary,
       }))
-      if (res.status === 400 && /input_fidelity/i.test(JSON.stringify(json))) {
+      if (
+        res.status === 400 &&
+        supportsInputFidelity &&
+        gptCfg.inputFidelity &&
+        /input_fidelity/i.test(JSON.stringify(json)) &&
+        !isSafetyOrPolicyError(summarizeUpstreamError(json, res.status))
+      ) {
         const firstErr = summarizeUpstreamError(json, res.status)
         emitPendingFailure(`[HTTP 400 参数兼容] ${firstErr}`, true, false)
         const second = buildFd(true)
@@ -1105,13 +2518,15 @@ export async function runServerGeneration(params: {
     } else if (gptCfg.endpointMode === 'responses') {
       const inputContent = [
         ...resolvedAll.map((item) => ({ type: 'input_image', image_url: item.ref })),
-        { type: 'input_text', text: prompt },
+        { type: 'input_text', text: gptPrompt },
       ]
       const toolCfg: Record<string, unknown> = { type: 'image_generation' }
       if (gptCfg.size !== 'auto') toolCfg.size = gptCfg.size
       if (gptCfg.quality !== 'auto') toolCfg.quality = gptCfg.quality
       if (gptCfg.background !== 'auto') toolCfg.background = gptCfg.background
-      if (supportsInputFidelity && gptCfg.inputFidelity) toolCfg.input_fidelity = gptCfg.inputFidelity
+      if (resolvedAll.length > 0 && supportsInputFidelity && gptCfg.inputFidelity) {
+        toolCfg.input_fidelity = gptCfg.inputFidelity
+      }
       if (gptCfg.outputFormat) toolCfg.output_format = gptCfg.outputFormat
 
       const payload = {
@@ -1130,7 +2545,7 @@ export async function runServerGeneration(params: {
       }))
     } else {
       const content = [
-        { type: 'text', text: prompt },
+        { type: 'text', text: gptPrompt },
         ...resolvedAll.map((item) => ({ type: 'image_url', image_url: { url: item.ref } })),
       ]
       const payloadWithModalities = {
@@ -1174,31 +2589,10 @@ export async function runServerGeneration(params: {
   // 2. Google Gemini（原生协议 + 中转站全协议兼容）
   // ===========================================================================
   else if (provider === 'gemini') {
+    const geminiTimeoutMs = 90_000
     if (geminiCfg.endpointMode === 'native') {
-      const { endpointUrl, isOfficialGoogle } = buildGeminiNativeEndpoint(baseUrl, model)
       const authMode = geminiCfg.authMode || 'auto'
-      const isOAuthToken = /^ya29\./i.test(apiKey)
-
-      const useQueryKey =
-        authMode === 'goog_key' ||
-        authMode === 'both' ||
-        (authMode === 'auto' && isOfficialGoogle && !isOAuthToken)
-      const useGoogHeader =
-        authMode === 'goog_key' ||
-        authMode === 'both' ||
-        (authMode === 'auto' && !isOAuthToken)
-      const useBearer =
-        authMode === 'bearer' ||
-        authMode === 'both' ||
-        (authMode === 'auto' && (!isOfficialGoogle || isOAuthToken))
-
-      const url = useQueryKey
-        ? `${endpointUrl}${endpointUrl.includes('?') ? '&' : '?'}key=${encodeURIComponent(apiKey)}`
-        : endpointUrl
-
-      const headers: Record<string, string> = { 'Content-Type': 'application/json' }
-      if (useGoogHeader) headers['x-goog-api-key'] = apiKey
-      if (useBearer) headers.Authorization = `Bearer ${apiKey}`
+      const { url, headers } = buildGeminiNativeAuthRequest(baseUrl, model, apiKey, authMode)
 
       const parts = [
         ...resolvedAll.map((item) => ({
@@ -1234,6 +2628,7 @@ export async function runServerGeneration(params: {
           authMode,
           ...payload,
         },
+        timeoutMs: geminiTimeoutMs,
       }))
     } else if (geminiCfg.endpointMode === 'openai_chat') {
       const v1 = normalizeV1Base(baseUrl)
@@ -1258,6 +2653,7 @@ export async function runServerGeneration(params: {
         headers,
         body: JSON.stringify(payloadWithModalities),
         auditParams: payloadWithModalities,
+        timeoutMs: geminiTimeoutMs,
       }))
       // 部分国内中转站不识别 OpenRouter 的 modalities 字段，自动降级重试一次
       if (res.status === 400 && /modalit/i.test(JSON.stringify(json))) {
@@ -1272,6 +2668,7 @@ export async function runServerGeneration(params: {
           headers,
           body: JSON.stringify(payloadFallback),
           auditParams: payloadFallback,
+          timeoutMs: geminiTimeoutMs,
           triggerOverride: {
             triggerType: 'compat_downgrade',
             triggerReason: '上游返回 HTTP 400 不支持 modalities 字段，自动移除 [modalities] 后降级重试',
@@ -1281,20 +2678,40 @@ export async function runServerGeneration(params: {
       }
     } else if (geminiCfg.endpointMode === 'openai_edits_json') {
       const v1 = normalizeV1Base(baseUrl)
-      const payload = {
+      const payload: Record<string, unknown> = {
         model,
         prompt,
-        images: resolvedAll.map((item) => ({ image_url: item.ref })),
         aspect_ratio: geminiCfg.aspectRatio,
       }
+      if (resolvedAll.length > 0) {
+        payload.images = resolvedAll.map((item) => ({ image_url: item.ref }))
+      }
       ;({ res, json } = await trackedFetch({
-        url: `${v1}/images/edits`,
+        url: resolvedAll.length === 0 ? `${v1}/images/generations` : `${v1}/images/edits`,
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${apiKey}`,
         },
         body: JSON.stringify(payload),
         auditParams: payload,
+        timeoutMs: geminiTimeoutMs,
+      }))
+    } else if (resolvedAll.length === 0) {
+      const v1 = normalizeV1Base(baseUrl)
+      const payload = {
+        model,
+        prompt,
+        aspect_ratio: geminiCfg.aspectRatio,
+      }
+      ;({ res, json } = await trackedFetch({
+        url: `${v1}/images/generations`,
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify(payload),
+        auditParams: payload,
+        timeoutMs: geminiTimeoutMs,
       }))
     } else {
       const v1 = normalizeV1Base(baseUrl)
@@ -1311,6 +2728,7 @@ export async function runServerGeneration(params: {
           prompt,
           'image[]': imgSummaries,
         },
+        timeoutMs: geminiTimeoutMs,
       }))
     }
   }
@@ -1318,7 +2736,7 @@ export async function runServerGeneration(params: {
   // ===========================================================================
   // 3. xAI Grok Imagine (grok-imagine-image-2.0)
   // ===========================================================================
-  else {
+  else if (provider === 'grok') {
     const v1 = normalizeV1Base(baseUrl)
     const { refsLimited, grokPrompt } = prepareGrokInputs(prompt, resolvedAll)
 
@@ -1351,16 +2769,35 @@ export async function runServerGeneration(params: {
         auditParams: payload,
       }))
     } else if (grokCfg.endpointMode === 'openai_edits_json') {
+      const payload: Record<string, unknown> = {
+        model,
+        prompt: grokPrompt,
+        aspect_ratio: grokCfg.aspectRatio === 'auto' ? aspectRatio : grokCfg.aspectRatio,
+        resolution: grokCfg.resolution || '2k',
+        response_format: grokCfg.responseFormat || 'b64_json',
+      }
+      if (refsLimited.length > 0) {
+        payload.images = refsLimited.map((item) => ({ image_url: item.ref }))
+      }
+      ;({ res, json } = await trackedFetch({
+        url: refsLimited.length === 0 ? `${v1}/images/generations` : `${v1}/images/edits`,
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify(payload),
+        auditParams: payload,
+      }))
+    } else if (grokCfg.endpointMode === 'openai_edits' && refsLimited.length === 0) {
       const payload = {
         model,
         prompt: grokPrompt,
-        images: refsLimited.map((item) => ({ image_url: item.ref })),
         aspect_ratio: grokCfg.aspectRatio === 'auto' ? aspectRatio : grokCfg.aspectRatio,
         resolution: grokCfg.resolution || '2k',
         response_format: grokCfg.responseFormat || 'b64_json',
       }
       ;({ res, json } = await trackedFetch({
-        url: `${v1}/images/edits`,
+        url: `${v1}/images/generations`,
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${apiKey}`,
@@ -1412,18 +2849,160 @@ export async function runServerGeneration(params: {
     }
   }
 
+  // ===========================================================================
+  // 4. Muse Image (muse2api /v1/images/tasks & OpenAI 兼容端点)
+  // ===========================================================================
+  else if (provider === 'muse') {
+    const v1 = normalizeV1Base(baseUrl)
+    const { refsLimited, musePrompt } = prepareMuseInputs(prompt, resolvedAll)
+    const ratio = !museCfg.aspectRatio || museCfg.aspectRatio === 'auto' ? aspectRatio : museCfg.aspectRatio
+    const responseFormat = museCfg.responseFormat || 'b64_json'
+
+    if (museCfg.endpointMode === 'muse_tasks') {
+      const museRes = await runMuseTaskGeneration({
+        env,
+        v1BaseUrl: v1,
+        apiKey,
+        model,
+        prompt: musePrompt,
+        aspectRatio,
+        museCfg,
+        refsLimited,
+        trackedFetch,
+        attemptState,
+        emitPendingFailure,
+        onStage: traceContext?.onStage,
+      })
+      res = museRes.res
+      json = museRes.json
+      waveSpeedOutputRef = museRes.outputRef
+    } else if (museCfg.endpointMode === 'openai_edits' && refsLimited.length > 0) {
+      const fd = new FormData()
+      fd.append('model', model)
+      fd.append('prompt', musePrompt)
+      fd.append('aspect_ratio', ratio)
+      fd.append('response_format', responseFormat)
+      const imgSummaries = appendMultipartImages(fd, refsLimited, 'image[]')
+      const summary: Record<string, unknown> = {
+        model,
+        prompt: musePrompt,
+        aspect_ratio: ratio,
+        response_format: responseFormat,
+        'image[]': imgSummaries,
+      }
+      ;({ res, json } = await trackedFetch({
+        url: `${v1}/images/edits`,
+        headers: { Authorization: `Bearer ${apiKey}` },
+        body: fd,
+        auditParams: summary,
+        timeoutMs: 90_000,
+      }))
+    } else {
+      const payload: Record<string, unknown> = {
+        model,
+        prompt: musePrompt,
+        aspect_ratio: ratio,
+        response_format: responseFormat,
+      }
+      if (refsLimited.length > 0) {
+        payload.images = refsLimited.map((item) => item.ref)
+      }
+      const targetUrl =
+        museCfg.endpointMode === 'openai_edits_json' && refsLimited.length > 0
+          ? `${v1}/images/edits`
+          : `${v1}/images/generations`
+      ;({ res, json } = await trackedFetch({
+        url: targetUrl,
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify(payload),
+        auditParams: payload,
+        timeoutMs: 90_000,
+      }))
+    }
+  }
+
+  // ===========================================================================
+  // 5. ByteDance Seedream (OpenAI 兼容中转兜底；主力走 0a WaveSpeed / 0b Dreamina)
+  // ===========================================================================
+  else {
+    const v1 = normalizeV1Base(baseUrl)
+    const seedreamPrompt = replaceImageTagsWithOneBased(prompt)
+    const ratio = !seedreamCfg.aspectRatio || seedreamCfg.aspectRatio === 'auto' ? aspectRatio : seedreamCfg.aspectRatio
+    const responseFormat = seedreamCfg.responseFormat || 'b64_json'
+
+    if (seedreamCfg.endpointMode === 'openai_edits' && resolvedAll.length > 0) {
+      const fd = new FormData()
+      fd.append('model', model)
+      fd.append('prompt', seedreamPrompt)
+      fd.append('aspect_ratio', ratio)
+      fd.append('response_format', responseFormat)
+      const imgSummaries = appendMultipartImages(fd, resolvedAll, 'image[]')
+      const summary: Record<string, unknown> = {
+        model,
+        prompt: seedreamPrompt,
+        aspect_ratio: ratio,
+        response_format: responseFormat,
+        'image[]': imgSummaries,
+      }
+      ;({ res, json } = await trackedFetch({
+        url: `${v1}/images/edits`,
+        headers: { Authorization: `Bearer ${apiKey}` },
+        body: fd,
+        auditParams: summary,
+        timeoutMs: 90_000,
+      }))
+    } else {
+      const payload: Record<string, unknown> = {
+        model,
+        prompt: seedreamPrompt,
+        aspect_ratio: ratio,
+        response_format: responseFormat,
+      }
+      if (resolvedAll.length > 0) {
+        payload.images = resolvedAll.map((item) => item.ref)
+      }
+      const targetUrl =
+        seedreamCfg.endpointMode === 'openai_edits_json' && resolvedAll.length > 0
+          ? `${v1}/images/edits`
+          : `${v1}/images/generations`
+      ;({ res, json } = await trackedFetch({
+        url: targetUrl,
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify(payload),
+        auditParams: payload,
+        timeoutMs: 90_000,
+      }))
+    }
+  }
+
   if (!res.ok) {
     const errMsg = summarizeUpstreamError(json, res.status)
+    const errCode = String(json?.error?.code || json?.code || '')
     const fullMsg = `[${PROVIDER_META[provider].shortName}] ${errMsg}`
-    const safety = isSafetyOrPolicyError(errMsg)
+    const safety = errCode === '1200' || isSafetyOrPolicyError(errMsg) || isSafetyOrPolicyError(errCode)
     const retryable = isRetryableStatus(res.status) && !safety
     emitPendingFailure(fullMsg, retryable, safety)
     throw new UpstreamError(fullMsg, retryable, res.status, safety)
   }
 
-  const outputRef = extractUniversalImage(json)
+  let outputRef = waveSpeedOutputRef || extractUniversalImage(json)
+  if (outputRef && outputRef.startsWith('/')) {
+    try {
+      outputRef = new URL(outputRef, baseUrl).toString()
+    } catch {
+      // keep raw value for validation below
+    }
+  }
   if (!outputRef) {
+    const geminiBlockReason = json?.promptFeedback?.blockReason
     const geminiFinishReason = json?.candidates?.[0]?.finishReason
+    const openaiFinishReason = json?.choices?.[0]?.finish_reason
     const geminiParts: any[] = Array.isArray(json?.candidates?.[0]?.content?.parts)
       ? json.candidates[0].content.parts
       : []
@@ -1431,11 +3010,16 @@ export async function runServerGeneration(params: {
       geminiParts.find((p) => !p?.thought && typeof p?.text === 'string' && p.text.trim())?.text ||
       geminiParts.find((p) => typeof p?.text === 'string' && p.text.trim())?.text
     const fallbackText =
+      (geminiBlockReason ? String(geminiBlockReason) : undefined) ||
+      (openaiFinishReason === 'content_filter' ? String(openaiFinishReason) : undefined) ||
       json?.choices?.[0]?.message?.content ||
       (geminiFinishReason && geminiFinishReason !== 'STOP' ? geminiFinishReason : geminiReplyText) ||
       geminiFinishReason ||
       JSON.stringify(json).slice(0, 260)
-    const safety = isSafetyOrPolicyError(String(fallbackText))
+    const safety =
+      isSafetyOrPolicyError(String(fallbackText)) ||
+      Boolean(geminiBlockReason && isSafetyOrPolicyError(String(geminiBlockReason))) ||
+      Boolean(openaiFinishReason && isSafetyOrPolicyError(String(openaiFinishReason)))
     const msg = `接口已响应但未解析到图片输出：${fallbackText}`
     emitPendingFailure(msg, !safety, safety)
     throw new UpstreamError(msg, !safety, undefined, safety)
@@ -1528,5 +3112,378 @@ export async function runServerGeneration(params: {
     const safety = err instanceof UpstreamError ? err.safetyBlocked : false
     emitPendingFailure(msg, retryable, safety)
     throw err
+  }
+}
+
+// ===========================================================================
+// 姿势图 / 服装图单次即时视觉转译与入库缓存辅助
+// ===========================================================================
+
+async function computeSha256Hex(bytes: Uint8Array): Promise<string> {
+  const copy = new Uint8Array(bytes.byteLength)
+  copy.set(bytes)
+  const digest = await crypto.subtle.digest('SHA-256', copy)
+  return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, '0')).join('')
+}
+
+const REFERENCE_DEFAULT_LABELS: Record<ReferenceDescriptionKind, string> = {
+  pose: '姿势参考',
+  costume: '服装参考',
+  portrait: '人像参考',
+  extra: '附加参考',
+}
+
+function getDescribePromptForKind(
+  visionConfig: VisionFallbackConfig,
+  kind: ReferenceDescriptionKind
+): string {
+  if (kind === 'pose') return visionConfig.poseDescribePrompt
+  if (kind === 'costume') return visionConfig.costumeDescribePrompt
+  if (kind === 'portrait') return visionConfig.portraitDescribePrompt
+  return visionConfig.extraDescribePrompt
+}
+
+/** 按预览路径反解出可供 loadImageAsset 读取的 ResolvedSource（供后台“重新识图生成”使用） */
+export function buildSourceFromPreviewPath(
+  kind: ReferenceDescriptionKind,
+  previewPath: string,
+  label = ''
+): ResolvedSource | null {
+  const trimmed = previewPath.trim()
+  if (!trimmed) return null
+  const defaultLabel = REFERENCE_DEFAULT_LABELS[kind]
+  if (/^https?:\/\//i.test(trimmed)) {
+    const safe = validateExternalImageUrl(trimmed)
+    if (!safe) return null
+    return {
+      kind: 'https',
+      url: safe.toString(),
+      slot: kind,
+      label: label || defaultLabel,
+      rawPath: trimmed,
+    }
+  }
+  if (trimmed.startsWith('uploads/') || trimmed.startsWith('generations/')) {
+    return {
+      kind: 'r2',
+      r2Key: trimmed,
+      slot: kind,
+      label: label || defaultLabel,
+      rawPath: trimmed,
+    }
+  }
+  const galleryPath = sanitizeGalleryAssetPath(trimmed)
+  if (!galleryPath) return null
+  return {
+    kind: 'gallery',
+    path: galleryPath,
+    slot: kind,
+    label: label || defaultLabel,
+    rawPath: trimmed,
+  }
+}
+
+/** 从 Gemini / OpenAI 对话接口返回体中提取纯文本描述（跳过思考片段） */
+function extractVisionTextFromResponse(
+  json: any,
+  endpointMode: 'gemini_native' | 'openai_chat'
+): string | null {
+  if (endpointMode === 'gemini_native') {
+    const parts = Array.isArray(json?.candidates?.[0]?.content?.parts)
+      ? json.candidates[0].content.parts
+      : []
+    const texts: string[] = []
+    for (const p of parts) {
+      if (p && p.thought !== true && typeof p.text === 'string' && p.text.trim()) {
+        texts.push(p.text.trim())
+      }
+    }
+    const merged = texts.join('\n').trim()
+    return merged || null
+  }
+
+  const content = json?.choices?.[0]?.message?.content
+  if (typeof content === 'string' && content.trim()) {
+    return content.trim()
+  }
+  if (Array.isArray(content)) {
+    const texts: string[] = []
+    for (const part of content) {
+      if (
+        part &&
+        part.thought !== true &&
+        part.type !== 'thinking' &&
+        part.type !== 'reasoning' &&
+        typeof part.text === 'string' &&
+        part.text.trim()
+      ) {
+        texts.push(part.text.trim())
+      }
+    }
+    const merged = texts.join('\n').trim()
+    return merged || null
+  }
+  return null
+}
+
+/**
+ * 调用配置好的视觉识别模型（默认 gemini-4-hydrogen 复用现有供应商凭证）将参考图转为描述文本；
+ * 支持多候选供应商顺序故障转移。
+ */
+export async function describeLoadedImageViaVision(args: {
+  env: Env
+  targets: VisionFallbackTarget[]
+  loaded: LoadedImage
+  describePrompt: string
+}): Promise<{
+  description: string
+  visionModel: string
+  visionSupplierId: string
+  visionSupplierName: string
+}> {
+  const { env, targets, loaded, describePrompt } = args
+  if (targets.length === 0) {
+    throw new Error('未找到可用的视觉转译供应商（请先启用 Gemini 或配置“图转文视觉模型”）')
+  }
+
+  let lastErr: unknown = null
+  for (const target of targets) {
+    try {
+      // 不显式传递 temperature，兼容仅支持默认温度的 GPT/推理模型与 Gemini 思考模型
+      if (target.endpointMode === 'gemini_native') {
+        const { url, headers } = buildGeminiNativeAuthRequest(
+          target.baseUrl,
+          target.model,
+          target.apiKey,
+          target.authMode
+        )
+        const parts = [
+          {
+            inlineData: {
+              mimeType: loaded.mime || 'image/png',
+              data: loaded.base64,
+            },
+          },
+          { text: describePrompt },
+        ]
+        const { res, json } = await fetchUpstream(
+          url,
+          {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+              contents: [{ role: 'user', parts }],
+            }),
+          },
+          env,
+          45_000
+        )
+
+        if (!res.ok) {
+          throw new Error(summarizeUpstreamError(json, res.status))
+        }
+        const text = extractVisionTextFromResponse(json, 'gemini_native')
+        if (!text) {
+          throw new Error('视觉模型未返回有效的文字描述内容')
+        }
+        return {
+          description: text.slice(0, 1200),
+          visionModel: target.model,
+          visionSupplierId: target.supplierId,
+          visionSupplierName: target.supplierName,
+        }
+      }
+
+      const v1 = normalizeV1Base(target.baseUrl)
+      const { res, json } = await fetchUpstream(
+        `${v1}/chat/completions`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${target.apiKey}`,
+          },
+          body: JSON.stringify({
+            model: target.model,
+            messages: [
+              {
+                role: 'user',
+                content: [
+                  { type: 'text', text: describePrompt },
+                  { type: 'image_url', image_url: { url: loaded.dataUrl } },
+                ],
+              },
+            ],
+          }),
+        },
+        env,
+        45_000
+      )
+      if (!res.ok) {
+        throw new Error(summarizeUpstreamError(json, res.status))
+      }
+      const text = extractVisionTextFromResponse(json, 'openai_chat')
+      if (!text) {
+        throw new Error('视觉模型未返回有效的文字描述内容')
+      }
+      return {
+        description: text.slice(0, 1200),
+        visionModel: target.model,
+        visionSupplierId: target.supplierId,
+        visionSupplierName: target.supplierName,
+      }
+    } catch (err) {
+      lastErr = err
+    }
+  }
+
+  throw lastErr instanceof Error ? lastErr : new Error('图转文视觉转译失败')
+}
+
+async function resolveSourceRefKeyAndPreview(
+  env: Env,
+  source: ResolvedSource
+): Promise<{
+  refKey: string
+  previewPath: string
+  preloaded: LoadedImage | null
+}> {
+  if (source.kind === 'gallery') {
+    return {
+      refKey: `gallery:${source.path}`,
+      previewPath: source.path,
+      preloaded: null,
+    }
+  }
+  if (source.kind === 'https') {
+    return {
+      refKey: `https:${source.url}`,
+      previewPath: source.url,
+      preloaded: null,
+    }
+  }
+  const preloaded = await loadImageAsset(source, env)
+  const hex = await computeSha256Hex(preloaded.bytes)
+  return {
+    refKey: `sha256:${hex}`,
+    previewPath: source.r2Key,
+    preloaded,
+  }
+}
+
+/**
+ * 供后台手动预录入或覆盖一条参考图描述：统一按 gallery / https / sha256 计算去重键。
+ */
+export async function saveManualReferenceDescriptionFromSource(args: {
+  env: Env
+  kind: ReferenceDescriptionKind
+  source: ResolvedSource
+  description: string
+}): Promise<ReferenceDescriptionDTO> {
+  const { refKey, previewPath } = await resolveSourceRefKeyAndPreview(args.env, args.source)
+  const cleanDescription = args.description.trim().slice(0, 2000)
+  const existing = await upsertAutoReferenceDescription(args.env.DB, {
+    kind: args.kind,
+    refKey,
+    sourceLabel: args.source.label,
+    previewPath,
+    description: cleanDescription,
+    visionModel: 'manual',
+    visionSupplierId: '',
+  })
+  const updated = await updateReferenceDescriptionManual(args.env.DB, existing.id, {
+    description: cleanDescription,
+    sourceLabel: args.source.label,
+  })
+  return updated || existing
+}
+
+/**
+ * 保证同一张姿势图 / 服装图 / 人像图 / 附加图仅转译一次并入库：
+ * 先查 D1 reference_descriptions 缓存，命中直接返回库内文本；未命中再读取图片调用视觉模型转译并幂等落库。
+ */
+export async function resolveOrTranscribeReferenceDescription(args: {
+  env: Env
+  kind: ReferenceDescriptionKind
+  source: ResolvedSource
+  visionConfig: VisionFallbackConfig
+  targets: VisionFallbackTarget[]
+}): Promise<{
+  description: string
+  cacheHit: boolean
+  visionModel: string
+  visionSupplierName?: string
+  item: ReferenceDescriptionDTO
+}> {
+  const { env, kind, source, visionConfig, targets } = args
+  const { refKey, previewPath, preloaded } = await resolveSourceRefKeyAndPreview(env, source)
+
+  const existing = await findReferenceDescriptionByKey(env.DB, kind, refKey)
+  if (existing && existing.description.trim()) {
+    return {
+      description: existing.description.trim(),
+      cacheHit: true,
+      visionModel: existing.visionModel || visionConfig.model,
+      item: existing,
+    }
+  }
+
+  const loaded = preloaded ?? (await loadImageAsset(source, env))
+  const describePrompt = getDescribePromptForKind(visionConfig, kind)
+  const transcribed = await describeLoadedImageViaVision({
+    env,
+    targets,
+    loaded,
+    describePrompt,
+  })
+
+  const saved = await upsertAutoReferenceDescription(env.DB, {
+    kind,
+    refKey,
+    sourceLabel: source.label,
+    previewPath,
+    description: transcribed.description,
+    visionModel: transcribed.visionModel,
+    visionSupplierId: transcribed.visionSupplierId,
+  })
+
+  return {
+    description: saved.description,
+    cacheHit: false,
+    visionModel: saved.visionModel || transcribed.visionModel,
+    visionSupplierName: transcribed.visionSupplierName,
+    item: saved,
+  }
+}
+
+/** 供后台管理端对已入库记录重新识别并覆盖描述文本 */
+export async function regenerateReferenceDescriptionFromPreview(args: {
+  env: Env
+  kind: ReferenceDescriptionKind
+  previewPath: string
+  label: string
+  visionConfig: VisionFallbackConfig
+  targets: VisionFallbackTarget[]
+}): Promise<{
+  description: string
+  visionModel: string
+  visionSupplierId: string
+}> {
+  const source = buildSourceFromPreviewPath(args.kind, args.previewPath, args.label)
+  if (!source) {
+    throw new Error('该条目缺少有效图片路径，无法重新识别')
+  }
+  const loaded = await loadImageAsset(source, args.env)
+  const describePrompt = getDescribePromptForKind(args.visionConfig, args.kind)
+  const result = await describeLoadedImageViaVision({
+    env: args.env,
+    targets: args.targets,
+    loaded,
+    describePrompt,
+  })
+  return {
+    description: result.description,
+    visionModel: result.visionModel,
+    visionSupplierId: result.visionSupplierId,
   }
 }

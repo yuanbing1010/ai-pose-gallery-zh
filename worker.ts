@@ -1,10 +1,17 @@
 import { DurableObject } from 'cloudflare:workers'
 import { Hono } from 'hono'
 import { cleanupExpiredSessionsAndOauth, reapStaleProcessingJobs } from './server/db'
+import {
+  GenerationJobRunner,
+  GenerationQueueCoordinator,
+  reconcileQueueViaCoordinator,
+} from './server/generationQueue'
 import { withSession } from './server/middleware'
+import { syncMioArchive } from './server/mioSync'
 import { accountRoutes } from './server/routes/account'
 import { adminRoutes } from './server/routes/admin'
 import { authRoutes } from './server/routes/auth'
+import { galleryRoutes } from './server/routes/gallery'
 import { generationRoutes } from './server/routes/generations'
 import { uploadRoutes } from './server/routes/uploads'
 import type { AppEnv, Env } from './server/types'
@@ -85,6 +92,8 @@ export class UsEgressRelay extends DurableObject<Env> {
 
 const app = new Hono<AppEnv>()
 
+app.route('/api/gallery', galleryRoutes)
+
 app.use('/api/*', withSession)
 
 app.get('/api/health', (c) => {
@@ -105,13 +114,17 @@ app.all('*', (c) => {
   return c.env.ASSETS.fetch(c.req.raw)
 })
 
+export { GenerationJobRunner, GenerationQueueCoordinator }
+
 export default {
   fetch: app.fetch,
   async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext) {
     ctx.waitUntil(
       Promise.allSettled([
         reapStaleProcessingJobs(env.DB),
+        reconcileQueueViaCoordinator(env),
         cleanupExpiredSessionsAndOauth(env.DB),
+        syncMioArchive(env),
       ])
     )
   },

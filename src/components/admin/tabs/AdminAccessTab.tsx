@@ -11,7 +11,6 @@ import {
 import { WechatIcon } from '@/components/auth/WechatIcon'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import {
   fetchAdminSettingsApi,
@@ -22,15 +21,8 @@ import {
 import { toast } from '@/lib/notifications'
 import type {
   AdminWechatConfigDTO,
-  ImagePassMode,
   PlatformConfig,
 } from '@/types/gallery'
-import {
-  NONE_STYLE_PRESET,
-  getEffectiveStyleCatalog,
-  getEffectiveStyleCategories,
-  getEffectiveStyleSubcategories,
-} from '../../../../shared/studio'
 import {
   AdminBadge,
   AdminField,
@@ -41,12 +33,13 @@ import {
   ADMIN_BTN_CLS,
   ADMIN_BTN_SM_CLS,
   ADMIN_INPUT_CLS,
-  ADMIN_SELECT_CLS,
+  type AdminConfirmAction,
 } from '../auditHelpers'
 
 interface AdminAccessTabProps {
   reloadTick: number
   onLoadingChange: (loading: boolean) => void
+  onConfirm: (action: AdminConfirmAction) => void
   onRefreshBootstrap: () => Promise<void>
   onDirtyChange?: (dirty: boolean) => void
 }
@@ -54,6 +47,7 @@ interface AdminAccessTabProps {
 export function AdminAccessTab({
   reloadTick,
   onLoadingChange,
+  onConfirm,
   onRefreshBootstrap,
   onDirtyChange,
 }: AdminAccessTabProps) {
@@ -122,18 +116,12 @@ export function AdminAccessTab({
     return (
       <div className="space-y-6">
         <AdminPageHeader
-          title="准入与生图链路"
-          description="正在加载平台策略配置…"
+          title="准入与全局配置"
+          description="正在加载平台准入与微信登录配置…"
         />
       </div>
     )
   }
-
-  const styleCategories = getEffectiveStyleCategories(platformCfg)
-  const styleSubcategories = getEffectiveStyleSubcategories(platformCfg)
-  const styleCategoryMap = new Map(styleCategories.map((c) => [c.id, c]))
-  const styleSubcategoryMap = new Map(styleSubcategories.map((s) => [s.id, s]))
-  const styleCatalog = getEffectiveStyleCatalog(platformCfg)
 
   const handleSavePlatform = async () => {
     setSavingPlatform(true)
@@ -141,14 +129,11 @@ export function AdminAccessTab({
       const res = await updateAdminSettingsApi({
         allowRegistration: platformCfg.allowRegistration,
         registerBonusCredits: platformCfg.registerBonusCredits,
-        defaultStylePreset: platformCfg.defaultStylePreset,
-        imagePassMode: platformCfg.imagePassMode,
-        sendStitchedSheet: platformCfg.sendStitchedSheet,
       })
       setPlatformCfg(res.platform)
       setSavedPlatformJson(JSON.stringify(res.platform))
       await onRefreshBootstrap()
-      toast.success('准入与生图链路配置已保存')
+      toast.success('准入与注册积分配置已保存')
     } catch (err) {
       toast.error(err instanceof Error ? err.message : '保存失败')
     } finally {
@@ -179,31 +164,37 @@ export function AdminAccessTab({
     }
   }
 
-  const handleClearWechatSecret = async () => {
-    setSavingWechat(true)
-    try {
-      const res = await updateAdminWechatApi({ clearAppSecret: true })
-      setWechatCfg(res.wechat)
-      setWechatAppSecretInput('')
-      await onRefreshBootstrap()
-      toast.success('已清除数据库中保存的 AppSecret')
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : '清除失败')
-    } finally {
-      setSavingWechat(false)
-    }
+  const handleClearWechatSecret = () => {
+    onConfirm({
+      title: '清除微信开放平台 AppSecret？',
+      description: '清除后数据库中不再保留 AppSecret；除非同时配置了环境变量兜底，否则微信扫码登录将不可用。',
+      confirmLabel: '确认清除密钥',
+      destructive: true,
+      run: async () => {
+        setSavingWechat(true)
+        try {
+          const res = await updateAdminWechatApi({ clearAppSecret: true })
+          setWechatCfg(res.wechat)
+          setWechatAppSecretInput('')
+          await onRefreshBootstrap()
+          toast.success('已清除数据库中保存的 AppSecret')
+        } finally {
+          setSavingWechat(false)
+        }
+      },
+    })
   }
 
   return (
     <div className="space-y-6">
       <AdminPageHeader
-        title="准入与生图链路"
-        description="统一管理用户注册开关、初始积分赠送、全站默认画风、参考图传参协议及可选第三方微信登录。"
+        title="准入与全局配置"
+        description="管理访客自助注册开关、新成员默认赠送积分及可选第三方微信开放平台扫码登录。（全局默认画风已归属「05. 画风图鉴管理」，参考图传输协议已归属「04. 画笔档位与路由」）"
       />
 
       <AdminPanel
-        title="成员准入与全局生图链路"
-        subtitle="关闭自助注册后，前端仅显示登录入口，由管理员在「01. 成员与积分」创建并分发账号；参考图传参策略全站通用。"
+        title="成员准入与新账号福利"
+        subtitle="关闭自助注册后，前端仅显示登录入口，由管理员在「01. 成员与积分」创建并分发账号。"
       >
         <div className="grid gap-4 sm:grid-cols-2">
           <AdminField label="开放访客自助注册">
@@ -214,6 +205,7 @@ export function AdminAccessTab({
                   : '已关闭（仅管理员可后台建号）'}
               </span>
               <Switch
+                className="rounded-none"
                 checked={platformCfg.allowRegistration}
                 onCheckedChange={(v) =>
                   setPlatformCfg({ ...platformCfg, allowRegistration: v })
@@ -237,71 +229,10 @@ export function AdminAccessTab({
               className={ADMIN_INPUT_CLS}
             />
           </AdminField>
-
-          <AdminField label="全局默认画风预设">
-            <Select
-              value={platformCfg.defaultStylePreset}
-              onValueChange={(v) =>
-                setPlatformCfg({ ...platformCfg, defaultStylePreset: v })
-              }
-            >
-              <SelectTrigger className={`w-full ${ADMIN_SELECT_CLS}`}>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="none">{NONE_STYLE_PRESET.label}</SelectItem>
-                {styleCatalog.map((item) => {
-                  const catLabel = styleCategoryMap.get(item.categoryId)?.label
-                  const subLabel = styleSubcategoryMap.get(item.subcategoryId)?.label
-                  return (
-                    <SelectItem key={item.id} value={item.id}>
-                      {catLabel && subLabel
-                        ? `[${catLabel} · ${subLabel}] ${item.label}`
-                        : item.label}
-                    </SelectItem>
-                  )
-                })}
-              </SelectContent>
-            </Select>
-          </AdminField>
-
-          <AdminField label="全局参考图传参方式">
-            <Select
-              value={platformCfg.imagePassMode}
-              onValueChange={(v) =>
-                setPlatformCfg({
-                  ...platformCfg,
-                  imagePassMode: v as ImagePassMode,
-                })
-              }
-            >
-              <SelectTrigger className={`w-full ${ADMIN_SELECT_CLS}`}>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="url">优先 HTTPS URL（私有图自动转 Base64）</SelectItem>
-                <SelectItem value="base64">统一转 Base64 编码发送</SelectItem>
-              </SelectContent>
-            </Select>
-          </AdminField>
-
-          <AdminField label="额外附带三合一拼图卡片" className="sm:col-span-2">
-            <div className="flex h-8 items-center justify-between border border-zinc-200 px-3 dark:border-zinc-800">
-              <span className="text-xs text-zinc-600 dark:text-zinc-400">
-                开启后，生成请求将额外附带「姿势 + 服装 + 人像」三合一合成参考拼图
-              </span>
-              <Switch
-                checked={platformCfg.sendStitchedSheet}
-                onCheckedChange={(v) =>
-                  setPlatformCfg({ ...platformCfg, sendStitchedSheet: v })
-                }
-              />
-            </div>
-          </AdminField>
         </div>
 
         <div className="mt-4 flex flex-wrap items-center justify-end gap-3 border-t border-zinc-200 pt-3 dark:border-zinc-800">
-          {platformDirty && <AdminBadge tone="warning">有未保存的准入 / 链路更改</AdminBadge>}
+          {platformDirty && <AdminBadge tone="warning">有未保存的准入配置更改</AdminBadge>}
           <Button
             size="sm"
             className={ADMIN_BTN_CLS}
@@ -313,7 +244,7 @@ export function AdminAccessTab({
             ) : (
               <CheckIcon className="size-3.5" />
             )}
-            保存准入与生图链路
+            保存准入配置
           </Button>
         </div>
       </AdminPanel>
@@ -366,6 +297,7 @@ export function AdminAccessTab({
                         : '隐藏微信登录入口'}
                     </span>
                     <Switch
+                      className="rounded-none"
                       checked={wechatEnabledInput}
                       onCheckedChange={setWechatEnabledInput}
                     />
@@ -401,7 +333,7 @@ export function AdminAccessTab({
                       <button
                         type="button"
                         disabled={savingWechat}
-                        onClick={() => void handleClearWechatSecret()}
+                        onClick={handleClearWechatSecret}
                         className="font-mono text-xs text-red-600 hover:underline dark:text-red-400"
                       >
                         清除库内密钥

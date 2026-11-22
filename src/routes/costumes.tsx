@@ -11,6 +11,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { costumesQuery } from '@/api/gallery'
 import { FashionCard } from '@/components/cards/FashionCard'
 import { EmptyState } from '@/components/common/EmptyState'
+import { GalleryDensityControl } from '@/components/common/GalleryDensityControl'
 import { HorizontalFilterStrip } from '@/components/common/HorizontalFilterStrip'
 import { ScrollToTopButton } from '@/components/common/ScrollToTopButton'
 import { CostumeDetailModal } from '@/components/costumes/CostumeDetailModal'
@@ -25,11 +26,39 @@ import {
   matchCostumeStyle,
 } from '@/lib/costumeFrame'
 import { COSTUME_SOURCES, costumeSourceId, selectCostumeView } from '@/lib/costumeSources'
+import { galleryGridClassName, useGalleryDesktopCols } from '@/lib/galleryDensity'
 import { cn } from '@/lib/utils'
 import { useStudio } from '@/store/studioStore'
 
+export interface CostumesSearchParams {
+  style?: CostumeStyleTab
+  source?: CostumeSourceFilter
+  category?: string
+  tag?: string
+  q?: string
+}
+
 export const Route = createFileRoute('/costumes')({
   staticData: { title: '服装穿搭库' },
+  validateSearch: (raw: Record<string, unknown>): CostumesSearchParams => {
+    const out: CostumesSearchParams = {}
+    if (raw.style === 'realistic' || raw.style === 'anime' || raw.style === 'historical') {
+      out.style = raw.style
+    }
+    if (
+      raw.source === 'gia' ||
+      raw.source === 'gia-anime' ||
+      raw.source === 'charadb' ||
+      raw.source === 'shisei' ||
+      raw.source === 'mio'
+    ) {
+      out.source = raw.source
+    }
+    if (typeof raw.category === 'string' && raw.category.trim()) out.category = raw.category.trim()
+    if (typeof raw.tag === 'string' && raw.tag.trim() && raw.tag !== 'all') out.tag = raw.tag.trim()
+    if (typeof raw.q === 'string' && raw.q) out.q = raw.q
+    return out
+  },
   loader: ({ context }) => context.queryClient.ensureQueryData(costumesQuery),
   pendingComponent: () => (
     <div className="space-y-5">
@@ -42,7 +71,7 @@ export const Route = createFileRoute('/costumes')({
         <Skeleton className="h-14 w-80 rounded-xl" />
       </div>
       <Skeleton className="h-10 w-full rounded-xl" />
-      <div className="grid grid-cols-2 gap-x-4 gap-y-6 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+      <div className="grid grid-cols-2 gap-x-4 gap-y-6 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
         {Array.from({ length: 10 }).map((_, idx) => (
           <Skeleton key={idx} className="aspect-[2/3] rounded-[20px]" />
         ))}
@@ -58,18 +87,46 @@ const SOURCE_FILTER_LABELS: Array<{ id: CostumeSourceFilter; label: string }> = 
   { id: 'gia-anime', label: 'ギア · 动漫' },
   { id: 'charadb', label: 'たき AI · CharaDB' },
   { id: 'shisei', label: 'Shisei · 中国历代' },
+  { id: 'mio', label: '霧島澪 · 设计档案' },
 ]
 
 function CostumesPage() {
   const { data: costumes } = useSuspenseQuery(costumesQuery)
   const { recipe, toggleCostume } = useStudio()
+  const search = Route.useSearch()
+  const navigate = Route.useNavigate()
 
-  const [styleTab, setStyleTab] = useState<CostumeStyleTab>('all')
-  const [sourceFilter, setSourceFilter] = useState<CostumeSourceFilter>('all')
+  const styleTab: CostumeStyleTab = search.style ?? 'all'
+  const sourceFilter: CostumeSourceFilter = search.source ?? 'all'
+  const category = search.category ?? ''
+  const tag = search.tag ?? 'all'
+  const query = search.q ?? ''
+
+  const updateSearch = (patch: Partial<CostumesSearchParams>) => {
+    void navigate({
+      search: (prev) => {
+        const next: CostumesSearchParams = { ...prev, ...patch }
+        if (!next.style || next.style === 'all') delete next.style
+        if (!next.source || next.source === 'all') delete next.source
+        if (!next.category) delete next.category
+        if (!next.tag || next.tag === 'all') delete next.tag
+        if (!next.q) delete next.q
+        return next
+      },
+      replace: true,
+    })
+  }
+
+  const setStyleTab = (next: CostumeStyleTab) =>
+    updateSearch({ style: next === 'all' ? undefined : next })
+  const setSourceFilter = (next: CostumeSourceFilter) =>
+    updateSearch({ source: next === 'all' ? undefined : next })
+  const setCategory = (next: string) => updateSearch({ category: next || undefined })
+  const setTag = (next: string) => updateSearch({ tag: next === 'all' ? undefined : next })
+  const setQuery = (next: string) => updateSearch({ q: next || undefined })
+
+  const [desktopCols, setDesktopCols] = useGalleryDesktopCols()
   const [view, setView] = useState({ itemId: '', id: 'front' })
-  const [category, setCategory] = useState('')
-  const [tag, setTag] = useState('all')
-  const [query, setQuery] = useState('')
   const [shown, setShown] = useState(60)
   const [filterOpen, setFilterOpen] = useState(false)
   const [viewerNav, setViewerNav] = useState<{ index: number | null; dir: 1 | -1 }>({
@@ -77,6 +134,7 @@ function CostumesPage() {
     dir: 1,
   })
   const [viewerOpen, setViewerOpen] = useState(false)
+  const [viewerStageMode, setViewerStageMode] = useState<'3d' | 'stack' | 'zoom'>('3d')
 
   const viewerIndex = viewerNav.index
   const searchInputRef = useRef<HTMLInputElement>(null)
@@ -170,6 +228,7 @@ function CostumesPage() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (viewerOpen && viewerIndex !== null && filtered.length) {
+        if (viewerStageMode === 'zoom') return
         if (e.key === 'ArrowRight') {
           setViewerNav({ index: (viewerIndex + 1) % filtered.length, dir: 1 })
           return
@@ -207,14 +266,10 @@ function CostumesPage() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [viewerOpen, viewerIndex, filtered.length, currentItem])
+  }, [viewerOpen, viewerIndex, viewerStageMode, filtered.length, currentItem])
 
   const resetFilters = () => {
-    setStyleTab('all')
-    setSourceFilter('all')
-    setCategory('')
-    setTag('all')
-    setQuery('')
+    void navigate({ search: {}, replace: true })
     setShown(60)
   }
 
@@ -336,6 +391,8 @@ function CostumesPage() {
             )}
           </button>
 
+          <GalleryDensityControl value={desktopCols} onChange={setDesktopCols} />
+
           {hasActiveFilters && (
             <button
               type="button"
@@ -427,7 +484,7 @@ function CostumesPage() {
       {filtered.length === 0 ? (
         <EmptyState title="没有找到匹配的服装穿搭" description="试试更换搜索词或重置筛选条件" />
       ) : (
-        <div className="grid grid-cols-2 gap-x-4 gap-y-6 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+        <div className={galleryGridClassName(desktopCols)}>
           {filtered.slice(0, shown).map((item, idx) => (
             <FashionCard
               key={item.id}
@@ -507,7 +564,12 @@ function CostumesPage() {
       {currentItem && viewerIndex !== null && (
         <CostumeDetailModal
           open={viewerOpen}
-          onOpenChange={setViewerOpen}
+          onOpenChange={(o) => {
+            setViewerOpen(o)
+            if (!o) setViewerStageMode('3d')
+          }}
+          stageMode={viewerStageMode}
+          onStageModeChange={setViewerStageMode}
           item={currentItem}
           picked={
             recipe.costume?.id === currentItem.id &&

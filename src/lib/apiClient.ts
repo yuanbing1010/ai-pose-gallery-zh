@@ -2,6 +2,7 @@ import type {
   AdminJobsStatsSummary,
   AdminOverviewPayload,
   AdminProviderSlotDTO,
+  AdminQueueSnapshotDTO,
   AdminR2CleanupReport,
   AdminR2CleanupResult,
   AdminUserItem,
@@ -9,29 +10,43 @@ import type {
   BootstrapPayload,
   CreditLedgerItem,
   GenerationHistoryItem,
+  GenerationLiveStage,
+  GenerationQueueInfo,
   ImageProviderId,
+  MioSyncStatus,
   PlatformConfig,
   ProfileResolutionOption,
   PublicUser,
   RecipeState,
   RedeemCodeItem,
+  ReferenceDescriptionDTO,
+  ReferenceDescriptionKind,
   StudioAspectRatio,
   StudioResolution,
   SupplierDTO,
+  SupplierQueriedModel,
   UserRole,
   UserStatus,
 } from '@/types/gallery'
-import type { GenerationLiveStage } from '../../shared/studio'
 
 export class ApiError extends Error {
   status: number
   code?: string
+  jobId?: string
+  refunded?: boolean
 
-  constructor(message: string, status: number, code?: string) {
+  constructor(
+    message: string,
+    status: number,
+    code?: string,
+    extra?: { jobId?: string; refunded?: boolean }
+  ) {
     super(message)
     this.name = 'ApiError'
     this.status = status
     this.code = code
+    this.jobId = extra?.jobId
+    this.refunded = extra?.refunded
   }
 }
 
@@ -76,7 +91,6 @@ export function fetchMe(): Promise<{ user: PublicUser | null }> {
 export function loginApi(payload: {
   account: string
   password: string
-  requireAdmin?: boolean
 }): Promise<{ user: PublicUser }> {
   return requestJson('/api/auth/login', {
     method: 'POST',
@@ -181,6 +195,15 @@ export function deleteGenerationApi(id: string): Promise<{ ok: boolean }> {
   return requestJson(`/api/generations/${encodeURIComponent(id)}`, { method: 'DELETE' })
 }
 
+export function cancelQueuedGenerationApi(id: string): Promise<{
+  ok: boolean
+  job: GenerationHistoryItem | null
+  refunded: number
+  creditBalance: number
+}> {
+  return requestJson(`/api/generations/${encodeURIComponent(id)}/cancel`, { method: 'POST' })
+}
+
 export interface StreamGenerationProgress {
   stage: GenerationLiveStage
   message: string
@@ -192,6 +215,15 @@ export interface StreamGenerationProgress {
   jobId?: string
   creditBalance?: number
 }
+
+export type StartGenerationStreamResult =
+  | { kind: 'done'; job: GenerationHistoryItem; creditBalance: number }
+  | {
+      kind: 'queued'
+      job: GenerationHistoryItem
+      creditBalance: number
+      queueInfo: GenerationQueueInfo
+    }
 
 export async function startGenerationStreamApi(
   payload: {
@@ -206,12 +238,13 @@ export async function startGenerationStreamApi(
     sceneNote?: string
     recipe: RecipeState
     stitchedR2Key?: string
+    textFallbackOnly?: boolean
   },
   handlers: {
     onProgress: (p: StreamGenerationProgress) => void
     signal?: AbortSignal
   }
-): Promise<{ job: GenerationHistoryItem; creditBalance: number }> {
+): Promise<StartGenerationStreamResult> {
   const res = await fetch('/api/generations', {
     method: 'POST',
     credentials: 'include',
@@ -243,7 +276,17 @@ export async function startGenerationStreamApi(
   const decoder = new TextDecoder()
   let buffer = ''
   let finalResult: { job: GenerationHistoryItem; creditBalance: number } | null = null
-  let streamError: string | null = null
+  let queuedResult: {
+    job: GenerationHistoryItem
+    creditBalance: number
+    queueInfo: GenerationQueueInfo
+  } | null = null
+  let streamError: {
+    message: string
+    jobId?: string
+    refunded?: boolean
+    creditBalance?: number
+  } | null = null
 
   const processBlock = (block: string) => {
     const lines = block.split(/\r?\n/)
@@ -266,14 +309,26 @@ export async function startGenerationStreamApi(
     }
     if (eventName === 'progress') {
       handlers.onProgress(parsed as StreamGenerationProgress)
+    } else if (eventName === 'queued') {
+      queuedResult = parsed as {
+        job: GenerationHistoryItem
+        creditBalance: number
+        queueInfo: GenerationQueueInfo
+      }
     } else if (eventName === 'done') {
       finalResult = parsed as { job: GenerationHistoryItem; creditBalance: number }
     } else if (eventName === 'error') {
-      streamError = parsed?.message || '生成失败'
+      const msg = typeof parsed?.message === 'string' && parsed.message ? parsed.message : '生成失败'
+      streamError = {
+        message: msg,
+        jobId: typeof parsed?.jobId === 'string' ? parsed.jobId : undefined,
+        refunded: typeof parsed?.refunded === 'boolean' ? parsed.refunded : undefined,
+        creditBalance: typeof parsed?.creditBalance === 'number' ? parsed.creditBalance : undefined,
+      }
       if (typeof parsed?.creditBalance === 'number') {
         handlers.onProgress({
           stage: 'saving',
-          message: streamError || '生成失败',
+          message: msg,
           creditBalance: parsed.creditBalance,
         })
       }
@@ -299,12 +354,29 @@ export async function startGenerationStreamApi(
   }
 
   if (streamError) {
-    throw new ApiError(streamError, 500)
+    const errInfo = streamError as {
+      message: string
+      jobId?: string
+      refunded?: boolean
+    }
+    throw new ApiError(errInfo.message, 500, undefined, {
+      jobId: errInfo.jobId,
+      refunded: errInfo.refunded,
+    })
   }
-  if (!finalResult) {
-    throw new ApiError('连接提前断开，请在「作品集」中确认生成结果或自动退还状态', 502)
+  if (queuedResult) {
+    const q = queuedResult as {
+      job: GenerationHistoryItem
+      creditBalance: number
+      queueInfo: GenerationQueueInfo
+    }
+    return { kind: 'queued', ...q }
   }
-  return finalResult
+  if (finalResult) {
+    const d = finalResult as { job: GenerationHistoryItem; creditBalance: number }
+    return { kind: 'done', ...d }
+  }
+  throw new ApiError('连接提前断开，请在「作品集」中确认生成结果或自动退还状态', 502)
 }
 
 // ---------------------------------------------------------------------------
@@ -381,9 +453,16 @@ export function createAdminSupplierApi(payload: {
   name: string
   baseUrl: string
   apiKey?: string
+  rawKeysText?: string
+  models?: string[]
   enabled?: boolean
   note?: string
-}): Promise<{ suppliers: SupplierDTO[] }> {
+}): Promise<{
+  suppliers: SupplierDTO[]
+  createdSupplierId?: string
+  addedCount?: number
+  skippedCount?: number
+}> {
   return requestJson('/api/admin/suppliers', {
     method: 'POST',
     body: JSON.stringify(payload),
@@ -396,6 +475,8 @@ export function updateAdminSupplierApi(
     name?: string
     baseUrl?: string
     apiKey?: string
+    rawKeysText?: string
+    models?: string[]
     clearApiKey?: boolean
     enabled?: boolean
     note?: string
@@ -407,9 +488,102 @@ export function updateAdminSupplierApi(
   })
 }
 
+export interface SupplierModelsQueryResult {
+  ok: boolean
+  status: number | null
+  latencyMs: number
+  endpointUrl: string
+  models: SupplierQueriedModel[]
+  message: string
+}
+
+export function queryAdminSupplierModelsApi(payload: {
+  supplierId?: string
+  baseUrl: string
+  apiKey?: string
+  rawKeysText?: string
+}): Promise<SupplierModelsQueryResult> {
+  return requestJson('/api/admin/suppliers/query-models', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export function addAdminSupplierKeysApi(
+  supplierId: string,
+  payload: {
+    rawKeysText?: string
+    apiKey?: string
+    label?: string
+    keys?: Array<{ label?: string; apiKey: string }>
+  }
+): Promise<{ suppliers: SupplierDTO[]; addedCount: number; skippedCount: number }> {
+  return requestJson(`/api/admin/suppliers/${encodeURIComponent(supplierId)}/keys`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export function updateAdminSupplierKeyApi(
+  supplierId: string,
+  keyId: string,
+  payload: {
+    label?: string
+    enabled?: boolean
+    apiKey?: string
+    clearCooldown?: boolean
+  }
+): Promise<{ suppliers: SupplierDTO[] }> {
+  return requestJson(
+    `/api/admin/suppliers/${encodeURIComponent(supplierId)}/keys/${encodeURIComponent(keyId)}`,
+    {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    }
+  )
+}
+
+export function deleteAdminSupplierKeyApi(
+  supplierId: string,
+  keyId: string
+): Promise<{ suppliers: SupplierDTO[] }> {
+  return requestJson(
+    `/api/admin/suppliers/${encodeURIComponent(supplierId)}/keys/${encodeURIComponent(keyId)}`,
+    {
+      method: 'DELETE',
+    }
+  )
+}
+
 export function deleteAdminSupplierApi(id: string): Promise<{ suppliers: SupplierDTO[] }> {
   return requestJson(`/api/admin/suppliers/${encodeURIComponent(id)}`, {
     method: 'DELETE',
+  })
+}
+
+export interface SupplierKeyTestResult {
+  keyId: string
+  label: string
+  apiKeyHint: string
+  ok: boolean
+  status: number | null
+  latencyMs: number
+  message: string
+}
+
+export function testAdminSupplierApi(
+  id: string,
+  keyId?: string
+): Promise<{
+  ok: boolean
+  status: number | null
+  latencyMs: number
+  message: string
+  results?: SupplierKeyTestResult[]
+}> {
+  return requestJson(`/api/admin/suppliers/${encodeURIComponent(id)}/test`, {
+    method: 'POST',
+    ...(keyId ? { body: JSON.stringify({ keyId }) } : {}),
   })
 }
 
@@ -434,6 +608,8 @@ export interface AdminProfilePayload {
   displayName?: string
   badge?: string
   tagline?: string
+  defaultModel?: string
+  defaultCustomModel?: string
   enabled?: boolean
   isDefault?: boolean
   creditCost?: number
@@ -475,6 +651,7 @@ export function createAdminChannelApi(
   payload: {
     profileId?: string
     supplierId: string
+    keyIds?: string[]
     name: string
     enabled: boolean
     model: string
@@ -494,6 +671,7 @@ export function updateAdminChannelApi(
   payload: {
     profileId?: string
     supplierId?: string
+    keyIds?: string[]
     name?: string
     enabled?: boolean
     model?: string
@@ -693,6 +871,12 @@ export function toggleAdminRedeemCodeApi(
   })
 }
 
+export function deleteAdminRedeemCodeApi(id: string): Promise<{ ok: boolean }> {
+  return requestJson(`/api/admin/redeem-codes/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  })
+}
+
 export function fetchAdminGenerationsApi(params?: {
   status?: string
   provider?: string
@@ -712,4 +896,103 @@ export function fetchAdminGenerationsApi(params?: {
 
 export function fetchAdminGenerationByIdApi(id: string): Promise<{ job: GenerationHistoryItem }> {
   return requestJson(`/api/admin/generations/${encodeURIComponent(id)}`)
+}
+
+export function fetchAdminQueueApi(): Promise<AdminQueueSnapshotDTO> {
+  return requestJson('/api/admin/queue')
+}
+
+export function reconcileAdminQueueApi(): Promise<{
+  ok: boolean
+  reapedProcessing: number
+  reapedQueued: number
+  promotedCount: number
+}> {
+  return requestJson('/api/admin/queue/reconcile', {
+    method: 'POST',
+  })
+}
+
+export function cancelAdminQueueJobApi(
+  id: string,
+  opts?: { forceProcessing?: boolean; reason?: string }
+): Promise<{ ok: boolean; refunded: number | boolean; mode: string }> {
+  return requestJson(`/api/admin/queue/${encodeURIComponent(id)}/cancel`, {
+    method: 'POST',
+    body: JSON.stringify(opts ?? {}),
+  })
+}
+
+export function fetchAdminMioSyncStatusApi(): Promise<MioSyncStatus> {
+  return requestJson('/api/admin/sync/mio')
+}
+
+export function runAdminMioSyncApi(): Promise<MioSyncStatus> {
+  return requestJson('/api/admin/sync/mio', {
+    method: 'POST',
+  })
+}
+
+export function fetchAdminReferenceDescriptionsApi(params?: {
+  kind?: 'all' | ReferenceDescriptionKind
+  q?: string
+  limit?: number
+  offset?: number
+}): Promise<{
+  items: ReferenceDescriptionDTO[]
+  total: number
+  poseCount: number
+  costumeCount: number
+  portraitCount: number
+  extraCount: number
+}> {
+  const qs = new URLSearchParams()
+  if (params?.kind && params.kind !== 'all') qs.set('kind', params.kind)
+  if (params?.q) qs.set('q', params.q)
+  if (params?.limit !== undefined) qs.set('limit', String(params.limit))
+  if (params?.offset !== undefined) qs.set('offset', String(params.offset))
+  const suffix = qs.toString() ? `?${qs.toString()}` : ''
+  return requestJson(`/api/admin/reference-descriptions${suffix}`)
+}
+
+export function transcribeAdminReferenceDescriptionApi(payload: {
+  kind: ReferenceDescriptionKind
+  previewPath: string
+  sourceLabel?: string
+  description?: string
+}): Promise<{
+  item: ReferenceDescriptionDTO | null
+  description?: string
+  cacheHit?: boolean
+  visionModel?: string
+}> {
+  return requestJson('/api/admin/reference-descriptions/transcribe', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export function updateAdminReferenceDescriptionApi(
+  id: string,
+  payload: { description: string; sourceLabel?: string }
+): Promise<{ item: ReferenceDescriptionDTO }> {
+  return requestJson(`/api/admin/reference-descriptions/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  })
+}
+
+export function regenerateAdminReferenceDescriptionApi(
+  id: string
+): Promise<{ item: ReferenceDescriptionDTO }> {
+  return requestJson(
+    `/api/admin/reference-descriptions/${encodeURIComponent(id)}/regenerate`,
+    { method: 'POST' }
+  )
+}
+
+export function deleteAdminReferenceDescriptionApi(id: string): Promise<{ ok: boolean }> {
+  return requestJson(`/api/admin/reference-descriptions/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  })
 }

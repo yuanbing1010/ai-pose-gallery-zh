@@ -43,11 +43,13 @@ import {
   ADMIN_BTN_CLS,
   ADMIN_BTN_SM_CLS,
   ADMIN_SELECT_CLS,
+  type AdminConfirmAction,
 } from '../auditHelpers'
 
 interface AdminPromptsTabProps {
   reloadTick: number
   onLoadingChange: (loading: boolean) => void
+  onConfirm: (action: AdminConfirmAction) => void
   onRefreshBootstrap: () => Promise<void>
   onDirtyChange?: (dirty: boolean) => void
 }
@@ -57,6 +59,7 @@ type PromptTemplateStringKey = Exclude<keyof PromptTemplateConfig, 'constraints'
 export function AdminPromptsTab({
   reloadTick,
   onLoadingChange,
+  onConfirm,
   onRefreshBootstrap,
   onDirtyChange,
 }: AdminPromptsTabProps) {
@@ -271,13 +274,15 @@ export function AdminPromptsTab({
     updateConstraints(tpl.constraints.filter((_, idx) => idx !== index))
   }
 
-  const standardFields: Array<{
+  type PromptTemplateFieldMeta = {
     key: PromptTemplateStringKey
     label: string
     rows?: number
     hint: string
     colSpan2?: boolean
-  }> = [
+  }
+
+  const standardFields: PromptTemplateFieldMeta[] = [
     {
       key: 'intro',
       label: '开篇总指令',
@@ -287,9 +292,9 @@ export function AdminPromptsTab({
     },
     {
       key: 'poseClause',
-      label: '• 姿势规则（传了姿势图时）',
+      label: '• 姿势规则（严格模式）',
       rows: 2,
-      hint: '支持 {{姿势图}}（自动附带按「09. 姿势敏感词屏蔽」脱敏后的名称）',
+      hint: '支持 {{姿势图}}（自动附带脱敏后的名称）',
     },
     {
       key: 'costumeClause',
@@ -298,117 +303,103 @@ export function AdminPromptsTab({
       hint: '支持 {{服装图}}',
     },
     {
-      key: 'portraitFullClause',
-      label: '• 人物规则（有姿势 + 服装 + 人像时）',
-      rows: 3,
-      hint: '支持 {{人像图}} {{姿势图}}',
+      key: 'portraitClause',
+      label: '• 人物外貌规则（传了人像图时）',
+      rows: 2,
+      hint: '支持 {{人像图}}',
     },
     {
-      key: 'portraitWithPoseOnlyClause',
-      label: '• 人物规则（有姿势 + 人像，无服装时）',
-      rows: 3,
-      hint: '保留人像自身穿搭；支持 {{人像图}} {{姿势图}}',
-    },
-    {
-      key: 'portraitOnlyClause',
-      label: '• 人物规则（无姿势图，有人像时）',
+      key: 'portraitOwnOutfitClause',
+      label: '• 人物原穿搭补充（未选服装图时自动追加）',
       rows: 2,
       hint: '支持 {{人像图}}',
     },
     {
       key: 'facelessClause',
-      label: '• 人物规则（无人像，有姿势 + 服装时）',
+      label: '• 无人像展示规则（仅传姿势 + 服装时）',
       rows: 2,
       hint: '无独立人像的服装展示场景',
     },
     {
       key: 'defaultPersonClause',
-      label: '• 人物规则（仅姿势/附图等其余组合）',
+      label: '• 无人像兜底规则（其余无人像组合）',
       rows: 2,
-      hint: '无独立人像时的兜底规则',
+      hint: '如仅姿势图或附图时生成普通清晰人物',
     },
     {
       key: 'extraClause',
       label: '• 补充参考规则（有额外附图时）',
       rows: 2,
       hint: '支持 {{附图列表}}',
+      colSpan2: true,
     },
   ]
 
-  const adaptiveFields: Array<{
-    key: PromptTemplateStringKey
-    label: string
-    rows?: number
-    hint: string
-    colSpan2?: boolean
-  }> = [
+  const adaptiveFields: PromptTemplateFieldMeta[] = [
     {
       key: 'adaptiveCostumeClause',
-      label: '• 服装跨画风适配规则',
+      label: '• 服装跨画风适配（替代服装规则）',
       rows: 2,
-      hint: '开启跨画风面部自适应且有服装图时替代默认服装规则；支持 {{服装图}}',
+      hint: '支持 {{服装图}}',
     },
     {
-      key: 'adaptivePortraitFullClause',
-      label: '• 人物跨画风适配（姿势 + 服装 + 人像）',
-      rows: 3,
-      hint: '支持 {{人像图}} {{姿势图}}',
-    },
-    {
-      key: 'adaptivePortraitWithPoseOnlyClause',
-      label: '• 人物跨画风适配（姿势 + 人像，无服装）',
-      rows: 3,
-      hint: '支持 {{人像图}} {{姿势图}}',
-    },
-    {
-      key: 'adaptivePortraitOnlyClause',
-      label: '• 人物跨画风适配（有姿势与额外规则外，有人像 + 服装）',
-      rows: 2,
-      hint: '无姿势图但有服装图与人像图时；支持 {{人像图}}',
-    },
-    {
-      key: 'adaptivePortraitWithOwnOutfitOnlyClause',
-      label: '• 人物跨画风适配（无姿势，仅人像保留原穿搭）',
+      key: 'adaptivePortraitClause',
+      label: '• 人物跨画风适配（替代外貌规则）',
       rows: 2,
       hint: '支持 {{人像图}}',
     },
     {
       key: 'adaptiveStyleSuffix',
-      label: '• 画风跨次元渲染附加指令',
+      label: '• 画风跟随附加指令（追加于「• 风格：」段尾）',
       rows: 2,
-      hint: '开启「跟随画风」且存在画风时追加于「• 风格：」段尾',
+      hint: '统一提示人物外貌与服饰适配目标风格',
+      colSpan2: true,
     },
   ]
 
-  const adaptivePoseFields: Array<{
-    key: PromptTemplateStringKey
-    label: string
-    rows?: number
-    hint: string
-    colSpan2?: boolean
-  }> = [
+  const adaptivePoseFields: PromptTemplateFieldMeta[] = [
     {
       key: 'adaptivePoseClause',
-      label: '• 姿势适配规则（传了姿势图且开启姿势适配时）',
+      label: '• 姿势适配规则（替代严格姿势规则）',
       rows: 3,
-      hint: '替代默认「• 姿势：」；支持 {{姿势图}}',
+      hint: '传了姿势图且开启「姿势适配」时生效；支持 {{姿势图}}',
       colSpan2: true,
     },
     {
       key: 'adaptiveNoPoseRecompositionClause',
-      label: '• 人物构图释放规则（未传姿势图、有人像且开启姿势适配时）',
+      label: '• 构图释放补充（未传姿势图且开启姿势适配时追加）',
       rows: 2,
-      hint: '追加于常规/自适应「• 人物：」段尾，释放人像原图构图；支持 {{人像图}}',
-      colSpan2: true,
+      hint: '释放人像原图机位与站姿；支持 {{人像图}}',
     },
     {
       key: 'adaptivePoseStyleSuffix',
-      label: '• 画风姿势与机位优先附加指令',
+      label: '• 画风交互优先指令（追加于「• 风格：」段尾）',
       rows: 2,
-      hint: '开启「姿势适配」且存在画风时追加于「• 风格：」段尾',
-      colSpan2: true,
+      hint: '优先该画风视角与交互并复用现有双臂',
     },
   ]
+
+  const renderFieldGrid = (fields: PromptTemplateFieldMeta[]) => (
+    <div className="grid gap-3.5 sm:grid-cols-2">
+      {fields.map((f) => (
+        <div
+          key={f.key}
+          className={`space-y-1 ${f.colSpan2 ? 'sm:col-span-2' : ''}`}
+        >
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <label className="text-xs font-bold">{f.label}</label>
+            <span className="font-mono text-xs text-zinc-500">{f.hint}</span>
+          </div>
+          <Textarea
+            rows={f.rows ?? 2}
+            value={tpl[f.key]}
+            onChange={(e) => updateTplField(f.key, e.target.value)}
+            className="rounded-none font-mono text-xs leading-relaxed"
+          />
+        </div>
+      ))}
+    </div>
+  )
 
   return (
     <div className="space-y-6">
@@ -468,7 +459,7 @@ export function AdminPromptsTab({
             生图支持只选 1～3 个参考槽位，以下模板按实际参考图存在与否自动拼装；留空对应段落则跳过输出。
             <span className="ml-1 font-mono text-zinc-700 dark:text-zinc-300">
               可用变量：
-              {'{{总数}} {{参考图序}} {{媒介}} {{姿势图}} {{服装图}} {{人像图}} {{附图列表}} {{非姿势图}} {{基准风格图}}'}
+              {'{{总数}} {{参考图序}} {{媒介}} {{姿势图}} {{服装图}} {{人像图}} {{附图列表}} {{非姿势图}}'}
             </span>
           </>
         }
@@ -479,9 +470,18 @@ export function AdminPromptsTab({
             variant="outline"
             className={ADMIN_BTN_SM_CLS}
             onClick={() =>
-              setPlatformCfg({
-                ...platformCfg,
-                promptTemplate: createDefaultPromptTemplate(),
+              onConfirm({
+                title: '恢复默认结构化提示词模板？',
+                description: '会将上方各段落模板与条款规则重置为系统默认版本（确认后仍需点击「保存提示词模板」才会写入线上配置）。',
+                confirmLabel: '确认恢复默认',
+                destructive: true,
+                run: async () => {
+                  setPlatformCfg({
+                    ...platformCfg,
+                    promptTemplate: createDefaultPromptTemplate(),
+                  })
+                  toast.info('已填入默认结构化模板，请检查后点击底部保存按钮')
+                },
               })
             }
           >
@@ -491,52 +491,16 @@ export function AdminPromptsTab({
         }
       >
         <div className="space-y-6">
-          <div className="grid gap-3.5 sm:grid-cols-2">
-            {standardFields.map((f) => (
-              <div
-                key={f.key}
-                className={`space-y-1 ${f.colSpan2 ? 'sm:col-span-2' : ''}`}
-              >
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <label className="text-xs font-bold">{f.label}</label>
-                  <span className="font-mono text-xs text-zinc-500">{f.hint}</span>
-                </div>
-                <Textarea
-                  rows={f.rows ?? 2}
-                  value={tpl[f.key]}
-                  onChange={(e) => updateTplField(f.key, e.target.value)}
-                  className="rounded-none font-mono text-xs leading-relaxed"
-                />
-              </div>
-            ))}
-          </div>
+          {renderFieldGrid(standardFields)}
 
           <div className="space-y-3 border border-zinc-200 p-4 dark:border-zinc-800">
             <div>
-              <div className="text-xs font-bold">跨画风面部自适应专属规则（当用户开启面部重绘适配时生效）</div>
+              <div className="text-xs font-bold">跨画风面部自适应专属规则（当用户开启「跟随画风」时生效）</div>
               <p className="mt-0.5 text-xs text-zinc-500">
-                当合成台开启「跨次元/画风面部重绘」开关且目标画风生效时，以下条款将自动替代对应的常规人物与服装规则。
+                当工作台开启「跟随画风」且目标画风生效时，以下条款将自动替代对应的常规人物与服装规则。
               </p>
             </div>
-            <div className="grid gap-3.5 sm:grid-cols-2">
-              {adaptiveFields.map((f) => (
-                <div
-                  key={f.key}
-                  className={`space-y-1 ${f.colSpan2 ? 'sm:col-span-2' : ''}`}
-                >
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <label className="text-xs font-bold">{f.label}</label>
-                    <span className="font-mono text-xs text-zinc-500">{f.hint}</span>
-                  </div>
-                  <Textarea
-                    rows={f.rows ?? 2}
-                    value={tpl[f.key]}
-                    onChange={(e) => updateTplField(f.key, e.target.value)}
-                    className="rounded-none font-mono text-xs leading-relaxed"
-                  />
-                </div>
-              ))}
-            </div>
+            {renderFieldGrid(adaptiveFields)}
           </div>
 
           <div className="space-y-3 border border-zinc-200 p-4 dark:border-zinc-800">
@@ -546,25 +510,7 @@ export function AdminPromptsTab({
                 选中自拍、对镜自拍、第一人称POV、监控摄像头等强机位/手持互动画风（或用户在工作台手动开启「姿势适配」）时，以下条款将自动接管姿势与构图规则。
               </p>
             </div>
-            <div className="grid gap-3.5 sm:grid-cols-2">
-              {adaptivePoseFields.map((f) => (
-                <div
-                  key={f.key}
-                  className={`space-y-1 ${f.colSpan2 ? 'sm:col-span-2' : ''}`}
-                >
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <label className="text-xs font-bold">{f.label}</label>
-                    <span className="font-mono text-xs text-zinc-500">{f.hint}</span>
-                  </div>
-                  <Textarea
-                    rows={f.rows ?? 2}
-                    value={tpl[f.key]}
-                    onChange={(e) => updateTplField(f.key, e.target.value)}
-                    className="rounded-none font-mono text-xs leading-relaxed"
-                  />
-                </div>
-              ))}
-            </div>
+            {renderFieldGrid(adaptivePoseFields)}
           </div>
 
           <div className="border border-zinc-200 dark:border-zinc-800">
@@ -617,7 +563,7 @@ export function AdminPromptsTab({
                           <SelectTrigger className={`w-56 ${ADMIN_SELECT_CLS}`}>
                             <SelectValue />
                           </SelectTrigger>
-                          <SelectContent>
+                          <SelectContent className="rounded-none">
                             {PROMPT_CONSTRAINT_CONDITION_OPTIONS.map((opt) => (
                               <SelectItem key={opt.value} value={opt.value}>
                                 {opt.label}
@@ -627,6 +573,7 @@ export function AdminPromptsTab({
                         </Select>
                         <label className="inline-flex items-center gap-1.5 text-xs text-zinc-600 dark:text-zinc-400">
                           <Switch
+                            className="rounded-none"
                             checked={item.enabled}
                             onCheckedChange={(v) =>
                               updateConstraintAt(cIdx, { enabled: v })
@@ -718,6 +665,7 @@ export function AdminPromptsTab({
           <div className="flex flex-wrap items-center gap-2">
             <label className="inline-flex h-8 items-center gap-2 border border-zinc-200 px-2.5 text-xs dark:border-zinc-800">
               <Switch
+                className="rounded-none"
                 checked={previewAllowFaceStyleShift}
                 onCheckedChange={setPreviewAllowFaceStyleShift}
               />
@@ -725,6 +673,7 @@ export function AdminPromptsTab({
             </label>
             <label className="inline-flex h-8 items-center gap-2 border border-zinc-200 px-2.5 text-xs dark:border-zinc-800">
               <Switch
+                className="rounded-none"
                 checked={previewAllowPoseStyleShift}
                 onCheckedChange={setPreviewAllowPoseStyleShift}
               />
@@ -747,7 +696,7 @@ export function AdminPromptsTab({
               <SelectTrigger className={`w-52 ${ADMIN_SELECT_CLS}`}>
                 <SelectValue />
               </SelectTrigger>
-              <SelectContent>
+              <SelectContent className="rounded-none">
                 <SelectItem value="all">场景：姿势 + 服装 + 人像</SelectItem>
                 <SelectItem value="with_extra">场景：姿势 + 服装 + 人像 + 附图</SelectItem>
                 <SelectItem value="no_portrait">场景：姿势 + 服装（无人像）</SelectItem>
@@ -767,7 +716,7 @@ export function AdminPromptsTab({
               <SelectTrigger className={`w-56 ${ADMIN_SELECT_CLS}`}>
                 <SelectValue />
               </SelectTrigger>
-              <SelectContent>
+              <SelectContent className="rounded-none">
                 <SelectItem value="none">{NONE_STYLE_PRESET.label}</SelectItem>
                 {styleCatalog.map((item) => {
                   const catLabel = styleCategoryMap.get(item.categoryId)?.label

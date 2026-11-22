@@ -66,13 +66,13 @@ function withTilt(key: PaletteKey, _tiltSeed = 0): CardAccent {
  */
 export function getPoseAccent(category: string, system = '', tiltSeed = 0): CardAccent {
   let key: PaletteKey = 'gold'
-  if (system.includes('双人') || /传教士|后入|骑乘|贴身/.test(category)) {
+  if (system.includes('双人缠绵') || /传教士|后入|骑乘|贴身/.test(category)) {
     key = 'crimson'
-  } else if (/卧|特殊/.test(category)) {
+  } else if (/卧|特殊|芭蕾/.test(category)) {
     key = 'violet'
-  } else if (/坐|跪|蹲/.test(category)) {
+  } else if (/坐|跪|蹲|瑜伽/.test(category)) {
     key = 'cyan'
-  } else if (/可爱|挤胸|贴脸|性感/.test(category)) {
+  } else if (/可爱|挤胸|贴脸|性感|舞蹈|运动|双人合影/.test(category)) {
     key = 'amber'
   }
   return withTilt(key, tiltSeed)
@@ -80,17 +80,17 @@ export function getPoseAccent(category: string, system = '', tiltSeed = 0): Card
 
 /**
  * 按服装风格/季节分类映射灯条颜色：
- * 春夏运动泳装霓虹青 · 秋冬国风和服鎏金 · 礼服舞台洛丽塔极光紫 · 校园通勤奇幻科幻琥珀 · 贴身性感朱红
+ * 春夏运动泳装霓虹青 · 秋冬国风和服鎏金 · 礼服舞台洛丽塔哥特极光紫 · 校园通勤奇幻科幻琥珀 · 贴身性感朱红
  */
 export function getCostumeAccent(category: string, _kind = '', tiltSeed = 0): CardAccent {
   let key: PaletteKey = 'gold'
   if (/性感|内衣/.test(category)) {
     key = 'crimson'
-  } else if (/礼服|派对|偶像|洛丽塔|地雷/.test(category)) {
+  } else if (/礼服|派对|偶像|洛丽塔|地雷|哥特|暗黑/.test(category)) {
     key = 'violet'
   } else if (/春|夏|泳装|运动/.test(category)) {
     key = 'cyan'
-  } else if (/制服|通勤|居家|职业|奇幻|军事|科幻/.test(category)) {
+  } else if (/制服|通勤|居家|职业|奇幻|军事|科幻|创意/.test(category)) {
     key = 'amber'
   }
   return withTilt(key, tiltSeed)
