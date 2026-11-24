@@ -1,6 +1,7 @@
 import {
   DEFAULT_PLATFORM_CONFIG,
   DEFAULT_PROVIDER_PARAMS,
+  JOB_HEARTBEAT_STALE_MS,
   PROVIDER_META,
   PROVIDER_ORDER,
   createDefaultGenerationQueueConfig,
@@ -19,7 +20,9 @@ import {
   normalizeProfileResolutions,
   normalizeStudioResolution,
   normalizeStylePresetTaxonomy,
+  normalizeSupplierAuthMode,
   normalizeSupplierModelIds,
+  resolveEffectiveProcessingTimeoutSec,
   resolveProfileConcurrencyLimit,
   resolveProfileDefaultResolution,
   type AdminProviderSlotDTO,
@@ -44,12 +47,14 @@ import {
   type RedeemCodeItem,
   type ReferenceDescriptionDTO,
   type ReferenceDescriptionKind,
-  type StudioAspectRatio,
+  type GenerationAspectRatio,
   type StudioResolution,
   type StyleCategoryItem,
   type StylePresetItem,
   type StyleSubcategoryItem,
+  type SupplierAuthMode,
   type SupplierChannelRef,
+  type SupplierCredentialType,
   type SupplierDTO,
   type SupplierKeyDTO,
   type UserRole,
@@ -66,6 +71,7 @@ import {
   randomTokenHex,
   sha256Hex,
 } from './crypto'
+import { parseOAuthBundle, resolveValidSupplierOAuthKey } from './supplierOAuth'
 import type { Env } from './types'
 import { validateExternalImageUrl } from './validation'
 
@@ -134,7 +140,7 @@ export interface JobRow {
   credits_refunded: number
   prompt: string
   recipe_summary: string
-  aspect_ratio: StudioAspectRatio
+  aspect_ratio: GenerationAspectRatio
   style_preset: string
   snapshot_json: string
   trace_json?: string | null
@@ -152,8 +158,12 @@ export interface SupplierKeyRow {
   id: string
   supplier_id: string
   label: string
+  credential_type?: string
   api_key_encrypted: string
   api_key_hint: string
+  oauth_expires_at?: number
+  oauth_account_id?: string
+  oauth_token_version?: number
   enabled: number
   cooldown_until: number
   last_error: string
@@ -165,6 +175,7 @@ export interface SupplierKeyRow {
 export interface SupplierRow {
   id: string
   name: string
+  auth_mode?: string
   base_url: string
   api_key_encrypted: string
   api_key_hint: string
@@ -210,6 +221,7 @@ export interface ChannelRow {
   created_at: number
   updated_at: number
   supplier_name?: string
+  supplier_auth_mode?: string
   supplier_base_url?: string
   supplier_api_key_encrypted?: string
   supplier_api_key_hint?: string
@@ -221,9 +233,11 @@ export interface RunnableChannel {
   channelName: string
   supplierId: string
   supplierName: string
+  supplierAuthMode?: SupplierAuthMode
   supplierKeyId?: string
   supplierKeyLabel?: string
   supplierKeyHint?: string
+  oauthAccountId?: string
   cooldownUntil?: number
   baseUrl: string
   apiKey: string
@@ -281,10 +295,9 @@ export function mapJobRow(
   options: { isAdmin?: boolean; queueInfo?: GenerationQueueInfo | null } = {}
 ): GenerationHistoryItem {
   const isAdmin = Boolean(options.isAdmin)
-  const artistName = getStudioArtist(row.provider).name
   const profileName = row.profile_name || null
   const resolution = normalizeStudioResolution(row.resolution)
-  const maskedModelLabel = profileName ? `${artistName} · ${profileName}` : artistName
+  const maskedModelLabel = profileName || '默认画笔'
   let snapshot: GenerationSnapshot | undefined
   try {
     const parsed = JSON.parse(row.snapshot_json) as GenerationSnapshot
@@ -292,7 +305,8 @@ export function mapJobRow(
       ? parsed
       : {
           ...parsed,
-          model: parsed.profileName ? `${artistName} · ${parsed.profileName}` : maskedModelLabel,
+          prompt: '',
+          model: parsed.profileName || maskedModelLabel,
         }
   } catch {
     snapshot = undefined
@@ -327,7 +341,7 @@ export function mapJobRow(
       : row.status === 'processing'
         ? {
             stage: 'generating' as const,
-            message: `${profileName ? `${artistName}（${profileName}）` : artistName}正在云端绘制作品…`,
+            message: 'AI小画家正在云端绘制作品…',
             startedAt: parsedTrace?.startedAt ?? row.started_at ?? row.created_at,
           }
         : row.status === 'queued'
@@ -367,7 +381,7 @@ export function mapJobRow(
           auditTrace,
         }
       : {}),
-    prompt: row.prompt,
+    prompt: isAdmin ? row.prompt : '',
     aspectRatio: row.aspect_ratio || '3:4',
     stylePreset: row.style_preset || 'none',
     imageUrl: row.result_r2_key ? `/api/files/${row.result_r2_key}` : '',
@@ -406,6 +420,38 @@ export async function resolveSupplierSecret(stored: string, env: Env): Promise<s
   return (await decryptSecret(trimmed, env.APP_ENCRYPTION_KEY)).trim()
 }
 
+export async function resolveSupplierKeyRuntimeCredential(
+  env: Env,
+  keyRow: {
+    id?: string
+    credentialType?: string | null
+    apiKeyEncrypted: string
+    oauthAccountId?: string | null
+  }
+): Promise<{ apiKey: string; oauthAccountId?: string } | null> {
+  if (keyRow.credentialType === 'oauth_token' && keyRow.id) {
+    try {
+      const resolved = await resolveValidSupplierOAuthKey(env, keyRow.id)
+      return {
+        apiKey: resolved.accessToken,
+        oauthAccountId: resolved.accountId || keyRow.oauthAccountId || undefined,
+      }
+    } catch {
+      return null
+    }
+  }
+  const plain = await resolveSupplierSecret(keyRow.apiKeyEncrypted, env)
+  if (!plain) return null
+  const bundle = parseOAuthBundle(plain)
+  if (bundle) {
+    return {
+      apiKey: bundle.accessToken,
+      oauthAccountId: bundle.accountId || keyRow.oauthAccountId || undefined,
+    }
+  }
+  return { apiKey: plain }
+}
+
 export async function resolveProviderApiKey(env: Env, row: ProviderRow): Promise<string> {
   const fromDb = await decryptSecret(row.api_key_encrypted, env.APP_ENCRYPTION_KEY)
   if (fromDb.trim()) return fromDb.trim()
@@ -413,7 +459,6 @@ export async function resolveProviderApiKey(env: Env, row: ProviderRow): Promise
 }
 
 let platformSeeded = false
-let seedingPromise: Promise<void> | null = null
 
 function getDefaultProfilePreset(providerId: ImageProviderId): {
   displayName: string
@@ -456,114 +501,109 @@ function getDefaultProfilePreset(providerId: ImageProviderId): {
 
 export async function ensurePlatformSeeded(env: Env): Promise<void> {
   if (platformSeeded) return
-  if (!seedingPromise) {
-    seedingPromise = (async () => {
-      const [existingProviders, existingProfiles] = await Promise.all([
-        env.DB.prepare(`SELECT COUNT(*) AS cnt FROM provider_configs`).first<{ cnt: number }>(),
-        env.DB.prepare(`SELECT COUNT(*) AS cnt FROM model_profiles`).first<{ cnt: number }>(),
-      ])
-      const now = Date.now()
-      const statements: D1PreparedStatement[] = []
+  // 严禁跨请求共享含 D1 I/O 的模块级 Promise（会触发 Workers 跨请求 I/O 异常）；
+  // 所有写入均为 INSERT OR IGNORE / 幂等更新，可在当前请求上下文内安全并发执行。
+  const [existingProviders, existingProfiles] = await Promise.all([
+    env.DB.prepare(`SELECT COUNT(*) AS cnt FROM provider_configs`).first<{ cnt: number }>(),
+    env.DB.prepare(`SELECT COUNT(*) AS cnt FROM model_profiles`).first<{ cnt: number }>(),
+  ])
+  const now = Date.now()
+  const statements: D1PreparedStatement[] = []
 
-      if ((existingProviders?.cnt ?? 0) < PROVIDER_ORDER.length) {
-        statements.push(
-          env.DB.prepare(
-            `INSERT OR IGNORE INTO system_settings (key, value_json, updated_at) VALUES ('platform_config', ?, ?)`
-          ).bind(JSON.stringify(DEFAULT_PLATFORM_CONFIG), now),
-          ...PROVIDER_ORDER.map((id, idx) => {
-            const meta = PROVIDER_META[id]
-            return env.DB.prepare(
-              `INSERT OR IGNORE INTO provider_configs (
-                provider_id, enabled, credit_cost, base_url, model, custom_model,
-                api_key_encrypted, api_key_hint, params_json, sort_order, updated_at
-              ) VALUES (?, 1, ?, ?, ?, '', '', '', ?, ?, ?)`
-            ).bind(
-              id,
-              DEFAULT_CREDIT_COSTS[id],
-              meta.defaultBaseUrl,
-              meta.models[0].value,
-              JSON.stringify(DEFAULT_PROVIDER_PARAMS[id]),
-              idx,
-              now
-            )
-          })
+  if ((existingProviders?.cnt ?? 0) < PROVIDER_ORDER.length) {
+    statements.push(
+      env.DB.prepare(
+        `INSERT OR IGNORE INTO system_settings (key, value_json, updated_at) VALUES ('platform_config', ?, ?)`
+      ).bind(JSON.stringify(DEFAULT_PLATFORM_CONFIG), now),
+      ...PROVIDER_ORDER.map((id, idx) => {
+        const meta = PROVIDER_META[id]
+        return env.DB.prepare(
+          `INSERT OR IGNORE INTO provider_configs (
+            provider_id, enabled, credit_cost, base_url, model, custom_model,
+            api_key_encrypted, api_key_hint, params_json, sort_order, updated_at
+          ) VALUES (?, 1, ?, ?, ?, '', '', '', ?, ?, ?)`
+        ).bind(
+          id,
+          DEFAULT_CREDIT_COSTS[id],
+          meta.defaultBaseUrl,
+          meta.models[0].value,
+          JSON.stringify(DEFAULT_PROVIDER_PARAMS[id]),
+          idx,
+          now
         )
-      }
-
-      if ((existingProfiles?.cnt ?? 0) === 0 || (existingProviders?.cnt ?? 0) < PROVIDER_ORDER.length) {
-        for (const id of PROVIDER_ORDER) {
-          const baseCost = DEFAULT_CREDIT_COSTS[id]
-          const resolutions = normalizeProfileResolutions(id, null, baseCost)
-          const defaultRes = resolveProfileDefaultResolution(id, '2K', resolutions) ?? '2K'
-          const preset = getDefaultProfilePreset(id)
-          statements.push(
-            env.DB.prepare(
-              `INSERT OR IGNORE INTO model_profiles (
-                id, provider_id, display_name, badge, tagline, enabled, is_default,
-                credit_cost, default_resolution, resolutions_json, sort_order, created_at, updated_at
-              ) VALUES (?, ?, ?, ?, ?, 1, 1, ?, ?, ?, 0, ?, ?)`
-            ).bind(
-              `prof_${id}_default`,
-              id,
-              preset.displayName,
-              preset.badge,
-              preset.tagline,
-              baseCost,
-              defaultRes,
-              JSON.stringify(resolutions),
-              now,
-              now
-            )
-          )
-        }
-      }
-
-      if (statements.length > 0) {
-        await env.DB.batch(statements)
-      }
-
-      // 兜底回填历史上无 profile_id 的渠道记录
-      await env.DB.prepare(
-        `UPDATE provider_channels
-         SET profile_id = COALESCE(
-           (SELECT id FROM model_profiles mp WHERE mp.provider_id = provider_channels.provider_id ORDER BY mp.is_default DESC, mp.sort_order ASC LIMIT 1),
-           'prof_' || provider_id || '_default'
-         )
-         WHERE profile_id IS NULL OR profile_id = ''`
-      ).run()
-
-      // 可选通过环境变量自动初始化首个管理员账号
-      const bootUser = (env.BOOTSTRAP_ADMIN_USERNAME || '').trim()
-      const bootPass = env.BOOTSTRAP_ADMIN_PASSWORD || ''
-      if (bootUser && bootPass.length >= 6) {
-        const existingAdmin = await env.DB.prepare(
-          `SELECT COUNT(*) AS cnt FROM users WHERE role = 'admin'`
-        ).first<{ cnt: number }>()
-        if ((existingAdmin?.cnt ?? 0) === 0) {
-          const passwordHash = await hashPassword(bootPass)
-          const adminId = crypto.randomUUID()
-          try {
-            await createUserWithBonus(env.DB, {
-              id: adminId,
-              username: bootUser,
-              email: null,
-              displayName: bootUser,
-              passwordHash,
-              role: 'admin',
-              initialCredits: 1000,
-              bonusNote: '管理员初始化赠送',
-            })
-          } catch {
-            // 并发请求下已被创建时忽略
-          }
-        }
-      }
-      platformSeeded = true
-    })().finally(() => {
-      seedingPromise = null
-    })
+      })
+    )
   }
-  await seedingPromise
+
+  if ((existingProfiles?.cnt ?? 0) === 0 || (existingProviders?.cnt ?? 0) < PROVIDER_ORDER.length) {
+    for (const id of PROVIDER_ORDER) {
+      const baseCost = DEFAULT_CREDIT_COSTS[id]
+      const resolutions = normalizeProfileResolutions(id, null, baseCost)
+      const defaultRes = resolveProfileDefaultResolution(id, '2K', resolutions) ?? '2K'
+      const preset = getDefaultProfilePreset(id)
+      statements.push(
+        env.DB.prepare(
+          `INSERT OR IGNORE INTO model_profiles (
+            id, provider_id, display_name, badge, tagline, enabled, is_default,
+            credit_cost, default_resolution, resolutions_json, sort_order, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, 1, 1, ?, ?, ?, 0, ?, ?)`
+        ).bind(
+          `prof_${id}_default`,
+          id,
+          preset.displayName,
+          preset.badge,
+          preset.tagline,
+          baseCost,
+          defaultRes,
+          JSON.stringify(resolutions),
+          now,
+          now
+        )
+      )
+    }
+  }
+
+  if (statements.length > 0) {
+    await env.DB.batch(statements)
+  }
+
+  // 兜底回填历史上无 profile_id 的渠道记录
+  await env.DB.prepare(
+    `UPDATE provider_channels
+     SET profile_id = COALESCE(
+       (SELECT id FROM model_profiles mp WHERE mp.provider_id = provider_channels.provider_id ORDER BY mp.is_default DESC, mp.sort_order ASC LIMIT 1),
+       'prof_' || provider_id || '_default'
+     )
+     WHERE profile_id IS NULL OR profile_id = ''`
+  ).run()
+
+  // 可选通过环境变量自动初始化首个管理员账号
+  const bootUser = (env.BOOTSTRAP_ADMIN_USERNAME || '').trim()
+  const bootPass = env.BOOTSTRAP_ADMIN_PASSWORD || ''
+  if (bootUser && bootPass.length >= 6) {
+    const existingAdmin = await env.DB.prepare(
+      `SELECT COUNT(*) AS cnt FROM users WHERE role = 'admin'`
+    ).first<{ cnt: number }>()
+    if ((existingAdmin?.cnt ?? 0) === 0) {
+      const passwordHash = await hashPassword(bootPass)
+      const adminId = crypto.randomUUID()
+      try {
+        await createUserWithBonus(env.DB, {
+          id: adminId,
+          username: bootUser,
+          email: null,
+          displayName: bootUser,
+          passwordHash,
+          role: 'admin',
+          initialCredits: 1000,
+          bonusNote: '管理员初始化赠送',
+        })
+      } catch {
+        // 并发请求下已被创建时忽略
+      }
+    }
+  }
+  platformSeeded = true
 }
 
 function sanitizeStylePreviewUrl(raw: unknown): string | undefined {
@@ -929,11 +969,16 @@ export async function getSuppliers(env: Env): Promise<SupplierDTO[]> {
   const keysBySupplier = new Map<string, SupplierKeyDTO[]>()
   for (const k of keysRes.results || []) {
     const list = keysBySupplier.get(k.supplier_id) || []
+    const credentialType: SupplierCredentialType =
+      k.credential_type === 'oauth_token' ? 'oauth_token' : 'api_key'
     list.push({
       id: k.id,
       supplierId: k.supplier_id,
       label: k.label || '',
+      credentialType,
       apiKeyHint: k.api_key_hint || '',
+      oauthExpiresAt: k.oauth_expires_at || 0,
+      oauthAccountId: k.oauth_account_id || '',
       enabled: k.enabled === 1,
       cooldownUntil: k.cooldown_until || 0,
       lastError: k.last_error || '',
@@ -975,6 +1020,7 @@ export async function getSuppliers(env: Env): Promise<SupplierDTO[]> {
     return {
       id: row.id,
       name: row.name,
+      authMode: normalizeSupplierAuthMode(row.auth_mode),
       baseUrl: row.base_url,
       hasApiKey: effectiveActiveCount > 0,
       apiKeyHint: hint,
@@ -1067,6 +1113,7 @@ export async function getAdminProviderSlots(env: Env): Promise<AdminProviderSlot
     env.DB.prepare(
       `SELECT c.*,
               s.name AS supplier_name,
+              s.auth_mode AS supplier_auth_mode,
               s.base_url AS supplier_base_url,
               s.api_key_encrypted AS supplier_api_key_encrypted,
               s.enabled AS supplier_enabled
@@ -1115,6 +1162,7 @@ export async function getAdminProviderSlots(env: Env): Promise<AdminProviderSlot
       profileId: resolvedProfileId,
       supplierId: ch.supplier_id,
       supplierName: ch.supplier_name || '未知供应商',
+      supplierAuthMode: normalizeSupplierAuthMode(ch.supplier_auth_mode),
       supplierBaseUrl: ch.supplier_base_url || '',
       supplierEnabled: ch.supplier_enabled === 1,
       supplierHasKey: availableKeyCount > 0,
@@ -1207,6 +1255,7 @@ export async function selectOrderedRunnableChannels(
       ? env.DB.prepare(
           `SELECT c.*,
                   s.name AS supplier_name,
+                  s.auth_mode AS supplier_auth_mode,
                   s.base_url AS supplier_base_url,
                   s.api_key_encrypted AS supplier_api_key_encrypted,
                   s.enabled AS supplier_enabled
@@ -1220,6 +1269,7 @@ export async function selectOrderedRunnableChannels(
       : env.DB.prepare(
           `SELECT c.*,
                   s.name AS supplier_name,
+                  s.auth_mode AS supplier_auth_mode,
                   s.base_url AS supplier_base_url,
                   s.api_key_encrypted AS supplier_api_key_encrypted,
                   s.enabled AS supplier_enabled
@@ -1234,15 +1284,18 @@ export async function selectOrderedRunnableChannels(
       .bind(providerId)
       .first<{ cnt: number }>(),
     env.DB.prepare(
-      `SELECT id, supplier_id, label, api_key_encrypted, api_key_hint, enabled, cooldown_until, last_used_at
+      `SELECT id, supplier_id, label, credential_type, api_key_encrypted, api_key_hint, oauth_account_id,
+              enabled, cooldown_until, last_used_at
        FROM supplier_keys
        ORDER BY created_at ASC`
     ).all<{
       id: string
       supplier_id: string
       label: string
+      credential_type?: string
       api_key_encrypted: string
       api_key_hint: string
+      oauth_account_id?: string
       enabled: number
       cooldown_until: number
       last_used_at: number
@@ -1254,8 +1307,10 @@ export async function selectOrderedRunnableChannels(
     Array<{
       id: string
       label: string
+      credentialType: string
       apiKeyEncrypted: string
       apiKeyHint: string
+      oauthAccountId: string
       enabled: boolean
       cooldownUntil: number
       lastUsedAt: number
@@ -1266,8 +1321,10 @@ export async function selectOrderedRunnableChannels(
     list.push({
       id: k.id,
       label: k.label || '',
+      credentialType: k.credential_type || 'api_key',
       apiKeyEncrypted: k.api_key_encrypted,
       apiKeyHint: k.api_key_hint || '',
+      oauthAccountId: k.oauth_account_id || '',
       enabled: k.enabled === 1,
       cooldownUntil: k.cooldown_until || 0,
       lastUsedAt: k.last_used_at || 0,
@@ -1313,19 +1370,26 @@ export async function selectOrderedRunnableChannels(
         .filter((k) => k.cooldownUntil > now)
         .sort((a, b) => a.cooldownUntil - b.cooldownUntil)
       for (const keyRow of [...healthy, ...cooling]) {
-        const apiKey = await resolveSupplierSecret(keyRow.apiKeyEncrypted, env)
-        if (!apiKey) continue
+        const cred = await resolveSupplierKeyRuntimeCredential(env, {
+          id: keyRow.id,
+          credentialType: keyRow.credentialType,
+          apiKeyEncrypted: keyRow.apiKeyEncrypted,
+          oauthAccountId: keyRow.oauthAccountId,
+        })
+        if (!cred) continue
         runnable.push({
           channelId: ch.id,
           channelName: ch.name,
           supplierId: ch.supplier_id,
           supplierName: ch.supplier_name || '',
+          supplierAuthMode: normalizeSupplierAuthMode(ch.supplier_auth_mode),
           supplierKeyId: keyRow.id,
           supplierKeyLabel: keyRow.label || undefined,
           supplierKeyHint: keyRow.apiKeyHint || undefined,
+          oauthAccountId: cred.oauthAccountId,
           cooldownUntil: keyRow.cooldownUntil,
           baseUrl,
-          apiKey,
+          apiKey: cred.apiKey,
           providerId,
           model: effectiveModel,
           paramsJson: ch.params_json,
@@ -1333,15 +1397,19 @@ export async function selectOrderedRunnableChannels(
         })
       }
     } else if (ch.supplier_api_key_encrypted) {
-      const apiKey = await resolveSupplierSecret(ch.supplier_api_key_encrypted, env)
-      if (!apiKey) continue
+      const cred = await resolveSupplierKeyRuntimeCredential(env, {
+        apiKeyEncrypted: ch.supplier_api_key_encrypted,
+      })
+      if (!cred) continue
       runnable.push({
         channelId: ch.id,
         channelName: ch.name,
         supplierId: ch.supplier_id,
         supplierName: ch.supplier_name || '',
+        supplierAuthMode: normalizeSupplierAuthMode(ch.supplier_auth_mode),
+        oauthAccountId: cred.oauthAccountId,
         baseUrl,
-        apiKey,
+        apiKey: cred.apiKey,
         providerId,
         model: effectiveModel,
         paramsJson: ch.params_json,
@@ -1691,7 +1759,7 @@ export async function deductCreditsAndCreateJob(
     creditsCost: number
     prompt: string
     recipeSummary: string
-    aspectRatio: StudioAspectRatio
+    aspectRatio: GenerationAspectRatio
     stylePreset: string
     snapshotJson: string
     traceJson?: string | null
@@ -2297,6 +2365,34 @@ export function computeQueuePositions(
   return result
 }
 
+function inspectProcessingJobTrace(traceJson: string | null | undefined): {
+  endpointMode: string | null
+  heartbeatAt: number | null
+} {
+  if (!traceJson) return { endpointMode: null, heartbeatAt: null }
+  try {
+    const parsed = JSON.parse(traceJson) as GenerationAuditTrace
+    let endpointMode: string | null = null
+    if (Array.isArray(parsed.attempts)) {
+      for (let i = parsed.attempts.length - 1; i >= 0; i--) {
+        const mode = parsed.attempts[i]?.endpointMode
+        if (typeof mode === 'string' && mode.trim()) {
+          endpointMode = mode.trim()
+          break
+        }
+      }
+    }
+    const rawHeartbeat = parsed.liveState?.heartbeatAt
+    const heartbeatAt =
+      typeof rawHeartbeat === 'number' && Number.isFinite(rawHeartbeat) && rawHeartbeat > 0
+        ? rawHeartbeat
+        : null
+    return { endpointMode, heartbeatAt }
+  } catch {
+    return { endpointMode: null, heartbeatAt: null }
+  }
+}
+
 export async function reapStaleProcessingJobs(
   db: D1Database,
   userId?: string
@@ -2304,37 +2400,62 @@ export async function reapStaleProcessingJobs(
   const platform = await getPlatformConfig(db)
   const queueCfg = mergeGenerationQueueConfig(platform.queueConfig)
   const now = Date.now()
-  const processingCutoff = now - queueCfg.processingTimeoutSec * 1000
   const queueCutoff = now - queueCfg.queueWaitTimeoutSec * 1000
 
   let reapedProcessing = 0
   let reapedQueued = 0
 
-  for (let round = 0; round < 5; round++) {
-    const query = userId
-      ? db
-          .prepare(
-            `SELECT id FROM generation_jobs
-             WHERE user_id = ? AND status = 'processing' AND COALESCE(started_at, created_at) < ?
-             LIMIT 100`
-          )
-          .bind(userId, processingCutoff)
-      : db
-          .prepare(
-            `SELECT id FROM generation_jobs
-             WHERE status = 'processing' AND COALESCE(started_at, created_at) < ?
-             LIMIT 100`
-          )
-          .bind(processingCutoff)
+  const processingQuery = userId
+    ? db
+        .prepare(
+          `SELECT id, provider, started_at, created_at, trace_json
+           FROM generation_jobs
+           WHERE user_id = ? AND status = 'processing'
+           ORDER BY COALESCE(started_at, created_at) ASC
+           LIMIT 200`
+        )
+        .bind(userId)
+    : db
+        .prepare(
+          `SELECT id, provider, started_at, created_at, trace_json
+           FROM generation_jobs
+           WHERE status = 'processing'
+           ORDER BY COALESCE(started_at, created_at) ASC
+           LIMIT 200`
+        )
 
-    const stale = await query.all<{ id: string }>()
-    const rows = stale.results || []
-    if (rows.length === 0) break
-    for (const row of rows) {
-      await refundFailedJob(db, row.id, '生成任务超时未返回结果，系统已自动退还积分')
+  const processingRes = await processingQuery.all<{
+    id: string
+    provider: ImageProviderId
+    started_at: number | null
+    created_at: number
+    trace_json: string | null
+  }>()
+
+  for (const row of processingRes.results || []) {
+    const startedAt = row.started_at ?? row.created_at
+    const elapsedMs = Math.max(0, now - startedAt)
+    const { endpointMode, heartbeatAt } = inspectProcessingJobTrace(row.trace_json)
+    const effectiveTimeoutSec = resolveEffectiveProcessingTimeoutSec(
+      queueCfg,
+      row.provider,
+      endpointMode
+    )
+
+    const isHeartbeatStale =
+      heartbeatAt !== null &&
+      elapsedMs >= 25_000 &&
+      now - heartbeatAt > JOB_HEARTBEAT_STALE_MS
+    const isWallTimeout = elapsedMs > effectiveTimeoutSec * 1000
+
+    if (isHeartbeatStale || isWallTimeout) {
+      const reason =
+        isHeartbeatStale && !isWallTimeout
+          ? '生成任务因服务中断未能完成，系统已自动退还积分'
+          : '生成任务超时未返回结果，系统已自动退还积分'
+      await refundFailedJob(db, row.id, reason)
       reapedProcessing += 1
     }
-    if (rows.length < 100) break
   }
 
   for (let round = 0; round < 5; round++) {
@@ -2375,6 +2496,7 @@ export async function cleanupExpiredSessionsAndOauth(db: D1Database): Promise<vo
   await db.batch([
     db.prepare(`DELETE FROM sessions WHERE expires_at <= ?`).bind(now),
     db.prepare(`DELETE FROM oauth_states WHERE expires_at <= ?`).bind(now),
+    db.prepare(`DELETE FROM supplier_oauth_sessions WHERE expires_at <= ?`).bind(now),
     db
       .prepare(
         `DELETE FROM system_settings WHERE (key LIKE 'rl_%' OR key LIKE 'admin_login_rl_%') AND updated_at < ?`
@@ -3139,6 +3261,8 @@ export async function deleteReferenceDescription(db: D1Database, id: string): Pr
 export interface VisionFallbackTarget {
   supplierId: string
   supplierName: string
+  supplierAuthMode?: SupplierAuthMode
+  oauthAccountId?: string
   baseUrl: string
   apiKey: string
   model: string
@@ -3146,19 +3270,26 @@ export interface VisionFallbackTarget {
   authMode: 'auto' | 'bearer' | 'goog_key' | 'both'
 }
 
-async function resolveSupplierPoolApiKeys(
+async function resolveSupplierPoolRuntimeCredentials(
   env: Env,
   supplierId: string,
   legacyEncrypted?: string
-): Promise<string[]> {
+): Promise<Array<{ apiKey: string; oauthAccountId?: string }>> {
   const keysRes = await env.DB.prepare(
-    `SELECT api_key_encrypted, cooldown_until, last_used_at
+    `SELECT id, credential_type, api_key_encrypted, oauth_account_id, cooldown_until, last_used_at
      FROM supplier_keys
      WHERE supplier_id = ? AND enabled = 1
      ORDER BY created_at ASC`
   )
     .bind(supplierId)
-    .all<{ api_key_encrypted: string; cooldown_until: number; last_used_at: number }>()
+    .all<{
+      id: string
+      credential_type?: string
+      api_key_encrypted: string
+      oauth_account_id?: string
+      cooldown_until: number
+      last_used_at: number
+    }>()
 
   const rows = keysRes.results || []
   const now = Date.now()
@@ -3171,17 +3302,24 @@ async function resolveSupplierPoolApiKeys(
     const cooling = rows
       .filter((r) => (r.cooldown_until || 0) > now)
       .sort((a, b) => (a.cooldown_until || 0) - (b.cooldown_until || 0))
-    const resolved: string[] = []
+    const resolved: Array<{ apiKey: string; oauthAccountId?: string }> = []
     for (const item of [...healthy, ...cooling]) {
-      const plain = await resolveSupplierSecret(item.api_key_encrypted, env)
-      if (plain) resolved.push(plain)
+      const cred = await resolveSupplierKeyRuntimeCredential(env, {
+        id: item.id,
+        credentialType: item.credential_type,
+        apiKeyEncrypted: item.api_key_encrypted,
+        oauthAccountId: item.oauth_account_id,
+      })
+      if (cred) resolved.push(cred)
     }
     return resolved
   }
 
   if (legacyEncrypted) {
-    const plain = await resolveSupplierSecret(legacyEncrypted, env)
-    if (plain) return [plain]
+    const cred = await resolveSupplierKeyRuntimeCredential(env, {
+      apiKeyEncrypted: legacyEncrypted,
+    })
+    if (cred) return [cred]
   }
   return []
 }
@@ -3200,18 +3338,28 @@ export async function resolveVisionFallbackTargets(
 
   if (cfg.supplierId.trim()) {
     const sup = await env.DB.prepare(
-      `SELECT id, name, base_url, api_key_encrypted, enabled FROM suppliers WHERE id = ? LIMIT 1`
+      `SELECT id, name, auth_mode, base_url, api_key_encrypted, enabled FROM suppliers WHERE id = ? LIMIT 1`
     )
       .bind(cfg.supplierId.trim())
-      .first<{ id: string; name: string; base_url: string; api_key_encrypted: string; enabled: number }>()
+      .first<{
+        id: string
+        name: string
+        auth_mode?: string
+        base_url: string
+        api_key_encrypted: string
+        enabled: number
+      }>()
     if (!sup || sup.enabled !== 1) return []
-    const apiKeys = await resolveSupplierPoolApiKeys(env, sup.id, sup.api_key_encrypted)
-    if (apiKeys.length === 0) return []
-    return apiKeys.slice(0, 3).map((apiKey) => ({
+    const creds = await resolveSupplierPoolRuntimeCredentials(env, sup.id, sup.api_key_encrypted)
+    if (creds.length === 0) return []
+    const supAuthMode = normalizeSupplierAuthMode(sup.auth_mode)
+    return creds.slice(0, 3).map((cred) => ({
       supplierId: sup.id,
       supplierName: sup.name,
+      supplierAuthMode: supAuthMode,
+      oauthAccountId: cred.oauthAccountId,
       baseUrl: sup.base_url.trim(),
-      apiKey,
+      apiKey: cred.apiKey,
       model,
       endpointMode,
       authMode,
@@ -3220,8 +3368,8 @@ export async function resolveVisionFallbackTargets(
 
   const channelRows = await env.DB.prepare(
     `SELECT c.provider_id, c.model, c.custom_model, c.params_json, c.priority,
-            s.id AS supplier_id, s.name AS supplier_name, s.base_url AS supplier_base_url,
-            s.api_key_encrypted AS supplier_api_key_encrypted
+            s.id AS supplier_id, s.name AS supplier_name, s.auth_mode AS supplier_auth_mode,
+            s.base_url AS supplier_base_url, s.api_key_encrypted AS supplier_api_key_encrypted
      FROM provider_channels c
      JOIN suppliers s ON s.id = c.supplier_id
      WHERE c.enabled = 1 AND s.enabled = 1
@@ -3234,6 +3382,7 @@ export async function resolveVisionFallbackTargets(
     priority: number
     supplier_id: string
     supplier_name: string
+    supplier_auth_mode?: string
     supplier_base_url: string
     supplier_api_key_encrypted: string
   }>()
@@ -3263,12 +3412,12 @@ export async function resolveVisionFallbackTargets(
 
     if (!isExactModel && !isCompatibleProtocol) continue
 
-    const apiKeys = await resolveSupplierPoolApiKeys(
+    const creds = await resolveSupplierPoolRuntimeCredentials(
       env,
       row.supplier_id,
       row.supplier_api_key_encrypted
     )
-    if (apiKeys.length === 0) continue
+    if (creds.length === 0) continue
     seenSuppliers.add(row.supplier_id)
 
     const chAuthMode =
@@ -3280,8 +3429,10 @@ export async function resolveVisionFallbackTargets(
     const target: VisionFallbackTarget = {
       supplierId: row.supplier_id,
       supplierName: row.supplier_name,
+      supplierAuthMode: normalizeSupplierAuthMode(row.supplier_auth_mode),
+      oauthAccountId: creds[0].oauthAccountId,
       baseUrl: (row.supplier_base_url || PROVIDER_META[row.provider_id].defaultBaseUrl).trim(),
-      apiKey: apiKeys[0],
+      apiKey: creds[0].apiKey,
       model,
       endpointMode,
       authMode: cfg.authMode && cfg.authMode !== 'auto' ? cfg.authMode : chAuthMode,
@@ -3298,11 +3449,11 @@ export async function resolveVisionFallbackTargets(
 
   // 若尚无对应协议的生图渠道，直接检索已启用的同厂商域名供应商作为兜底
   const supRows = await env.DB.prepare(
-    `SELECT id, name, base_url, api_key_encrypted
+    `SELECT id, name, auth_mode, base_url, api_key_encrypted
      FROM suppliers
      WHERE enabled = 1
      ORDER BY created_at ASC`
-  ).all<{ id: string; name: string; base_url: string; api_key_encrypted: string }>()
+  ).all<{ id: string; name: string; auth_mode?: string; base_url: string; api_key_encrypted: string }>()
 
   const directMatches: VisionFallbackTarget[] = []
   for (const sup of supRows.results || []) {
@@ -3312,13 +3463,15 @@ export async function resolveVisionFallbackTargets(
         ? /googleapis\.com|aiplatform|gemini/.test(lowerUrl)
         : /api\.openai\.com|\/v1(?:\/|$)/.test(lowerUrl) && !/wavespeed\.ai/.test(lowerUrl)
     if (!matchesProtocol) continue
-    const apiKeys = await resolveSupplierPoolApiKeys(env, sup.id, sup.api_key_encrypted)
-    if (apiKeys.length === 0) continue
+    const creds = await resolveSupplierPoolRuntimeCredentials(env, sup.id, sup.api_key_encrypted)
+    if (creds.length === 0) continue
     directMatches.push({
       supplierId: sup.id,
       supplierName: sup.name,
+      supplierAuthMode: normalizeSupplierAuthMode(sup.auth_mode),
+      oauthAccountId: creds[0].oauthAccountId,
       baseUrl: sup.base_url.trim(),
-      apiKey: apiKeys[0],
+      apiKey: creds[0].apiKey,
       model,
       endpointMode,
       authMode,

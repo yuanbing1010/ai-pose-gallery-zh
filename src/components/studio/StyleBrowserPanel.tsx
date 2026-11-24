@@ -177,10 +177,10 @@ export function StyleBrowserPanel({
         onFocus={() => onHoverChange?.(item.key)}
         onBlur={() => onHoverChange?.(null)}
         className={cn(
-          'group relative flex flex-col overflow-hidden rounded-xl border text-left transition-all duration-150 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring active:scale-[0.98]',
+          'group relative flex flex-col overflow-hidden rounded-xl border text-left transition-[transform,border-color,background-color] duration-150 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring active:scale-[0.98]',
           selected
             ? 'border-[#D9381E] bg-card ring-2 ring-[#D9381E]/85 shadow-sm'
-            : 'border-border/80 bg-[#FAF8F4] hover:border-foreground/45 hover:bg-card hover:shadow-xs dark:bg-muted/30'
+            : 'border-border/80 bg-secondary/55 hover:border-foreground/45 hover:bg-card hover:shadow-xs dark:bg-muted/30'
         )}
       >
         <div className="relative aspect-square w-full overflow-hidden bg-muted/40">
@@ -209,11 +209,11 @@ export function StyleBrowserPanel({
 
           {selected && (
             <motion.span
-              initial={{ scale: 0.5, opacity: 0 }}
+              initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
-              transition={{ type: 'spring', stiffness: 520, damping: 26 }}
+              transition={{ duration: 0.16, ease: [0.23, 1, 0.32, 1] }}
               aria-hidden="true"
-              className="absolute top-1.5 right-1.5 flex size-4.5 items-center justify-center rounded-full bg-[#D9381E] text-white shadow-sm"
+              className="absolute top-1.5 right-1.5 flex size-4.5 items-center justify-center rounded-full bg-[var(--skin-accent)] text-white shadow-sm"
             >
               <CheckIcon className="size-3 stroke-[3]" />
             </motion.span>
@@ -240,7 +240,7 @@ export function StyleBrowserPanel({
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="搜索画风或分类…"
               aria-label="搜索画风"
-              className="h-8 w-full rounded-xl border border-border/80 bg-[#FAF8F4] pr-7 pl-8 text-xs text-foreground placeholder:text-muted-foreground focus:border-foreground/40 focus:outline-none dark:bg-muted/35"
+              className="h-8 w-full rounded-xl border border-border/80 bg-secondary/55 pr-7 pl-8 text-xs text-foreground placeholder:text-muted-foreground focus:border-foreground/40 focus:outline-none dark:bg-muted/35"
             />
             {searchQuery && (
               <button
@@ -258,13 +258,13 @@ export function StyleBrowserPanel({
             type="button"
             onClick={pickRandomFiltered}
             disabled={visualStyles.length === 0}
-            className="inline-flex h-8 shrink-0 items-center gap-1 rounded-xl border border-border/80 bg-[#FAF8F4] px-2.5 text-xs font-semibold text-foreground transition-colors hover:border-[#E5A918]/70 active:scale-95 disabled:opacity-40 dark:bg-muted/35"
+            className="inline-flex h-8 shrink-0 items-center gap-1 rounded-xl border border-border/80 bg-secondary/55 px-2.5 text-xs font-semibold text-foreground transition-[transform,border-color,color] duration-150 ease-[var(--ease-out)] hover:border-[#E5A918]/70 active:scale-95 disabled:opacity-40 dark:bg-muted/35"
             title={hasActiveFilter ? '在当前筛选结果中随机挑选' : '随机挑选一种画风'}
           >
             <motion.span
               key={diceSpin}
               animate={{ rotate: diceSpin ? 360 : 0 }}
-              transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
+              transition={{ duration: 0.28, ease: [0.23, 1, 0.32, 1] }}
               className="inline-flex items-center"
             >
               <DicesIcon className="size-3.5 text-[#E5A918]" />
@@ -277,10 +277,10 @@ export function StyleBrowserPanel({
             onClick={() => selectStyle('none')}
             aria-pressed={value === 'none'}
             className={cn(
-              'inline-flex h-8 shrink-0 items-center gap-1.5 rounded-xl border px-2.5 text-xs font-semibold transition-colors active:scale-95',
+              'inline-flex h-8 shrink-0 items-center gap-1.5 rounded-xl border px-2.5 text-xs font-semibold transition-[transform,background-color,border-color,color] duration-150 ease-[var(--ease-out)] active:scale-95',
               value === 'none'
-                ? 'border-[#D9381E] bg-[#D9381E]/10 text-[#C23018] dark:text-[#FF7A59]'
-                : 'border-border/80 bg-[#FAF8F4] text-muted-foreground hover:border-foreground/40 hover:text-foreground dark:bg-muted/35'
+                ? 'border-[#D9381E] bg-[var(--skin-accent)]/12 text-[#C23018] dark:text-[#FF7A59]'
+                : 'border-border/80 bg-secondary/55 text-muted-foreground hover:border-foreground/40 hover:text-foreground dark:bg-muted/35'
             )}
             title={NONE_STYLE_PRESET.label}
           >
@@ -312,7 +312,7 @@ export function StyleBrowserPanel({
                   'inline-flex h-6.5 shrink-0 items-center gap-1 rounded-full border px-2.5 text-xs font-semibold transition-colors',
                   effectiveCategoryId === 'all'
                     ? 'border-foreground bg-foreground text-background'
-                    : 'border-border/80 bg-[#FAF8F4] text-muted-foreground hover:border-foreground/40 hover:text-foreground dark:bg-muted/35'
+                    : 'border-border/80 bg-secondary/55 text-muted-foreground hover:border-foreground/40 hover:text-foreground dark:bg-muted/35'
                 )}
               >
                 <span>全部</span>
@@ -335,7 +335,7 @@ export function StyleBrowserPanel({
                       'inline-flex h-6.5 shrink-0 items-center gap-1 rounded-full border px-2.5 text-xs font-semibold transition-colors',
                       active
                         ? 'border-foreground bg-foreground text-background'
-                        : 'border-border/80 bg-[#FAF8F4] text-muted-foreground hover:border-foreground/40 hover:text-foreground dark:bg-muted/35'
+                        : 'border-border/80 bg-secondary/55 text-muted-foreground hover:border-foreground/40 hover:text-foreground dark:bg-muted/35'
                     )}
                   >
                     <span>{cat.label}</span>
@@ -365,7 +365,7 @@ export function StyleBrowserPanel({
                   className={cn(
                     'inline-flex h-6 shrink-0 items-center gap-1 rounded-lg border px-2 text-xs font-medium transition-colors',
                     effectiveSubcategoryId === 'all'
-                      ? 'border-[#D9381E] bg-[#D9381E]/10 font-semibold text-[#C23018] dark:text-[#FF7A59]'
+                      ? 'border-[#D9381E] bg-[var(--skin-accent)]/12 font-semibold text-[#C23018] dark:text-[#FF7A59]'
                       : 'border-border/70 bg-card text-muted-foreground hover:border-foreground/40 hover:text-foreground'
                   )}
                 >
@@ -392,7 +392,7 @@ export function StyleBrowserPanel({
                       className={cn(
                         'inline-flex h-6 shrink-0 items-center gap-1 rounded-lg border px-2 text-xs font-medium transition-colors',
                         active
-                          ? 'border-[#D9381E] bg-[#D9381E]/10 font-semibold text-[#C23018] dark:text-[#FF7A59]'
+                          ? 'border-[#D9381E] bg-[var(--skin-accent)]/12 font-semibold text-[#C23018] dark:text-[#FF7A59]'
                           : sub.count === 0
                             ? 'border-border/50 bg-muted/25 text-muted-foreground/65 hover:border-border hover:text-muted-foreground'
                             : 'border-border/70 bg-card text-muted-foreground hover:border-foreground/40 hover:text-foreground'
@@ -414,7 +414,7 @@ export function StyleBrowserPanel({
             <button
               type="button"
               onClick={resetFilters}
-              className="inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 font-medium text-[#D9381E] hover:bg-[#D9381E]/10"
+              className="inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 font-medium text-[var(--skin-accent)] hover:bg-[var(--skin-accent)]/12"
             >
               <FilterXIcon className="size-3" />
               <span>重置筛选</span>
@@ -446,7 +446,7 @@ export function StyleBrowserPanel({
         className="min-h-0 flex-1 overflow-y-auto pt-2.5 pr-0.5"
       >
         {visualStyles.length === 0 ? (
-          <div className="flex h-full min-h-[200px] flex-col items-center justify-center gap-2.5 rounded-xl border border-dashed border-border/80 bg-[#FAF8F4]/60 p-6 text-center dark:bg-muted/20">
+          <div className="flex h-full min-h-[200px] flex-col items-center justify-center gap-2.5 rounded-xl border border-dashed border-border/80 bg-secondary/55/60 p-6 text-center dark:bg-muted/20">
             <FolderOpenIcon className="size-7 text-muted-foreground/60" />
             <div className="space-y-1">
               <div className="text-xs font-bold text-foreground">暂无预设画风</div>
@@ -456,7 +456,7 @@ export function StyleBrowserPanel({
             </div>
           </div>
         ) : filteredStyles.length === 0 ? (
-          <div className="flex h-full min-h-[200px] flex-col items-center justify-center gap-2.5 rounded-xl border border-dashed border-border/80 bg-[#FAF8F4]/60 p-6 text-center dark:bg-muted/20">
+          <div className="flex h-full min-h-[200px] flex-col items-center justify-center gap-2.5 rounded-xl border border-dashed border-border/80 bg-secondary/55/60 p-6 text-center dark:bg-muted/20">
             <FolderOpenIcon className="size-7 text-muted-foreground/60" />
             <div className="space-y-1">
               <div className="text-xs font-bold text-foreground">
@@ -508,7 +508,7 @@ export function StyleBrowserPanel({
                           setCategoryFilter(section.category.id)
                           setSubcategoryFilter('all')
                         }}
-                        className="rounded-full border border-border/80 bg-[#FAF8F4] px-2 py-0.5 text-xs font-medium text-muted-foreground transition-colors hover:border-foreground/40 hover:text-foreground dark:bg-muted/35"
+                        className="rounded-full border border-border/80 bg-secondary/55 px-2 py-0.5 text-xs font-medium text-muted-foreground transition-colors hover:border-foreground/40 hover:text-foreground dark:bg-muted/35"
                       >
                         仅看此类 →
                       </button>

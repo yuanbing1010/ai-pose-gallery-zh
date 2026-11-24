@@ -1,6 +1,6 @@
 # AI 角色参考与合成工作台 · 中文版（3合1）
 
-> **姿势库（1,439 张素体白模 + 1,439 张深度图 Depth + 250 项霧島澪人体动态） + 服装库（3,341 套：ギア写实 1,407 + Shisei 中国历代 57 套/227 视角 + ギア动漫 1,320 + CharaDB 二次元 440 + 霧島澪 117） + 人像库（1,499 位） = 6,529 条全中文参考数据 / 12,022 张本地高清图，另有 2,127 张来源站点参考图**，集成 **5 大 AI 图像协议直连工作台** 与 **原生 ComfyUI 自定义节点插件（`custom_nodes`）**。
+> **姿势库（1,439 张素体白模 + 1,439 张深度图 Depth + 250 项霧島澪人体动态） + 服装库（3,364 套：ギア写实 1,407 + Shisei 中国历代 57 套/227 视角 + ギア动漫 1,320 + CharaDB 二次元 440 + 霧島澪 117 + ChiHAL 23） + 人像库（1,499 位） = 6,552 条全中文参考数据 / 12,022 张本地高清图，另有 2,194 张来源站点参考图**，集成 **5 大 AI 图像协议直连工作台** 与 **原生 ComfyUI 自定义节点插件（`custom_nodes`）**。
 
 ![画廊总览预览](docs/preview.jpg)
 
@@ -19,7 +19,7 @@
 - 服装库：<https://ai-costume-gallery.pages.dev/>
 - 人像库：<https://ai-portrait-gallery.pages.dev/>
 
-**原有图库作者：** ギア（@giaaibusi）；二次元服装作者：たき AI（[@taki_auto](https://x.com/taki_auto) · [CharaDB](https://charadb-2fi.pages.dev/)）；外部同步设计档案：霧島澪（[@Mio_2am](https://x.com/Mio_2am) · [霧島澪 · 设计档案](https://sleepyzone.online/mio-design-archive/)）。
+**原有图库作者：** ギア（@giaaibusi）；二次元服装作者：たき AI（[@taki_auto](https://x.com/taki_auto) · [CharaDB](https://charadb-2fi.pages.dev/)）；外部同步设计档案：霧島澪（[@Mio_2am](https://x.com/Mio_2am) · [霧島澪 · 设计档案](https://sleepyzone.online/mio-design-archive/)）、ChiHAL（[@chihal_ai0509](https://x.com/chihal_ai0509) · [服装提示词库](https://sleepyzone.online/outfit-db-cn/)）。
 **中文版维护：** Anhao · [X @anhao_ai](https://x.com/anhao_ai)
 **GitHub：** <https://github.com/anhao/ai-pose-gallery-zh>
 

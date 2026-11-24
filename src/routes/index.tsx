@@ -1,109 +1,11 @@
-import { useCallback, useState } from 'react'
-import { useSuspenseQuery } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
-import { costumesQuery, portraitsQuery, posesQuery } from '@/api/gallery'
-import { PackStage, type DrawnPack } from '@/components/home/PackStage'
-import { Skeleton } from '@/components/ui/skeleton'
-import { hasPoseDepthMap } from '@/lib/recipeImages'
-import { getStudioMuted, setStudioMuted } from '@/lib/studioAudio'
-import { useStudio } from '@/store/studioStore'
+import { CreativeHubExperience } from '@/components/home/CreativeHubExperience'
 
 export const Route = createFileRoute('/')({
-  staticData: { title: '盲盒抽卡' },
-  loader: ({ context }) =>
-    Promise.all([
-      context.queryClient.ensureQueryData(posesQuery),
-      context.queryClient.ensureQueryData(costumesQuery),
-      context.queryClient.ensureQueryData(portraitsQuery),
-    ]),
-  pendingComponent: () => (
-    <div className="flex min-h-[calc(100dvh-11rem)] flex-1 flex-col items-center justify-center gap-6 px-4">
-      <Skeleton className="h-6 w-56 rounded-full" />
-      <Skeleton className="h-[340px] w-[235px] rounded-2xl border border-border sm:h-[390px] sm:w-[270px]" />
-      <Skeleton className="h-14 w-full max-w-3xl rounded-[22px]" />
-    </div>
-  ),
-  component: DashboardPage,
+  staticData: { title: '全能 AI 视觉工坊' },
+  component: HomePage,
 })
 
-function DashboardPage() {
-  const { data: posesData } = useSuspenseQuery(posesQuery)
-  const { data: costumes } = useSuspenseQuery(costumesQuery)
-  const { data: portraits } = useSuspenseQuery(portraitsQuery)
-  const {
-    setPortrait,
-    setCostume,
-    setPose,
-    poseDepthMode,
-  } = useStudio()
-
-  const [packSeed, setPackSeed] = useState(0)
-  const [muted, setMuted] = useState(() => getStudioMuted())
-
-  const rollDrawnPack = useCallback((): DrawnPack | null => {
-    if (!posesData.items.length || !costumes.length || !portraits.length) return null
-    const pickedPose = posesData.items[Math.floor(Math.random() * posesData.items.length)]
-    return {
-      portrait: portraits[Math.floor(Math.random() * portraits.length)],
-      costume: costumes[Math.floor(Math.random() * costumes.length)],
-      pose: {
-        ...pickedPose,
-        useDepth: hasPoseDepthMap(pickedPose) ? poseDepthMode : false,
-      },
-    }
-  }, [posesData.items, costumes, portraits, poseDepthMode])
-
-  const [drawnPack, setDrawnPack] = useState<DrawnPack | null>(() => rollDrawnPack())
-
-  const handleRedraw = useCallback(() => {
-    const next = rollDrawnPack()
-    if (next) {
-      setDrawnPack(next)
-      setPackSeed((s) => s + 1)
-    }
-  }, [rollDrawnPack])
-
-  const handleSynthesize = useCallback(
-    (pack: DrawnPack) => {
-      setPortrait(pack.portrait)
-      setCostume(pack.costume)
-      setPose(pack.pose)
-    },
-    [setPortrait, setCostume, setPose]
-  )
-
-  const handleSynthesizeSlot = useCallback(
-    (slot: 'portrait' | 'costume' | 'pose', pack: DrawnPack) => {
-      if (slot === 'portrait') setPortrait(pack.portrait)
-      else if (slot === 'costume') setCostume(pack.costume)
-      else setPose(pack.pose)
-    },
-    [setPortrait, setCostume, setPose]
-  )
-
-  const totalReferenceCount = posesData.items.length + costumes.length + portraits.length
-
-  return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      {drawnPack && (
-        <PackStage
-          variant="inline"
-          drawn={drawnPack}
-          totalCount={totalReferenceCount}
-          packSeed={packSeed}
-          muted={muted}
-          onToggleMute={() => {
-            setMuted((m) => {
-              const next = !m
-              setStudioMuted(next)
-              return next
-            })
-          }}
-          onRedraw={handleRedraw}
-          onSynthesize={handleSynthesize}
-          onSynthesizeSlot={handleSynthesizeSlot}
-        />
-      )}
-    </div>
-  )
+function HomePage() {
+  return <CreativeHubExperience />
 }

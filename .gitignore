@@ -17,16 +17,22 @@ verify_failed.txt
 
 # 本地/编辑器
 .workbuddy/
+.opencode/
+.impeccable/config.local.json
+.impeccable/hook.cache.json
 .idea/
 .vscode/
 node_modules/
 .wrangler/
 .tanstack/
 .dev.vars
+.env
+.env.*
 
 # 构建产物与原始 PNG 备份（不上传 Git）
 dist/
 backups/
+.scrollshot/
 img/costume/*.png
 img/portrait/*.png
 img/depth/*.png

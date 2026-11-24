@@ -6,6 +6,7 @@ import {
   poseImagePath,
   type DreaminaChannelOptions,
   type GeminiParams,
+  type GenerationAspectRatio,
   type GenerationAttemptTrace,
   type GenerationAttemptTriggerType,
   type GenerationLiveStage,
@@ -32,8 +33,18 @@ import {
   type RunnableChannel,
   type VisionFallbackTarget,
 } from './db'
+import { buildCodexRequestHeaders, buildXaiOAuthRequestHeaders } from './supplierOAuth'
 import type { Env } from './types'
-import { isPrivateOrLocalHostname, sanitizeGalleryAssetPath, validateExternalImageUrl } from './validation'
+import { devProxyAwareFetch, safeExternalFetch } from './upstreamFetch'
+import {
+  isPrivateOrLocalHostname,
+  readResponseBodyWithLimit,
+  readResponseTextWithLimit,
+  sanitizeGalleryAssetPath,
+  validateExternalImageUrl,
+} from './validation'
+
+export { devProxyAwareFetch }
 
 export class UpstreamError extends Error {
   retryable: boolean
@@ -191,12 +202,8 @@ async function readResponseImage(res: Response, maxBytes: number): Promise<Loade
   if (!res.ok) {
     throw new UpstreamError(`读取图片失败 (HTTP ${res.status})`, res.status >= 500 || res.status === 429, res.status)
   }
-  const lenHeader = Number(res.headers.get('content-length') || '0')
-  if (Number.isFinite(lenHeader) && lenHeader > maxBytes) {
-    throw new Error('图片体积超出限制')
-  }
-  const bytes = new Uint8Array(await res.arrayBuffer())
-  if (bytes.byteLength === 0 || bytes.byteLength > maxBytes) {
+  const bytes = await readResponseBodyWithLimit(res, maxBytes)
+  if (bytes.byteLength === 0) {
     throw new Error('图片大小异常或超出限制')
   }
   const detected = detectImageFormat(bytes)
@@ -217,6 +224,10 @@ async function loadImageAsset(source: ResolvedSource, env: Env): Promise<LoadedI
   if (source.kind === 'r2') {
     const obj = await env.BUCKET.get(source.r2Key)
     if (!obj) throw new Error('找不到已上传的参考图，请重新上传')
+    if (obj.size === 0 || obj.size > MAX_REF_IMAGE_BYTES) {
+      await obj.body?.cancel().catch(() => {})
+      throw new Error('参考图大小异常')
+    }
     const bytes = new Uint8Array(await obj.arrayBuffer())
     if (bytes.byteLength === 0 || bytes.byteLength > MAX_REF_IMAGE_BYTES) {
       throw new Error('参考图大小异常')
@@ -275,10 +286,11 @@ async function loadImageAsset(source: ResolvedSource, env: Env): Promise<LoadedI
     return await readResponseImage(cdnRes, MAX_REF_IMAGE_BYTES)
   }
 
-  const extRes = await devProxyAwareFetch(
+  const extRes = await safeExternalFetch(
     source.url,
     { method: 'GET', signal: AbortSignal.timeout(20_000) },
-    env
+    env,
+    20_000
   )
   return await readResponseImage(extRes, MAX_REF_IMAGE_BYTES)
 }
@@ -374,10 +386,8 @@ function buildGeminiNativeAuthRequest(
   const { endpointUrl, isOfficialGoogle } = buildGeminiNativeEndpoint(baseUrl, model)
   const isOAuthToken = /^ya29\./i.test(apiKey)
 
-  const useQueryKey =
-    authMode === 'goog_key' ||
-    authMode === 'both' ||
-    (authMode === 'auto' && isOfficialGoogle && !isOAuthToken)
+  // 始终优先通过 x-goog-api-key 请求头鉴权，避免 API Key 落入 URL 查询串与追踪日志
+  const useQueryKey = authMode === 'goog_key' && !isOfficialGoogle
   const useGoogHeader =
     authMode === 'goog_key' ||
     authMode === 'both' ||
@@ -474,8 +484,10 @@ function extractUniversalImage(json: any): string | null {
   return null
 }
 
+const MAX_UPSTREAM_JSON_BYTES = 32 * 1024 * 1024
+
 async function readUpstreamJson(res: Response): Promise<any> {
-  const text = await res.text()
+  const text = await readResponseTextWithLimit(res, MAX_UPSTREAM_JSON_BYTES)
   try {
     return JSON.parse(text)
   } catch {
@@ -485,6 +497,13 @@ async function readUpstreamJson(res: Response): Promise<any> {
 
 function isRetryableStatus(status: number): boolean {
   return status === 408 || status === 425 || status === 429 || status >= 500
+}
+
+/** 判断异常是否发生在建立连接 / TLS 握手阶段（请求未发出，不存在重复扣费风险） */
+function isPreRequestTransportError(message: string): boolean {
+  return /client network socket disconnected before secure tls connection was established|proxy connect\b|econnrefused|enotfound|eai_again|本地开发代理连接失败/i.test(
+    message
+  )
 }
 
 function isUnsupportedParamError(message: string): boolean {
@@ -500,143 +519,216 @@ function isSafetyOrPolicyError(message: string): boolean {
   )
 }
 
-const GEO_RESTRICTED_HOSTS = new Set([
-  'api.openai.com',
-  'generativelanguage.googleapis.com',
-  'aiplatform.googleapis.com',
-  'api.x.ai',
-])
+function buildCodexResponsesUrl(baseUrl: string): string {
+  const clean = baseUrl.trim().replace(/\/+$/, '') || 'https://chatgpt.com/backend-api/codex'
+  if (/\/responses$/i.test(clean)) return clean
+  return `${clean}/responses`
+}
 
-function shouldRouteViaUsRelay(rawUrl: string): boolean {
-  try {
-    const host = new URL(rawUrl).hostname.toLowerCase()
-    return GEO_RESTRICTED_HOSTS.has(host) || host.endsWith('-aiplatform.googleapis.com')
-  } catch {
-    return false
+async function readUpstreamResponsesSse(res: Response): Promise<any> {
+  const contentType = (res.headers.get('content-type') || '').toLowerCase()
+  if (!contentType.includes('text/event-stream')) {
+    return readUpstreamJson(res)
   }
-}
 
-function isGeoBlockedMessage(text: string): boolean {
-  return /country, region, or territory not supported|unsupported_country_region_territory|user location is not supported/i.test(
-    text
-  )
-}
+  let completedResponse: Record<string, unknown> | null = null
+  let streamError: unknown = null
+  const outputItemsById = new Map<string, Record<string, unknown>>()
+  const orderedItemIds: string[] = []
+  const imagePartialById = new Map<string, string>()
+  const textDeltas: string[] = []
+  let eventName = ''
+  let dataLines: string[] = []
 
-async function sendViaUsRelay(
-  relayNamespace: DurableObjectNamespace,
-  targetUrl: string,
-  method: string,
-  sourceHeaders: Headers,
-  bodyBuf: ArrayBuffer | undefined,
-  signal?: AbortSignal | null
-): Promise<Response> {
-  const relayHeaders = new Headers()
-  sourceHeaders.forEach((val, key) => {
-    const lower = key.toLowerCase()
-    if (lower !== 'host' && lower !== 'content-length') {
-      relayHeaders.set(key, val)
+  const flushEvent = () => {
+    if (dataLines.length === 0) {
+      eventName = ''
+      return
     }
-  })
-  relayHeaders.set('x-relay-target-url', targetUrl)
-  relayHeaders.set('x-relay-method', method)
+    const payloadStr = dataLines.join('\n').trim()
+    dataLines = []
+    const currentEvent = eventName
+    eventName = ''
+    if (!payloadStr || payloadStr === '[DONE]') return
+    try {
+      const evt = JSON.parse(payloadStr) as Record<string, unknown>
+      const evtType =
+        (typeof evt.type === 'string' && evt.type) || currentEvent || ''
 
-  const shard = Math.floor(Math.random() * 8)
-  const stub = relayNamespace.jurisdiction('us').getByName(`us-egress-${shard}`)
-  return stub.fetch('https://us-relay.internal/proxy', {
-    method: 'POST',
-    headers: relayHeaders,
-    body: bodyBuf,
-    signal,
-  })
-}
-
-export async function devProxyAwareFetch(
-  url: string,
-  init: RequestInit,
-  env?: Env,
-  timeoutMs?: number
-): Promise<Response> {
-  const req = new Request(url, init)
-  const method = (req.method || 'POST').toUpperCase()
-  const bodyBuf =
-    method !== 'GET' && method !== 'HEAD' && req.body ? await req.arrayBuffer() : undefined
-
-  if (env?.DEV_ASSETS_ORIGIN) {
-    const headers = new Headers()
-    const directKeys = new Set(['content-type', 'authorization', 'x-goog-api-key'])
-    const extraHeaders: Record<string, string> = {}
-    req.headers.forEach((val, key) => {
-      const lower = key.toLowerCase()
-      if (directKeys.has(lower)) {
-        headers.set(lower, val)
+      if (evtType === 'response.completed' || evtType === 'response.done') {
+        if (evt.response && typeof evt.response === 'object') {
+          completedResponse = evt.response as Record<string, unknown>
+        }
+      } else if (evtType === 'response.failed') {
+        const respErr = (evt.response as Record<string, unknown> | undefined)?.error
+        streamError = respErr ?? evt.error ?? evt
+      } else if (evtType === 'error') {
+        streamError = evt.error ?? evt
+      } else if (evtType === 'response.output_text.delta' && typeof evt.delta === 'string') {
+        textDeltas.push(evt.delta)
+      } else if (evtType === 'response.output_item.done' && evt.item && typeof evt.item === 'object') {
+        const item = evt.item as Record<string, unknown>
+        const itemId =
+          typeof item.id === 'string' && item.id
+            ? item.id
+            : `item_${orderedItemIds.length}`
+        if (!outputItemsById.has(itemId)) {
+          orderedItemIds.push(itemId)
+        }
+        outputItemsById.set(itemId, item)
       } else if (
-        !['host', 'connection', 'content-length', 'transfer-encoding'].includes(lower) &&
-        !lower.startsWith('x-dev-')
+        evtType === 'response.image_generation_call.partial_image' &&
+        typeof evt.partial_image_b64 === 'string'
       ) {
-        extraHeaders[key] = val
+        const itemId = typeof evt.item_id === 'string' ? evt.item_id : 'img_0'
+        imagePartialById.set(itemId, evt.partial_image_b64)
+      } else if (
+        evtType === 'response.image_generation_call.completed' &&
+        typeof evt.result === 'string'
+      ) {
+        const itemId = typeof evt.item_id === 'string' ? evt.item_id : 'img_0'
+        imagePartialById.set(itemId, evt.result)
       }
-    })
-    if (Object.keys(extraHeaders).length > 0) {
-      headers.set('x-dev-extra-headers', JSON.stringify(extraHeaders))
+    } catch {
+      // ignore malformed SSE event line
     }
-    if (typeof timeoutMs === 'number' && Number.isFinite(timeoutMs) && timeoutMs > 0) {
-      headers.set('x-dev-timeout-ms', String(Math.round(timeoutMs)))
-    }
-    headers.set('x-dev-target-url', url)
-    headers.set('x-dev-method', method)
+  }
 
-    const devOrigins = Array.from(
-      new Set([
-        env.DEV_ASSETS_ORIGIN.replace(/\/+$/, ''),
-        env.DEV_ASSETS_ORIGIN.replace('127.0.0.1', 'localhost').replace(/\/+$/, ''),
-        env.DEV_ASSETS_ORIGIN.replace('localhost', '127.0.0.1').replace(/\/+$/, ''),
-      ])
+  const processLine = (rawLine: string) => {
+    const line = rawLine.endsWith('\r') ? rawLine.slice(0, -1) : rawLine
+    if (line === '') {
+      flushEvent()
+      return
+    }
+    if (line.startsWith(':')) return
+    if (line.startsWith('event:')) {
+      eventName = line.slice(6).trim()
+    } else if (line.startsWith('data:')) {
+      dataLines.push(line.slice(5).trimStart())
+    }
+  }
+
+  let rawSnippet = ''
+  const appendSnippet = (chunk: string) => {
+    if (rawSnippet.length < 400) {
+      rawSnippet += chunk.slice(0, 400 - rawSnippet.length)
+    }
+  }
+
+  // 使用 ReadableStream 逐块按行流式解析，边消费边释放中间 partial_image 分片，防止多图 SSE 打爆 128MB 内存
+  if (res.body) {
+    const reader = res.body.getReader()
+    const decoder = new TextDecoder()
+    let pending = ''
+    let totalBytes = 0
+    const MAX_SSE_STREAM_BYTES = 64 * 1024 * 1024
+    try {
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        if (!value || value.byteLength === 0) continue
+        totalBytes += value.byteLength
+        if (totalBytes > MAX_SSE_STREAM_BYTES) {
+          await reader.cancel().catch(() => {})
+          throw new Error('上游 SSE 响应流超过体积上限')
+        }
+        const decoded = decoder.decode(value, { stream: true })
+        appendSnippet(decoded)
+        pending += decoded
+        let newlineIdx = pending.indexOf('\n')
+        while (newlineIdx !== -1) {
+          processLine(pending.slice(0, newlineIdx))
+          pending = pending.slice(newlineIdx + 1)
+          newlineIdx = pending.indexOf('\n')
+        }
+      }
+      const tail = decoder.decode()
+      appendSnippet(tail)
+      pending += tail
+      if (pending) {
+        processLine(pending)
+      }
+    } finally {
+      reader.releaseLock()
+    }
+  } else {
+    const rawText = await readResponseTextWithLimit(res, MAX_UPSTREAM_JSON_BYTES)
+    appendSnippet(rawText)
+    for (const line of rawText.split(/\r?\n/)) {
+      processLine(line)
+    }
+  }
+  flushEvent()
+
+  const finalCompleted: Record<string, unknown> | null = completedResponse
+  if (streamError && !finalCompleted) {
+    return { error: streamError }
+  }
+
+  const baseObj: Record<string, unknown> = finalCompleted ? Object.assign({}, finalCompleted) : {}
+  const existingOutput = Array.isArray(baseObj.output)
+    ? ([...baseObj.output] as Array<Record<string, unknown>>)
+    : orderedItemIds.map((id) => outputItemsById.get(id)!).filter(Boolean)
+
+  for (const [itemId, b64] of imagePartialById.entries()) {
+    const existing = existingOutput.find(
+      (item) => item && item.id === itemId && item.type === 'image_generation_call'
     )
+    if (existing) {
+      if (!existing.result) existing.result = b64
+    } else {
+      existingOutput.push({
+        id: itemId,
+        type: 'image_generation_call',
+        status: 'completed',
+        result: b64,
+      })
+    }
+  }
 
-    let lastErr: unknown
-    for (const origin of devOrigins) {
-      if (init.signal?.aborted) break
-      try {
-        return await fetch(`${origin}/__dev_upstream_fetch`, {
-          method: 'POST',
-          headers,
-          body: bodyBuf,
-          signal: init.signal,
-        })
-      } catch (err) {
-        lastErr = err
-        if (init.signal?.aborted) break
+  if (existingOutput.length > 0) {
+    baseObj.output = existingOutput
+  }
+  if (typeof baseObj.output_text !== 'string' && textDeltas.length > 0) {
+    baseObj.output_text = textDeltas.join('')
+  }
+  if (Object.keys(baseObj).length === 0) {
+    return { _raw: rawSnippet }
+  }
+  return baseObj
+}
+
+function extractTextFromResponsesOutput(json: any): string | null {
+  if (typeof json?.output_text === 'string' && json.output_text.trim()) {
+    return json.output_text.trim()
+  }
+  const output = Array.isArray(json?.output) ? json.output : []
+  const texts: string[] = []
+  for (const item of output) {
+    if (!item || typeof item !== 'object') continue
+    if (item.type === 'message' && Array.isArray(item.content)) {
+      for (const part of item.content) {
+        if (
+          part &&
+          (part.type === 'output_text' || part.type === 'text') &&
+          typeof part.text === 'string' &&
+          part.text.trim()
+        ) {
+          texts.push(part.text.trim())
+        }
       }
     }
-    throw lastErr ?? new Error('本地开发代理连接失败')
   }
-
-  if (env?.US_RELAY && shouldRouteViaUsRelay(url)) {
-    return sendViaUsRelay(env.US_RELAY, url, method, req.headers, bodyBuf, init.signal)
-  }
-
-  const directRes = await fetch(url, {
-    method,
-    headers: req.headers,
-    body: bodyBuf,
-    signal: init.signal,
-  })
-
-  if (env?.US_RELAY && (directRes.status === 403 || directRes.status === 400)) {
-    const errText = await directRes.clone().text().catch(() => '')
-    if (isGeoBlockedMessage(errText)) {
-      return sendViaUsRelay(env.US_RELAY, url, method, req.headers, bodyBuf, init.signal)
-    }
-  }
-
-  return directRes
+  const merged = texts.join('\n').trim()
+  return merged || null
 }
 
 async function fetchUpstream(
   url: string,
   init: RequestInit,
   env: Env,
-  timeoutMs = 60_000
+  timeoutMs = 60_000,
+  options?: { parseSse?: boolean }
 ): Promise<{ res: Response; json: any }> {
   const controller = new AbortController()
   const timeoutErr = new Error(`请求超过 ${Math.round(timeoutMs / 1000)} 秒未返回完整响应`)
@@ -660,7 +752,9 @@ async function fetchUpstream(
           env,
           timeoutMs
         )
-        const json = await readUpstreamJson(res)
+        const json = options?.parseSse
+          ? await readUpstreamResponsesSse(res)
+          : await readUpstreamJson(res)
         return { res, json }
       })(),
       timeoutPromise,
@@ -808,6 +902,13 @@ const WAVESPEED_MODEL_SPECS: Record<string, WaveSpeedModelSpec> = {
     resolutions: ['1k', '1.5k', '2k'],
     outputFormats: ['jpeg', 'png'],
   },
+  'bytedance/seedream-v5.5': {
+    imageMode: 'none',
+    maxImages: 0,
+    sizeMode: 'aspect_resolution',
+    resolutions: ['1k', '1.5k', '2k'],
+    outputFormats: ['jpeg', 'png'],
+  },
   'minimax/image-01/image-to-image': {
     imageMode: 'single',
     maxImages: 1,
@@ -817,19 +918,81 @@ const WAVESPEED_MODEL_SPECS: Record<string, WaveSpeedModelSpec> = {
     supportsSeed: true,
     maxPromptChars: 1500,
   },
+  'minimax/image-01/text-to-image': {
+    imageMode: 'none',
+    maxImages: 0,
+    sizeMode: 'size',
+    minDim: 512,
+    maxDim: 2048,
+    supportsSeed: true,
+    maxPromptChars: 1500,
+  },
+  'x-ai/grok-imagine-image/edit': {
+    imageMode: 'single',
+    maxImages: 1,
+    sizeMode: 'none',
+  },
+  'x-ai/grok-imagine-image/text-to-image': {
+    imageMode: 'none',
+    maxImages: 0,
+    sizeMode: 'aspect_only',
+    outputFormats: ['jpeg', 'png'],
+  },
 }
 
-/** 规范化 WaveSpeed 模型 ID */
-function resolveWaveSpeedModelId(rawModel: string): string {
-  return rawModel.trim().replace(/^\/+/, '')
+/**
+ * 规范化 WaveSpeed 模型 ID，按是否携带参考图双向匹配文生图 / 图生图端点：
+ * - ByteDance Seedream 系列（v4/v4.5/v5.0-lite/v5.5 等）：文生图为裸模型 ID（无 /text-to-image），图生图为 /edit
+ * - MiniMax Image-01：文生图为 /text-to-image，图生图为 /image-to-image
+ * - 其他模型（如 x-ai/grok-imagine-image、google/nano-banana-*、openai/gpt-image-*）：文生图为 /text-to-image，图生图为 /edit
+ */
+function resolveWaveSpeedModelId(rawModel: string, hasReferenceImages = true): string {
+  const cleaned = rawModel.trim().replace(/^\/+/, '').replace(/\/+$/, '')
+  const isSeedreamSeries = /^bytedance\/seedream-[^/]+(?:\/|$)/i.test(cleaned)
+
+  if (!hasReferenceImages) {
+    if (isSeedreamSeries) {
+      return cleaned.replace(/\/(?:edit(?:-sequential)?|image-to-image|text-to-image)$/i, '')
+    }
+    if (/\/(?:edit|image-to-image)$/i.test(cleaned)) {
+      return cleaned.replace(/\/(?:edit|image-to-image)$/i, '/text-to-image')
+    }
+    return cleaned
+  }
+
+  if (isSeedreamSeries) {
+    if (/^bytedance\/seedream-[^/]+$/i.test(cleaned)) {
+      return `${cleaned}/edit`
+    }
+    if (/\/text-to-image$/i.test(cleaned)) {
+      return cleaned.replace(/\/text-to-image$/i, '/edit')
+    }
+    return cleaned
+  }
+  if (/^minimax\/image-01\/text-to-image$/i.test(cleaned)) {
+    return cleaned.replace(/\/text-to-image$/i, '/image-to-image')
+  }
+  if (/\/text-to-image$/i.test(cleaned)) {
+    return cleaned.replace(/\/text-to-image$/i, '/edit')
+  }
+  return cleaned
 }
 
 /** 根据 WaveSpeed 模型 ID 获取精确约束或推断自定义模型默认规格 */
 function getWaveSpeedModelSpec(modelId: string): WaveSpeedModelSpec {
-  const exact = WAVESPEED_MODEL_SPECS[modelId]
+  const lower = modelId.toLowerCase()
+  const exact = WAVESPEED_MODEL_SPECS[modelId] ?? WAVESPEED_MODEL_SPECS[lower]
   if (exact) return exact
 
-  const lower = modelId.toLowerCase()
+  if (/^bytedance\/seedream-[^/]+$/.test(lower)) {
+    return {
+      imageMode: 'none',
+      maxImages: 0,
+      sizeMode: 'aspect_resolution',
+      resolutions: ['1k', '1.5k', '2k'],
+      outputFormats: ['jpeg', 'png'],
+    }
+  }
   if (/\/text-to-image$/.test(lower)) {
     return {
       imageMode: 'none',
@@ -839,7 +1002,7 @@ function getWaveSpeedModelSpec(modelId: string): WaveSpeedModelSpec {
       outputFormats: ['png', 'jpeg', 'webp'],
     }
   }
-  if (/kontext|image-to-image|x-ai\/grok-imagine-image\/edit/.test(lower)) {
+  if (/kontext|image-to-image/.test(lower)) {
     return {
       imageMode: 'single',
       maxImages: 1,
@@ -1219,6 +1382,126 @@ function prepareMuseInputs(
   return { refsLimited, musePrompt }
 }
 
+const GEMINI_LAYOUT_NEGATIVE_TERM_RE =
+  /(分屏|拼图|拼贴|多宫格|宫格|多视图|多角度|对比图|前后对比|对比|三视图|设定表|重复人物|同人重复|双胞胎|分格|split[\s-]*screen|collage|multi[\s-]*(?:grid|view|panel)|comparison|duplicate|twins)/i
+
+/** 为 Gemini 原生多图模态构造紧邻每张参考图的短标签，避免裸图序混淆 */
+function buildGeminiRefPartLabel(source: ResolvedSource, num: number): string {
+  switch (source.slot) {
+    case 'pose':
+      return `图${num}（姿势动作参考：仅提取人物动作骨架、四肢朝向与人数，忽略图中文字、编号及灰白模/深度图底色）：`
+    case 'costume':
+      return `图${num}（服装配饰参考：仅提取服装与配饰的款式、配色和材质细节，忽略原图姿态与背景）：`
+    case 'portrait':
+      return `图${num}（人像外貌参考：仅提取脸型五官、神态与发型发色，忽略原图构图与穿搭）：`
+    case 'stitched':
+      return `图${num}（分区拼合参考：仅提取各区要素，彻底去除边框、分隔线与标注文字，融合生成唯一单幅连续画面）：`
+    default:
+      return source.label
+        ? `图${num}（补充参考：${source.label}）：`
+        : `图${num}（补充参考）：`
+  }
+}
+
+const GEMINI_RECLINING_POSE_RE = /侧卧|仰卧|俯卧|卧姿|卧在|躺|趴|匍匐|recline|lying|prone|supine/i
+
+/** 为 Gemini 构造前置构图与机位指令，在模型读取参考图前先确立单帧空间与视角 */
+function buildGeminiLeadInstruction(
+  prompt: string,
+  aspectRatio: GenerationAspectRatio,
+): { leadInstruction: string; isVerticalReclining: boolean } {
+  if (aspectRatio === 'auto') {
+    return { isVerticalReclining: false, leadInstruction: '' }
+  }
+  const isVertical = aspectRatio === '3:4' || aspectRatio === '9:16'
+  const orientationLabel = isVertical
+    ? '竖构图'
+    : aspectRatio === '4:3' || aspectRatio === '16:9'
+      ? '横构图'
+      : '方形构图'
+  const isReclining = GEMINI_RECLINING_POSE_RE.test(prompt)
+  const isVerticalReclining = isVertical && isReclining
+
+  if (isVerticalReclining) {
+    return {
+      isVerticalReclining,
+      leadInstruction: `【单张 ${aspectRatio} 竖构图实拍构图】只生成唯一一张无缝满画幅的 ${aspectRatio} 竖幅完整照片：采用约 45° 略高斜侧俯拍的纵深机位（不要用平视正侧面，避免主体横向压扁），让侧卧的人物沿着画面斜对角线由近及远自然舒展在中下区域；画面最底部是连续延伸的近景地面与地毯质感，画面上半部分必须展示高挑连续的真实环境纵深（例如落地窗纱、高大室内绿植、墙面与顶部柔和自然光）一直贯通延伸到画幅最上边缘，上下连为同一个连续统一空间。`,
+    }
+  }
+  if (isVertical) {
+    return {
+      isVerticalReclining,
+      leadInstruction: `【单张 ${aspectRatio} 竖构图实拍构图】只生成唯一一张无缝满画幅的 ${aspectRatio} 竖幅完整照片，使用单一连续镜头呈现从画幅最顶端贯通到最底端的统一真实场景，主体比例自然协调。`,
+    }
+  }
+  return {
+    isVerticalReclining,
+    leadInstruction: `【单张 ${aspectRatio} ${orientationLabel}实拍构图】只生成唯一一张无缝满画幅的 ${aspectRatio} 完整照片，使用单一连续镜头与统一连贯的完整空间。`,
+  }
+}
+
+/**
+ * 预处理 Google Gemini 生图提示词：
+ * 1. 将 `<IMAGE_k>` 转换为 1 起始的 `图1/图2/...`，与附件顺序严格对齐；
+ * 2. 剔除易在 Gemini/Nano Banana 注意力中反向激活分格拼图的否定词（“避免：分屏，拼图，对比图...”），
+ *    并将负向防分屏条款改写为具体摄影机位与连续空间描写；
+ * 3. 在提示词最前端（及参考图之前）先确立目标画幅、斜向俯拍透视与上下连续背景，避免横卧姿势在 3:4 竖框中被叠成双格。
+ */
+function prepareGeminiInputs(
+  prompt: string,
+  resolvedAll: Array<{ source: ResolvedSource; ref: string; loaded?: LoadedImage }>,
+  aspectRatio: GenerationAspectRatio,
+): { leadInstruction: string; geminiPrompt: string } {
+  const { leadInstruction, isVerticalReclining } = buildGeminiLeadInstruction(prompt, aspectRatio)
+  const poseIdx = resolvedAll.findIndex((item) => item.source.slot === 'pose')
+  const poseTag = poseIdx >= 0 ? `图${poseIdx + 1}` : '姿势参考图'
+
+  let normalized = replaceImageTagsWithOneBased(prompt)
+    .replace(/拼合参考图图(\d+)/g, '拼合参考图$1')
+    .replace(
+      /[，,、；;]*\s*严禁分屏[、，,]*拼贴或同人重复出现/g,
+      '，整张画面为单一镜头的连续完整实景',
+    )
+
+  if (isVerticalReclining) {
+    const poseClauseRe = new RegExp(`严格按照${poseTag}(?:\\(([^)]+)\\))?摆姿势`)
+    if (poseClauseRe.test(normalized)) {
+      normalized = normalized.replace(
+        poseClauseRe,
+        (_m, title: string | undefined) =>
+          `保持${poseTag}${title ? `（${title}）` : ''}的身体卧姿与四肢相对动作（镜头改用约 45° 斜侧俯拍纵深透视以自然充满 ${aspectRatio} 竖幅，不照搬${poseTag}的平视正侧面视角）`,
+      )
+    } else {
+      normalized = normalized.replace(
+        new RegExp(`严格按照${poseTag}`),
+        `保持${poseTag}的身体卧姿与四肢相对动作（镜头改用约 45° 斜侧俯拍纵深透视以自然充满 ${aspectRatio} 竖幅，不照搬${poseTag}的平视正侧面视角）之`,
+      )
+    }
+  }
+
+  const filteredLines: string[] = []
+  for (const line of normalized.split(/\r?\n/)) {
+    const avoidMatch = line.match(/^避免[：:]\s*(.+)$/)
+    if (!avoidMatch) {
+      filteredLines.push(line)
+      continue
+    }
+    const keptTerms = avoidMatch[1]
+      .split(/[，,、；;]+/)
+      .map((item) => item.trim())
+      .filter((item) => item && !GEMINI_LAYOUT_NEGATIVE_TERM_RE.test(item))
+    if (keptTerms.length > 0) {
+      filteredLines.push(`避免：${keptTerms.join('，')}`)
+    }
+  }
+
+  const bodyText = filteredLines.join('\n').trim()
+  return {
+    leadInstruction,
+    geminiPrompt: leadInstruction ? `${leadInstruction}\n${bodyText}`.trim() : bodyText,
+  }
+}
+
 /** 执行 Muse 2 API 异步生图任务 (/v1/images/tasks -> 轮询 /v1/images/tasks/{task_id})，彻底规避反代长连接超时 */
 async function runMuseTaskGeneration(args: {
   env: Env
@@ -1226,7 +1509,7 @@ async function runMuseTaskGeneration(args: {
   apiKey: string
   model: string
   prompt: string
-  aspectRatio: StudioAspectRatio
+  aspectRatio: GenerationAspectRatio
   museCfg: MuseParams
   refsLimited: Array<{ source: ResolvedSource; ref: string; loaded?: LoadedImage }>
   trackedFetch: (spec: TrackedFetchSpec) => Promise<{ res: Response; json: any }>
@@ -1249,10 +1532,16 @@ async function runMuseTaskGeneration(args: {
     onStage,
   } = args
 
+  const effectiveMuseRatio =
+    aspectRatio === 'auto'
+      ? null
+      : !museCfg.aspectRatio || museCfg.aspectRatio === 'auto'
+        ? aspectRatio
+        : museCfg.aspectRatio
   const payload: Record<string, unknown> = {
     model,
     prompt,
-    aspect_ratio: !museCfg.aspectRatio || museCfg.aspectRatio === 'auto' ? aspectRatio : museCfg.aspectRatio,
+    ...(effectiveMuseRatio ? { aspect_ratio: effectiveMuseRatio } : {}),
     response_format: museCfg.responseFormat || 'b64_json',
   }
   if (refsLimited.length > 0) {
@@ -1299,7 +1588,8 @@ async function runMuseTaskGeneration(args: {
 
   const pollUrl = `${v1BaseUrl}/images/tasks/${encodeURIComponent(taskId)}`
   const pollStartedAt = Date.now()
-  const maxPollDurationMs = 120_000
+  // 对齐 muse2api 上游默认超时（MUSE2API_IMAGE_TIMEOUT=240s），留 10s 余量避免 130~240s 正常出图被误判超时重跑
+  const maxPollDurationMs = 250_000
   let consecutivePollErrors = 0
   let pollIdx = 0
 
@@ -1392,8 +1682,9 @@ async function runMuseTaskGeneration(args: {
   }
 
   const timeoutMsg = `[${PROVIDER_META.muse.shortName}] 生成任务轮询超时 (task: ${taskId})`
-  emitPendingFailure(timeoutMsg, true, false)
-  throw new UpstreamError(timeoutMsg, true, 504, false)
+  // 已完整等待 250s 仍无结果，再重跑一轮会超过全站 processingTimeoutSec(360s) 导致中途被回收
+  emitPendingFailure(timeoutMsg, false, false)
+  throw new UpstreamError(timeoutMsg, false, 504, false)
 }
 
 interface TrackedFetchSpec {
@@ -1401,7 +1692,9 @@ interface TrackedFetchSpec {
   headers: Record<string, string>
   body: BodyInit
   auditParams: Record<string, unknown>
+  modelOverride?: string
   timeoutMs?: number
+  parseSse?: boolean
   triggerOverride?: {
     triggerType: GenerationAttemptTriggerType
     triggerReason: string
@@ -1457,7 +1750,7 @@ async function runDreaminaGeneration(args: {
     model,
     prompt: formatDreaminaPrompt(prompt),
   }
-  if (aspectRatio && aspectRatio.trim()) {
+  if (aspectRatio && aspectRatio.trim() && aspectRatio.trim() !== 'auto') {
     payload.aspect_ratio = aspectRatio.trim()
   }
   if (resolution && resolution.trim()) {
@@ -1507,7 +1800,7 @@ async function runDreaminaGeneration(args: {
 
   const pollUrl = `${v1}/images/generations/${encodeURIComponent(taskId)}`
   const pollStartedAt = Date.now()
-  const maxPollDurationMs = 300_000
+  const maxPollDurationMs = 335_000
   let consecutivePollErrors = 0
   let pollIdx = 0
 
@@ -1579,35 +1872,59 @@ async function runDreaminaGeneration(args: {
 
       let outputRef: string | null = null
       if (typeof relPath === 'string' && relPath.trim()) {
-        await onStage?.('downloading_output', preferPreview ? '正在获取生成结果…' : '正在触发原图下载…')
+        await onStage?.('downloading_output', preferPreview ? '正在获取生成结果…' : '正在直取高清原图…')
         const imgUrl = relPath.startsWith('http') ? relPath : `${origin}${relPath.startsWith('/') ? '' : '/'}${relPath}`
-        try {
-          const imgRes = await devProxyAwareFetch(
-            imgUrl,
-            { method: 'GET', headers: bridgeHeaders, signal: AbortSignal.timeout(90_000) },
-            env,
-            90_000
-          )
-          const loadedOut = await readResponseImage(imgRes, MAX_OUTPUT_IMAGE_BYTES)
-          outputRef = `data:${loadedOut.mime};base64,${bytesToBase64(loadedOut.bytes)}`
-        } catch (dlErr) {
-          // 原图下载失败且已有预览代理时尝试降级一次 /v1/proxy，仍失败再抛错
-          if (!preferPreview && typeof firstImg?.proxy === 'string' && firstImg.proxy.trim()) {
-            const proxyUrl = `${origin}${firstImg.proxy.startsWith('/') ? '' : '/'}${firstImg.proxy}`
-            const proxyRes = await devProxyAwareFetch(
-              proxyUrl,
-              { method: 'GET', headers: bridgeHeaders, signal: AbortSignal.timeout(45_000) },
+        const downloadUrl =
+          typeof firstImg === 'object' && typeof firstImg?.download === 'string' && firstImg.download.trim()
+            ? `${origin}${firstImg.download.startsWith('/') ? '' : '/'}${firstImg.download}`
+            : null
+        const proxyUrl =
+          typeof firstImg === 'object' && typeof firstImg?.proxy === 'string' && firstImg.proxy.trim()
+            ? `${origin}${firstImg.proxy.startsWith('/') ? '' : '/'}${firstImg.proxy}`
+            : null
+
+        let loadedOut: LoadedImage | null = null
+        let lastDlErr: unknown = null
+        const primaryUrl = preferPreview ? proxyUrl || imgUrl : downloadUrl || imgUrl
+        const maxPrimaryAttempts = preferPreview ? 2 : 3
+        const perAttemptTimeoutMs = preferPreview ? 30_000 : 22_000
+
+        // 分多次短超时拉取（正常 1~3s 即完成），避免代理单条 TCP 假死白等 90s
+        for (let dlAttempt = 0; dlAttempt < maxPrimaryAttempts; dlAttempt++) {
+          try {
+            const imgRes = await devProxyAwareFetch(
+              primaryUrl,
+              { method: 'GET', headers: bridgeHeaders, signal: AbortSignal.timeout(perAttemptTimeoutMs) },
               env,
-              45_000
+              perAttemptTimeoutMs
             )
-            const loadedProxy = await readResponseImage(proxyRes, MAX_OUTPUT_IMAGE_BYTES)
-            outputRef = `data:${loadedProxy.mime};base64,${bytesToBase64(loadedProxy.bytes)}`
-          } else {
-            const msg = dlErr instanceof Error ? dlErr.message : '原图下载失败'
-            const fullMsg = `[${PROVIDER_META[provider].shortName}] ${msg}`
-            emitPendingFailure(fullMsg, false, false)
-            throw new UpstreamError(fullMsg, false, 502, false)
+            loadedOut = await readResponseImage(imgRes, MAX_OUTPUT_IMAGE_BYTES)
+            break
+          } catch (dlErr) {
+            lastDlErr = dlErr
+            if (dlAttempt + 1 < maxPrimaryAttempts) {
+              await new Promise((r) => setTimeout(r, 400))
+            }
           }
+        }
+
+        if (loadedOut) {
+          outputRef = `data:${loadedOut.mime};base64,${bytesToBase64(loadedOut.bytes)}`
+        } else if (!preferPreview && proxyUrl && firstImg?.originalCaptured === true) {
+          // 仅当 /v1/proxy 同样指向抓包到的无损原图时允许降级通道，绝不把 270×360 预览图冒充 2K 成图保存
+          const proxyRes = await devProxyAwareFetch(
+            proxyUrl,
+            { method: 'GET', headers: bridgeHeaders, signal: AbortSignal.timeout(25_000) },
+            env,
+            25_000
+          )
+          const loadedProxy = await readResponseImage(proxyRes, MAX_OUTPUT_IMAGE_BYTES)
+          outputRef = `data:${loadedProxy.mime};base64,${bytesToBase64(loadedProxy.bytes)}`
+        } else {
+          const msg = lastDlErr instanceof Error ? lastDlErr.message : '原图下载失败'
+          const fullMsg = `[${PROVIDER_META[provider].shortName}] ${msg}`
+          emitPendingFailure(fullMsg, false, false)
+          throw new UpstreamError(fullMsg, false, 502, false)
         }
       } else if (typeof firstImg === 'string') {
         outputRef = firstImg
@@ -1665,11 +1982,12 @@ async function runWaveSpeedGeneration(args: {
   apiKey: string
   rawModel: string
   prompt: string
-  aspectRatio: StudioAspectRatio
+  aspectRatio: GenerationAspectRatio
   resolution?: StudioResolution | null
   resolvedAll: Array<{ source: ResolvedSource; ref: string; loaded?: LoadedImage }>
   geminiCfg: GeminiParams
   grokCfg: GrokParams
+  seedreamCfg: SeedreamParams
   wsOpts: WaveSpeedChannelOptions
   trackedFetch: (spec: TrackedFetchSpec) => Promise<{ res: Response; json: any }>
   attemptState: { current: GenerationAttemptTrace | null }
@@ -1688,6 +2006,7 @@ async function runWaveSpeedGeneration(args: {
     resolvedAll,
     geminiCfg,
     grokCfg,
+    seedreamCfg,
     wsOpts,
     trackedFetch,
     attemptState,
@@ -1695,7 +2014,7 @@ async function runWaveSpeedGeneration(args: {
     onStage,
   } = args
 
-  const effectiveModel = resolveWaveSpeedModelId(rawModel)
+  const effectiveModel = resolveWaveSpeedModelId(rawModel, resolvedAll.length > 0)
   const spec = getWaveSpeedModelSpec(effectiveModel)
   const endpoints = buildWaveSpeedEndpoints(baseUrl)
 
@@ -1732,7 +2051,9 @@ async function runWaveSpeedGeneration(args: {
       ? (grokCfg.resolution.toUpperCase() as StudioResolution)
       : provider === 'gemini'
         ? geminiCfg.imageSize
-        : '1.5K')
+        : provider === 'seedream'
+          ? (seedreamCfg.resolution.toUpperCase() as StudioResolution)
+          : '1.5K')
   const targetResolution: StudioResolution =
     configuredWsRes === '1k'
       ? '1K'
@@ -1752,18 +2073,20 @@ async function runWaveSpeedGeneration(args: {
   }
 
   if (spec.sizeMode === 'aspect_resolution') {
-    payload.aspect_ratio = aspectRatio
+    if (aspectRatio !== 'auto') payload.aspect_ratio = aspectRatio
     const pickedRes = pickWaveSpeedResolution(spec.resolutions, targetResolution)
     if (pickedRes) payload.resolution = pickedRes
   } else if (spec.sizeMode === 'aspect_only') {
-    payload.aspect_ratio = aspectRatio
+    if (aspectRatio !== 'auto') payload.aspect_ratio = aspectRatio
   } else if (spec.sizeMode === 'size') {
-    payload.size = computeWaveSpeedPixelSize(
-      aspectRatio,
-      targetResolution,
-      spec.minDim ?? 256,
-      spec.maxDim ?? 2048
-    )
+    if (aspectRatio !== 'auto') {
+      payload.size = computeWaveSpeedPixelSize(
+        aspectRatio,
+        targetResolution,
+        spec.minDim ?? 256,
+        spec.maxDim ?? 2048
+      )
+    }
   }
 
   if (
@@ -1796,7 +2119,7 @@ async function runWaveSpeedGeneration(args: {
   let json: any
   let lastTriggerOverride: TrackedFetchSpec['triggerOverride'] | undefined
 
-  // 允许对 429 限流（未创建任务）与未知自定义模型的 HTTP 400 参数兼容做有限自动调整
+  // 允许对 429 限流、未建立 TLS/连接的预请求故障以及未知自定义模型的 HTTP 400 参数兼容做有限自动调整
   for (let submitTry = 0; submitTry < 3; submitTry++) {
     try {
       ;({ res, json } = await trackedFetch({
@@ -1804,21 +2127,47 @@ async function runWaveSpeedGeneration(args: {
         headers: jsonHeaders,
         body: JSON.stringify(payload),
         auditParams: { ...payload },
+        modelOverride: effectiveModel,
         timeoutMs: useSyncMode ? 90_000 : 45_000,
         triggerOverride: lastTriggerOverride,
       }))
     } catch (err) {
-      // 按 WaveSpeed 官方规范，POST 发生不确定超时/网络中断时不自动重发以免重复扣费
-      if (err instanceof UpstreamError) {
-        throw new UpstreamError(err.message, false, err.status ?? 504, err.safetyBlocked)
+      const errMsg = err instanceof Error ? err.message : 'WaveSpeed 提交请求超时或网络中断'
+      const preRequestErr = isPreRequestTransportError(errMsg)
+      if (preRequestErr && submitTry < 2) {
+        await new Promise((resolve) => setTimeout(resolve, 1000))
+        lastTriggerOverride = {
+          triggerType: 'transient_retry',
+          triggerReason: '连接或 TLS 握手尚未完成即断开（请求未发出），安全重试提交',
+          previousError: errMsg,
+        }
+        continue
       }
-      throw new UpstreamError('WaveSpeed 提交请求超时或网络中断', false, 504, false)
+      // 按 WaveSpeed 官方规范，POST 发生不确定超时/网络中断时不自动重发以免重复扣费；
+      // 若明确在 TLS/连接建立前失败（请求未发出），允许上层调度器继续重试或切换密钥
+      if (err instanceof UpstreamError) {
+        throw new UpstreamError(err.message, preRequestErr, err.status ?? 504, err.safetyBlocked)
+      }
+      throw new UpstreamError('WaveSpeed 提交请求超时或网络中断', preRequestErr, 504, false)
     }
 
     if (res.ok) break
 
     const errMsg = summarizeUpstreamError(json, res.status)
     const errCode = Number(json?.code || json?.data?.code || 0)
+    const isPreRequestFailure =
+      res.headers.get('x-dev-pre-request-error') === '1' || isPreRequestTransportError(errMsg)
+
+    if (isPreRequestFailure && submitTry < 2) {
+      emitPendingFailure(`[${PROVIDER_META[provider].shortName}] ${errMsg}`, true, false)
+      await new Promise((resolve) => setTimeout(resolve, 1000))
+      lastTriggerOverride = {
+        triggerType: 'transient_retry',
+        triggerReason: '连接或 TLS 握手尚未完成即断开（请求未发出），安全重试提交',
+        previousError: errMsg,
+      }
+      continue
+    }
 
     if (res.status === 429 && submitTry < 2) {
       const waitMs = parseRetryAfterMs(res, 2500)
@@ -1844,8 +2193,9 @@ async function runWaveSpeedGeneration(args: {
 
     const safety = errCode === 1200 || isSafetyOrPolicyError(errMsg)
     const fullMsg = `[${PROVIDER_META[provider].shortName}] ${errMsg}`
-    emitPendingFailure(fullMsg, false, safety)
-    throw new UpstreamError(fullMsg, false, res.status, safety)
+    const retryable = isPreRequestFailure && !safety
+    emitPendingFailure(fullMsg, retryable, safety)
+    throw new UpstreamError(fullMsg, retryable, res.status, safety)
   }
 
   const dataObj = json?.data && !Array.isArray(json.data) ? json.data : json
@@ -1987,7 +2337,7 @@ export async function runServerGeneration(params: {
   prompt: string
   recipe: RecipeState
   userId: string
-  aspectRatio: StudioAspectRatio
+  aspectRatio: GenerationAspectRatio
   resolution?: StudioResolution | null
   imagePassMode: ImagePassMode
   requestOrigin: string
@@ -2043,7 +2393,7 @@ export async function runServerGeneration(params: {
   const allSources =
     useStitchedSingle && stitched
       ? [stitched]
-      : stitched && includeStitchedWithMulti
+      : provider !== 'gemini' && stitched && includeStitchedWithMulti
         ? [...refs, stitched]
         : refs
   const canPassPublicUrls = imagePassMode === 'url' && isPublicHttpsOrigin(requestOrigin)
@@ -2204,7 +2554,7 @@ export async function runServerGeneration(params: {
           ...(channel.supplierKeyLabel ? { supplierKeyLabel: channel.supplierKeyLabel } : {}),
           ...(channel.supplierKeyHint ? { supplierKeyHint: channel.supplierKeyHint } : {}),
           provider,
-          model,
+          model: spec.modelOverride || model,
           endpointMode,
           request: {
             method: 'POST',
@@ -2234,7 +2584,8 @@ export async function runServerGeneration(params: {
           body: spec.body,
         },
         env,
-        spec.timeoutMs ?? 60_000
+        spec.timeoutMs ?? 60_000,
+        spec.parseSse ? { parseSse: true } : undefined
       )
       if (attempt) {
         const requestId =
@@ -2280,6 +2631,7 @@ export async function runServerGeneration(params: {
       resolvedAll,
       geminiCfg,
       grokCfg,
+      seedreamCfg,
       wsOpts: rawParams as WaveSpeedChannelOptions,
       trackedFetch,
       attemptState,
@@ -2296,9 +2648,11 @@ export async function runServerGeneration(params: {
   // ===========================================================================
   else if (endpointMode === 'dreamina') {
     const dreaminaRatio =
-      provider === 'seedream' && seedreamCfg.aspectRatio && seedreamCfg.aspectRatio !== 'auto'
-        ? seedreamCfg.aspectRatio
-        : aspectRatio
+      aspectRatio === 'auto'
+        ? null
+        : provider === 'seedream' && seedreamCfg.aspectRatio && seedreamCfg.aspectRatio !== 'auto'
+          ? seedreamCfg.aspectRatio
+          : aspectRatio
     const dreaminaResolution =
       resolution || (provider === 'seedream' ? seedreamCfg.resolution : undefined)
     const dreaminaResult = await runDreaminaGeneration({
@@ -2323,16 +2677,78 @@ export async function runServerGeneration(params: {
   }
 
   // ===========================================================================
-  // 1. OpenAI GPT Image
+  // 1. OpenAI GPT Image（含 OpenAI Codex OAuth Responses SSE）
   // ===========================================================================
   else if (provider === 'gpt') {
+    const gptTimeoutMs = 90_000
+    const isCodexOAuth =
+      channel.supplierAuthMode === 'oauth_openai_codex' ||
+      /chatgpt\.com\/backend-api\/codex/i.test(baseUrl)
     const v1 = normalizeV1Base(baseUrl)
     const gptPrompt = replaceImageTagsWithOneBased(prompt)
     // OpenAI GPT-Image-2 / 2.5 / 2.6 / chatgpt-image-latest 默认高保真，禁止传 input_fidelity
     const supportsInputFidelity = /^gpt-image-1(?:\.5|-mini)?(?:$|[-_])/i.test(model)
     const supportsComplexity = /^gpt-image-2\.6/i.test(model)
 
-    if ((gptCfg.endpointMode === 'images_edits_json' || gptCfg.endpointMode === 'images_edits') && resolvedAll.length === 0) {
+    if (isCodexOAuth) {
+      const codexUrl = buildCodexResponsesUrl(baseUrl)
+      const codexHeaders = buildCodexRequestHeaders(apiKey, channel.oauthAccountId, {
+        contentType: 'application/json',
+      })
+      const inputContent = [
+        ...resolvedAll.map((item) => ({ type: 'input_image', image_url: item.ref })),
+        { type: 'input_text', text: gptPrompt },
+      ]
+      const toolCfg: Record<string, unknown> = { type: 'image_generation' }
+      if (gptCfg.size !== 'auto') toolCfg.size = gptCfg.size
+      if (gptCfg.quality !== 'auto') toolCfg.quality = gptCfg.quality
+      if (gptCfg.background !== 'auto') toolCfg.background = gptCfg.background
+      if (resolvedAll.length > 0 && supportsInputFidelity && gptCfg.inputFidelity) {
+        toolCfg.input_fidelity = gptCfg.inputFidelity
+      }
+      if (gptCfg.outputFormat) toolCfg.output_format = gptCfg.outputFormat
+
+      const buildCodexPayload = (minimalTool = false) => ({
+        model,
+        instructions:
+          'You are an expert AI image generation assistant. Follow the user prompt and visual references accurately and invoke the image_generation tool to produce the requested image.',
+        input: [{ role: 'user', content: inputContent }],
+        tools: [minimalTool ? { type: 'image_generation' } : toolCfg],
+        store: false,
+        stream: true,
+      })
+
+      const firstPayload = buildCodexPayload(false)
+      ;({ res, json } = await trackedFetch({
+        url: codexUrl,
+        headers: codexHeaders,
+        body: JSON.stringify(firstPayload),
+        auditParams: firstPayload,
+        timeoutMs: gptTimeoutMs,
+        parseSse: true,
+      }))
+
+      if (res.status === 400 && Object.keys(toolCfg).length > 1) {
+        const firstErr = summarizeUpstreamError(json, res.status)
+        if (!isSafetyOrPolicyError(firstErr)) {
+          emitPendingFailure(`[HTTP 400 参数兼容] ${firstErr}`, true, false)
+          const fallbackPayload = buildCodexPayload(true)
+          ;({ res, json } = await trackedFetch({
+            url: codexUrl,
+            headers: codexHeaders,
+            body: JSON.stringify(fallbackPayload),
+            auditParams: fallbackPayload,
+            timeoutMs: gptTimeoutMs,
+            parseSse: true,
+            triggerOverride: {
+              triggerType: 'compat_downgrade',
+              triggerReason: 'Codex Responses 返回 HTTP 400，精简 image_generation 工具参数后降级重试',
+              previousError: firstErr,
+            },
+          }))
+        }
+      }
+    } else if ((gptCfg.endpointMode === 'images_edits_json' || gptCfg.endpointMode === 'images_edits') && resolvedAll.length === 0) {
       const payload: Record<string, unknown> = { model, prompt: gptPrompt }
       if (gptCfg.size !== 'auto') payload.size = gptCfg.size
       if (gptCfg.quality !== 'auto') payload.quality = gptCfg.quality
@@ -2351,6 +2767,7 @@ export async function runServerGeneration(params: {
         headers: genHeaders,
         body: JSON.stringify(payload),
         auditParams: { ...payload },
+        timeoutMs: gptTimeoutMs,
       }))
       if (res.status === 400) {
         const firstErr = summarizeUpstreamError(json, res.status)
@@ -2376,6 +2793,7 @@ export async function runServerGeneration(params: {
               headers: genHeaders,
               body: JSON.stringify(payload),
               auditParams: { ...payload },
+              timeoutMs: gptTimeoutMs,
               triggerOverride: {
                 triggerType: 'compat_downgrade',
                 triggerReason: `文生图上游返回 HTTP 400 参数不兼容，自动剔除 [${removed.join(', ')}] 后同渠道降级重试`,
@@ -2410,6 +2828,7 @@ export async function runServerGeneration(params: {
         headers,
         body: JSON.stringify(payload),
         auditParams: { ...payload },
+        timeoutMs: gptTimeoutMs,
       }))
       if (res.status === 400) {
         const firstErr = summarizeUpstreamError(json, res.status)
@@ -2435,6 +2854,7 @@ export async function runServerGeneration(params: {
               headers,
               body: JSON.stringify(payload),
               auditParams: { ...payload },
+              timeoutMs: gptTimeoutMs,
               triggerOverride: {
                 triggerType: 'compat_downgrade',
                 triggerReason: `上游返回 HTTP 400 参数不兼容，自动剔除 [${removed.join(', ')}] 后同渠道降级重试`,
@@ -2492,6 +2912,7 @@ export async function runServerGeneration(params: {
         headers: { Authorization: `Bearer ${apiKey}` },
         body: first.fd,
         auditParams: first.summary,
+        timeoutMs: gptTimeoutMs,
       }))
       if (
         res.status === 400 &&
@@ -2508,6 +2929,7 @@ export async function runServerGeneration(params: {
           headers: { Authorization: `Bearer ${apiKey}` },
           body: second.fd,
           auditParams: second.summary,
+          timeoutMs: gptTimeoutMs,
           triggerOverride: {
             triggerType: 'compat_downgrade',
             triggerReason: '上游返回 HTTP 400 参数不兼容，自动剔除 [input_fidelity] 后同渠道降级重试',
@@ -2542,6 +2964,7 @@ export async function runServerGeneration(params: {
         },
         body: JSON.stringify(payload),
         auditParams: payload,
+        timeoutMs: gptTimeoutMs,
       }))
     } else {
       const content = [
@@ -2562,6 +2985,7 @@ export async function runServerGeneration(params: {
         headers,
         body: JSON.stringify(payloadWithModalities),
         auditParams: payloadWithModalities,
+        timeoutMs: gptTimeoutMs,
       }))
       if (res.status === 400 && /modalit/i.test(JSON.stringify(json))) {
         const firstErr = summarizeUpstreamError(json, res.status)
@@ -2575,6 +2999,7 @@ export async function runServerGeneration(params: {
           headers,
           body: JSON.stringify(payloadFallback),
           auditParams: payloadFallback,
+          timeoutMs: gptTimeoutMs,
           triggerOverride: {
             triggerType: 'compat_downgrade',
             triggerReason: '上游返回 HTTP 400 不支持 modalities 字段，自动移除 [modalities] 后降级重试',
@@ -2590,22 +3015,32 @@ export async function runServerGeneration(params: {
   // ===========================================================================
   else if (provider === 'gemini') {
     const geminiTimeoutMs = 90_000
+    const { leadInstruction, geminiPrompt } = prepareGeminiInputs(
+      prompt,
+      resolvedAll,
+      geminiCfg.aspectRatio,
+    )
     if (geminiCfg.endpointMode === 'native') {
       const authMode = geminiCfg.authMode || 'auto'
       const { url, headers } = buildGeminiNativeAuthRequest(baseUrl, model, apiKey, authMode)
 
       const parts = [
-        ...resolvedAll.map((item) => ({
-          inlineData: {
-            mimeType: item.loaded?.mime || 'image/png',
-            data: item.loaded?.base64 || item.ref.split(',')[1],
+        ...(resolvedAll.length > 0 && leadInstruction ? [{ text: leadInstruction }] : []),
+        ...resolvedAll.flatMap((item, idx) => [
+          { text: buildGeminiRefPartLabel(item.source, idx + 1) },
+          {
+            inlineData: {
+              mimeType: item.loaded?.mime || 'image/png',
+              data: item.loaded?.base64 || item.ref.split(',')[1],
+            },
           },
-        })),
-        { text: prompt },
+        ]),
+        { text: geminiPrompt },
       ]
       const supportsImageSize = /gemini-3|nano-banana|banana/i.test(model) && !/^gemini-2\./i.test(model)
-      const imageConfig: Record<string, string> = {
-        aspectRatio: geminiCfg.aspectRatio,
+      const imageConfig: Record<string, string> = {}
+      if (geminiCfg.aspectRatio && geminiCfg.aspectRatio !== 'auto') {
+        imageConfig.aspectRatio = geminiCfg.aspectRatio
       }
       if (supportsImageSize && geminiCfg.imageSize) {
         imageConfig.imageSize = geminiCfg.imageSize
@@ -2615,7 +3050,7 @@ export async function runServerGeneration(params: {
         contents: [{ role: 'user', parts }],
         generationConfig: {
           responseModalities: ['TEXT', 'IMAGE'],
-          imageConfig,
+          ...(Object.keys(imageConfig).length > 0 ? { imageConfig } : {}),
         },
       }
 
@@ -2632,10 +3067,16 @@ export async function runServerGeneration(params: {
       }))
     } else if (geminiCfg.endpointMode === 'openai_chat') {
       const v1 = normalizeV1Base(baseUrl)
+      const outputHints = [
+        ...(geminiCfg.aspectRatio && geminiCfg.aspectRatio !== 'auto'
+          ? [`aspect ratio: ${geminiCfg.aspectRatio}`]
+          : []),
+        ...(geminiCfg.imageSize ? [`resolution: ${geminiCfg.imageSize}`] : []),
+      ]
       const content = [
         {
           type: 'text',
-          text: `${prompt}\n(Output aspect ratio: ${geminiCfg.aspectRatio}, resolution: ${geminiCfg.imageSize})`,
+          text: outputHints.length > 0 ? `${geminiPrompt}\n(Output ${outputHints.join(', ')})` : geminiPrompt,
         },
         ...resolvedAll.map((item) => ({ type: 'image_url', image_url: { url: item.ref } })),
       ]
@@ -2680,8 +3121,10 @@ export async function runServerGeneration(params: {
       const v1 = normalizeV1Base(baseUrl)
       const payload: Record<string, unknown> = {
         model,
-        prompt,
-        aspect_ratio: geminiCfg.aspectRatio,
+        prompt: geminiPrompt,
+        ...(geminiCfg.aspectRatio && geminiCfg.aspectRatio !== 'auto'
+          ? { aspect_ratio: geminiCfg.aspectRatio }
+          : {}),
       }
       if (resolvedAll.length > 0) {
         payload.images = resolvedAll.map((item) => ({ image_url: item.ref }))
@@ -2698,10 +3141,12 @@ export async function runServerGeneration(params: {
       }))
     } else if (resolvedAll.length === 0) {
       const v1 = normalizeV1Base(baseUrl)
-      const payload = {
+      const payload: Record<string, unknown> = {
         model,
-        prompt,
-        aspect_ratio: geminiCfg.aspectRatio,
+        prompt: geminiPrompt,
+        ...(geminiCfg.aspectRatio && geminiCfg.aspectRatio !== 'auto'
+          ? { aspect_ratio: geminiCfg.aspectRatio }
+          : {}),
       }
       ;({ res, json } = await trackedFetch({
         url: `${v1}/images/generations`,
@@ -2717,7 +3162,7 @@ export async function runServerGeneration(params: {
       const v1 = normalizeV1Base(baseUrl)
       const fd = new FormData()
       fd.append('model', model)
-      fd.append('prompt', prompt)
+      fd.append('prompt', geminiPrompt)
       const imgSummaries = appendMultipartImages(fd, resolvedAll, 'image[]')
       ;({ res, json } = await trackedFetch({
         url: `${v1}/images/edits`,
@@ -2725,7 +3170,7 @@ export async function runServerGeneration(params: {
         body: fd,
         auditParams: {
           model,
-          prompt,
+          prompt: geminiPrompt,
           'image[]': imgSummaries,
         },
         timeoutMs: geminiTimeoutMs,
@@ -2734,11 +3179,26 @@ export async function runServerGeneration(params: {
   }
 
   // ===========================================================================
-  // 3. xAI Grok Imagine (grok-imagine-image-2.0)
+  // 3. xAI Grok Imagine (grok-imagine-image-2.0 · 兼容 xAI Grok OAuth)
   // ===========================================================================
   else if (provider === 'grok') {
     const v1 = normalizeV1Base(baseUrl)
+    const isXaiOAuth =
+      channel.supplierAuthMode === 'oauth_xai' || /cli-chat-proxy\.grok\.com/i.test(baseUrl)
+    const grokHeaders = (contentType?: string): Record<string, string> =>
+      isXaiOAuth
+        ? buildXaiOAuthRequestHeaders(apiKey, contentType ? { contentType } : undefined)
+        : {
+            ...(contentType ? { 'Content-Type': contentType } : {}),
+            Authorization: `Bearer ${apiKey}`,
+          }
     const { refsLimited, grokPrompt } = prepareGrokInputs(prompt, resolvedAll)
+    const effectiveGrokRatio =
+      aspectRatio === 'auto'
+        ? null
+        : !grokCfg.aspectRatio || grokCfg.aspectRatio === 'auto'
+          ? aspectRatio
+          : grokCfg.aspectRatio
 
     if (grokCfg.endpointMode === 'xai_edits') {
       const payload: Record<string, unknown> = {
@@ -2750,8 +3210,9 @@ export async function runServerGeneration(params: {
       } else if (refsLimited.length > 1) {
         payload.images = refsLimited.map((item) => ({ type: 'image_url', url: item.ref }))
       }
-      payload.aspect_ratio =
-        !grokCfg.aspectRatio || grokCfg.aspectRatio === 'auto' ? aspectRatio : grokCfg.aspectRatio
+      if (effectiveGrokRatio) {
+        payload.aspect_ratio = effectiveGrokRatio
+      }
       payload.resolution = grokCfg.resolution || '2k'
       // 仅 grok-imagine-image-2.0 支持 quality 参数
       if (model.includes('2.0') && grokCfg.quality && grokCfg.quality !== 'auto') {
@@ -2761,10 +3222,7 @@ export async function runServerGeneration(params: {
 
       ;({ res, json } = await trackedFetch({
         url: refsLimited.length === 0 ? `${v1}/images/generations` : `${v1}/images/edits`,
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${apiKey}`,
-        },
+        headers: grokHeaders('application/json'),
         body: JSON.stringify(payload),
         auditParams: payload,
       }))
@@ -2772,7 +3230,7 @@ export async function runServerGeneration(params: {
       const payload: Record<string, unknown> = {
         model,
         prompt: grokPrompt,
-        aspect_ratio: grokCfg.aspectRatio === 'auto' ? aspectRatio : grokCfg.aspectRatio,
+        ...(effectiveGrokRatio ? { aspect_ratio: effectiveGrokRatio } : {}),
         resolution: grokCfg.resolution || '2k',
         response_format: grokCfg.responseFormat || 'b64_json',
       }
@@ -2781,27 +3239,21 @@ export async function runServerGeneration(params: {
       }
       ;({ res, json } = await trackedFetch({
         url: refsLimited.length === 0 ? `${v1}/images/generations` : `${v1}/images/edits`,
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${apiKey}`,
-        },
+        headers: grokHeaders('application/json'),
         body: JSON.stringify(payload),
         auditParams: payload,
       }))
     } else if (grokCfg.endpointMode === 'openai_edits' && refsLimited.length === 0) {
-      const payload = {
+      const payload: Record<string, unknown> = {
         model,
         prompt: grokPrompt,
-        aspect_ratio: grokCfg.aspectRatio === 'auto' ? aspectRatio : grokCfg.aspectRatio,
+        ...(effectiveGrokRatio ? { aspect_ratio: effectiveGrokRatio } : {}),
         resolution: grokCfg.resolution || '2k',
         response_format: grokCfg.responseFormat || 'b64_json',
       }
       ;({ res, json } = await trackedFetch({
         url: `${v1}/images/generations`,
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${apiKey}`,
-        },
+        headers: grokHeaders('application/json'),
         body: JSON.stringify(payload),
         auditParams: payload,
       }))
@@ -2821,15 +3273,19 @@ export async function runServerGeneration(params: {
       }
       ;({ res, json } = await trackedFetch({
         url: `${v1}/images/edits`,
-        headers: { Authorization: `Bearer ${apiKey}` },
+        headers: grokHeaders(),
         body: fd,
         auditParams: summary,
       }))
     } else {
+      const grokOutputHints = [
+        ...(effectiveGrokRatio ? [`aspect ratio: ${effectiveGrokRatio}`] : []),
+        `resolution: ${grokCfg.resolution || '2k'}`,
+      ]
       const content = [
         {
           type: 'text',
-          text: `${grokPrompt}\n(Output aspect ratio: ${aspectRatio}, resolution: ${grokCfg.resolution || '2k'})`,
+          text: `${grokPrompt}\n(Output ${grokOutputHints.join(', ')})`,
         },
         ...refsLimited.map((item) => ({ type: 'image_url', image_url: { url: item.ref } })),
       ]
@@ -2839,10 +3295,7 @@ export async function runServerGeneration(params: {
       }
       ;({ res, json } = await trackedFetch({
         url: `${v1}/chat/completions`,
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${apiKey}`,
-        },
+        headers: grokHeaders('application/json'),
         body: JSON.stringify(payload),
         auditParams: payload,
       }))
@@ -2855,7 +3308,12 @@ export async function runServerGeneration(params: {
   else if (provider === 'muse') {
     const v1 = normalizeV1Base(baseUrl)
     const { refsLimited, musePrompt } = prepareMuseInputs(prompt, resolvedAll)
-    const ratio = !museCfg.aspectRatio || museCfg.aspectRatio === 'auto' ? aspectRatio : museCfg.aspectRatio
+    const ratio =
+      aspectRatio === 'auto'
+        ? null
+        : !museCfg.aspectRatio || museCfg.aspectRatio === 'auto'
+          ? aspectRatio
+          : museCfg.aspectRatio
     const responseFormat = museCfg.responseFormat || 'b64_json'
 
     if (museCfg.endpointMode === 'muse_tasks') {
@@ -2880,13 +3338,13 @@ export async function runServerGeneration(params: {
       const fd = new FormData()
       fd.append('model', model)
       fd.append('prompt', musePrompt)
-      fd.append('aspect_ratio', ratio)
+      if (ratio) fd.append('aspect_ratio', ratio)
       fd.append('response_format', responseFormat)
       const imgSummaries = appendMultipartImages(fd, refsLimited, 'image[]')
       const summary: Record<string, unknown> = {
         model,
         prompt: musePrompt,
-        aspect_ratio: ratio,
+        ...(ratio ? { aspect_ratio: ratio } : {}),
         response_format: responseFormat,
         'image[]': imgSummaries,
       }
@@ -2901,7 +3359,7 @@ export async function runServerGeneration(params: {
       const payload: Record<string, unknown> = {
         model,
         prompt: musePrompt,
-        aspect_ratio: ratio,
+        ...(ratio ? { aspect_ratio: ratio } : {}),
         response_format: responseFormat,
       }
       if (refsLimited.length > 0) {
@@ -2930,20 +3388,25 @@ export async function runServerGeneration(params: {
   else {
     const v1 = normalizeV1Base(baseUrl)
     const seedreamPrompt = replaceImageTagsWithOneBased(prompt)
-    const ratio = !seedreamCfg.aspectRatio || seedreamCfg.aspectRatio === 'auto' ? aspectRatio : seedreamCfg.aspectRatio
+    const ratio =
+      aspectRatio === 'auto'
+        ? null
+        : !seedreamCfg.aspectRatio || seedreamCfg.aspectRatio === 'auto'
+          ? aspectRatio
+          : seedreamCfg.aspectRatio
     const responseFormat = seedreamCfg.responseFormat || 'b64_json'
 
     if (seedreamCfg.endpointMode === 'openai_edits' && resolvedAll.length > 0) {
       const fd = new FormData()
       fd.append('model', model)
       fd.append('prompt', seedreamPrompt)
-      fd.append('aspect_ratio', ratio)
+      if (ratio) fd.append('aspect_ratio', ratio)
       fd.append('response_format', responseFormat)
       const imgSummaries = appendMultipartImages(fd, resolvedAll, 'image[]')
       const summary: Record<string, unknown> = {
         model,
         prompt: seedreamPrompt,
-        aspect_ratio: ratio,
+        ...(ratio ? { aspect_ratio: ratio } : {}),
         response_format: responseFormat,
         'image[]': imgSummaries,
       }
@@ -2958,7 +3421,7 @@ export async function runServerGeneration(params: {
       const payload: Record<string, unknown> = {
         model,
         prompt: seedreamPrompt,
-        aspect_ratio: ratio,
+        ...(ratio ? { aspect_ratio: ratio } : {}),
         response_format: responseFormat,
       }
       if (resolvedAll.length > 0) {
@@ -3073,10 +3536,11 @@ export async function runServerGeneration(params: {
 
   try {
     await traceContext?.onStage?.('downloading_output', '正在保存成图…')
-    const outRes = await devProxyAwareFetch(
+    const outRes = await safeExternalFetch(
       outUrl.toString(),
       { method: 'GET', signal: AbortSignal.timeout(45_000) },
-      env
+      env,
+      45_000
     )
     const loadedOut = await readResponseImage(outRes, MAX_OUTPUT_IMAGE_BYTES)
     if (traceContext && attemptState.current) {
@@ -3294,15 +3758,70 @@ export async function describeLoadedImageViaVision(args: {
         }
       }
 
+      const isCodexOAuth =
+        target.supplierAuthMode === 'oauth_openai_codex' ||
+        /chatgpt\.com\/backend-api\/codex/i.test(target.baseUrl)
+      if (isCodexOAuth) {
+        const codexUrl = buildCodexResponsesUrl(target.baseUrl)
+        const codexHeaders = buildCodexRequestHeaders(target.apiKey, target.oauthAccountId, {
+          contentType: 'application/json',
+        })
+        const { res, json } = await fetchUpstream(
+          codexUrl,
+          {
+            method: 'POST',
+            headers: codexHeaders,
+            body: JSON.stringify({
+              model: target.model,
+              instructions:
+                'You are a visual reference analyst. Describe the provided image accurately and concisely.',
+              input: [
+                {
+                  role: 'user',
+                  content: [
+                    { type: 'input_text', text: describePrompt },
+                    { type: 'input_image', image_url: loaded.dataUrl },
+                  ],
+                },
+              ],
+              store: false,
+              stream: true,
+            }),
+          },
+          env,
+          45_000,
+          { parseSse: true }
+        )
+        if (!res.ok) {
+          throw new Error(summarizeUpstreamError(json, res.status))
+        }
+        const text = extractTextFromResponsesOutput(json)
+        if (!text) {
+          throw new Error('Codex 视觉模型未返回有效的文字描述内容')
+        }
+        return {
+          description: text.slice(0, 1200),
+          visionModel: target.model,
+          visionSupplierId: target.supplierId,
+          visionSupplierName: target.supplierName,
+        }
+      }
+
+      const isXaiOAuth =
+        target.supplierAuthMode === 'oauth_xai' ||
+        /cli-chat-proxy\.grok\.com/i.test(target.baseUrl)
       const v1 = normalizeV1Base(target.baseUrl)
+      const chatHeaders = isXaiOAuth
+        ? buildXaiOAuthRequestHeaders(target.apiKey, { contentType: 'application/json' })
+        : {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${target.apiKey}`,
+          }
       const { res, json } = await fetchUpstream(
         `${v1}/chat/completions`,
         {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${target.apiKey}`,
-          },
+          headers: chatHeaders,
           body: JSON.stringify({
             model: target.model,
             messages: [

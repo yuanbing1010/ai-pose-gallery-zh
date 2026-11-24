@@ -17,7 +17,7 @@ import {
   resolveRuntimeWechatConfig,
   type UserRow,
 } from '../db'
-import { hashPassword, randomTokenHex, sha256Hex, verifyPassword } from '../crypto'
+import { hashPassword, randomTokenHex, sha256Hex, timingSafeEqualText, verifyPassword } from '../crypto'
 import {
   clearSessionCookie,
   clearWechatStateCookie,
@@ -432,7 +432,7 @@ authRoutes.get('/auth/wechat/callback', async (c) => {
     )
   }
 
-  if (!browserToken || (await sha256Hex(browserToken)) !== stateRow.cookie_hash) {
+  if (!browserToken || !(await timingSafeEqualText(await sha256Hex(browserToken), stateRow.cookie_hash))) {
     return c.redirect(
       buildWechatCallbackRedirect(origin, returnTo, {
         status: 'error',

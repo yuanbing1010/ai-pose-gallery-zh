@@ -1,4 +1,9 @@
 import { MIO_ARCHIVE_ORIGIN, MIO_COPYRIGHT_NOTICE, MIO_SOURCE_LABEL } from '../../shared/mioArchive'
+import {
+  OUTFIT_DB_COPYRIGHT_NOTICE,
+  OUTFIT_DB_ORIGIN,
+  OUTFIT_DB_SOURCE_LABEL,
+} from '../../shared/outfitDbArchive'
 import type { CostumeItem } from '@/types/gallery'
 
 const SHISEI_REPOSITORY = 'https://github.com/wquguru/shisei'
@@ -15,10 +20,16 @@ export const COSTUME_SOURCES = [
   { id: 'charadb', label: 'たき AI · CharaDB', url: 'https://github.com/taki-ttt/charadb/blob/main/LICENSE', notice: '仅供参考，须遵守原作者限制，详见来源条款。' },
   { id: 'shisei', label: 'Shisei · 中国历代', url: 'https://github.com/wquguru/shisei', notice: 'wquguru 历代服饰参考（并非专业历史服饰复原），使用请标注来源。' },
   { id: 'mio', label: MIO_SOURCE_LABEL, url: MIO_ARCHIVE_ORIGIN, notice: MIO_COPYRIGHT_NOTICE },
+  { id: 'outfit-db', label: OUTFIT_DB_SOURCE_LABEL, url: OUTFIT_DB_ORIGIN, notice: OUTFIT_DB_COPYRIGHT_NOTICE },
 ] as const
 
 export function costumeSourceId(item: CostumeItem): string {
   return item.source || 'gia'
+}
+
+/** 是否使用 object-contain 完整呈现（避免裁切三视图、设计规格板与九宫格信息图）。 */
+export function isContainCostumeSource(source?: CostumeItem['source']): boolean {
+  return source === 'mio' || source === 'shisei' || source === 'outfit-db'
 }
 
 export function selectCostumeView(item: CostumeItem, id = item.selectedView || 'front'): CostumeItem {

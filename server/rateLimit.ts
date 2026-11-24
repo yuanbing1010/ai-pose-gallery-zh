@@ -99,20 +99,45 @@ export async function recordRateLimitHit(
 ): Promise<void> {
   if (descriptors.length === 0) return
   const stmts = descriptors.map((d, i) => {
-    const prev = inspection.buckets[i]
-    const nextCount = prev.count + 1
-    const next: RateBucket = {
-      count: nextCount,
-      windowStart: prev.windowStart,
-      lockedUntil: nextCount >= d.maxAttempts ? now + d.lockMs : 0,
+    const initial: RateBucket = {
+      count: 1,
+      windowStart: now,
+      lockedUntil: 1 >= d.maxAttempts ? now + d.lockMs : 0,
     }
+    // 使用 SQLite json_extract / json_object 在单条语句内原子递增计数，消除并发读-改-写丢计数竞态
     return db
       .prepare(
         `INSERT INTO system_settings (key, value_json, updated_at)
          VALUES (?, ?, ?)
-         ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at`
+         ON CONFLICT(key) DO UPDATE SET
+           value_json = CASE
+             WHEN (? - COALESCE(CAST(json_extract(system_settings.value_json, '$.windowStart') AS INTEGER), 0)) > ?
+                  AND COALESCE(CAST(json_extract(system_settings.value_json, '$.lockedUntil') AS INTEGER), 0) <= ?
+             THEN excluded.value_json
+             ELSE json_object(
+               'count', COALESCE(CAST(json_extract(system_settings.value_json, '$.count') AS INTEGER), 0) + 1,
+               'windowStart', COALESCE(CAST(json_extract(system_settings.value_json, '$.windowStart') AS INTEGER), ?),
+               'lockedUntil', CASE
+                 WHEN COALESCE(CAST(json_extract(system_settings.value_json, '$.count') AS INTEGER), 0) + 1 >= ?
+                 THEN ? + ?
+                 ELSE COALESCE(CAST(json_extract(system_settings.value_json, '$.lockedUntil') AS INTEGER), 0)
+               END
+             )
+           END,
+           updated_at = excluded.updated_at`
       )
-      .bind(inspection.keys[i], JSON.stringify(next), now)
+      .bind(
+        inspection.keys[i],
+        JSON.stringify(initial),
+        now,
+        now,
+        d.windowMs,
+        now,
+        now,
+        d.maxAttempts,
+        now,
+        d.lockMs
+      )
   })
   await db.batch(stmts)
 }

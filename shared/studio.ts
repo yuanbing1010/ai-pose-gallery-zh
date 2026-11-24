@@ -51,7 +51,7 @@ export interface CostumeView {
 }
 
 export interface CostumeItem {
-  source?: 'upload' | 'charadb' | 'gia-anime' | 'shisei' | 'mio'
+  source?: 'upload' | 'charadb' | 'gia-anime' | 'shisei' | 'mio' | 'outfit-db'
   r2Key?: string
   views?: CostumeView[]
   selectedView?: string
@@ -139,7 +139,7 @@ export interface GptParams extends WaveSpeedChannelOptions, DreaminaChannelOptio
 export interface GeminiParams extends WaveSpeedChannelOptions, DreaminaChannelOptions {
   endpointMode: 'native' | 'openai_chat' | 'openai_edits_json' | 'openai_edits' | 'wavespeed' | 'dreamina'
   authMode?: 'auto' | 'bearer' | 'goog_key' | 'both'
-  aspectRatio: '3:4' | '1:1' | '4:3' | '9:16' | '16:9'
+  aspectRatio: '3:4' | '1:1' | '4:3' | '9:16' | '16:9' | 'auto'
   imageSize: '1K' | '2K'
 }
 
@@ -657,6 +657,12 @@ export function getProfileCreditRange(profile: {
 }
 
 export type StudioAspectRatio = '3:4' | '1:1' | '4:3' | '9:16' | '16:9'
+export type GenerationAspectRatio = StudioAspectRatio | 'auto'
+
+export function formatAspectRatioLabel(ratio?: string | null): string {
+  if (!ratio || ratio === 'auto') return '自动画幅'
+  return ratio
+}
 
 export interface AspectRatioOption {
   id: StudioAspectRatio
@@ -704,13 +710,22 @@ export const STUDIO_ASPECT_RATIOS: AspectRatioOption[] = [
   },
 ]
 
-export function buildAspectRatioPatches(ratio: StudioAspectRatio): {
+export function buildAspectRatioPatches(ratio: GenerationAspectRatio): {
   gemini: Partial<GeminiParams>
   gpt: Partial<GptParams>
   grok: Partial<GrokParams>
   muse: Partial<MuseParams>
   seedream: Partial<SeedreamParams>
 } {
+  if (ratio === 'auto') {
+    return {
+      gemini: { aspectRatio: 'auto' },
+      gpt: { size: 'auto' },
+      grok: { aspectRatio: 'auto' },
+      muse: { aspectRatio: 'auto' },
+      seedream: { aspectRatio: 'auto' },
+    }
+  }
   const opt = STUDIO_ASPECT_RATIOS.find((r) => r.id === ratio) ?? STUDIO_ASPECT_RATIOS[0]
   return {
     gemini: { aspectRatio: opt.id },
@@ -748,9 +763,12 @@ const ESTIMATED_PIXELS_2K: Record<StudioAspectRatio, [number, number]> = {
 /** 估算当前画师、画幅比例与分辨率档位对应的输出像素尺寸 */
 export function getEstimatedOutputDimensions(
   providerId: ImageProviderId,
-  ratio: StudioAspectRatio,
+  ratio: GenerationAspectRatio,
   resolution?: StudioResolution | null
 ): { width: number; height: number; label: string } {
+  if (ratio === 'auto') {
+    return { width: 0, height: 0, label: '自动尺寸' }
+  }
   if (providerId === 'gpt') {
     const opt = STUDIO_ASPECT_RATIOS.find((r) => r.id === ratio) ?? STUDIO_ASPECT_RATIOS[0]
     const [w, h] = opt.gptSize.split('x').map((n) => Number(n) || 1024)
@@ -1960,6 +1978,37 @@ export function buildStitchedPanelLayout(
   })
 }
 
+export type StudioGenerationMode = 'recipe' | 'prompt'
+
+export function buildTextToImagePrompt(
+  userPrompt: string,
+  stylePreset = 'none',
+  options?: {
+    stylePresets?: StylePresetItem[]
+    styleCategories?: StyleCategoryItem[]
+    styleSubcategories?: StyleSubcategoryItem[]
+    hasReferenceImages?: boolean
+  }
+): string {
+  const cleanUserPrompt = userPrompt.replace(/\r\n?/g, '\n').trim()
+  const parts: string[] = []
+  if (cleanUserPrompt) {
+    parts.push(cleanUserPrompt)
+  }
+  if (stylePreset && stylePreset !== 'none') {
+    const styleInfo = resolveStyleInfo(stylePreset, {
+      stylePresets: options?.stylePresets,
+      styleCategories: options?.styleCategories,
+      styleSubcategories: options?.styleSubcategories,
+    })
+    const stylePrompt = (styleInfo.prompt || '').trim()
+    if (stylePrompt) {
+      parts.push(`Visual Style: ${stylePrompt}`)
+    }
+  }
+  return parts.join('\n\n')
+}
+
 export function buildRecipePrompt(
   recipe: RecipeState,
   stylePreset = 'none',
@@ -2483,6 +2532,40 @@ export function resolveProfileConcurrencyLimit(
   return resolved.maxModelConcurrency
 }
 
+/** 活跃执行器心跳间隔与失联回收阈值（毫秒） */
+export const JOB_HEARTBEAT_INTERVAL_MS = 12_000
+export const JOB_HEARTBEAT_STALE_MS = 60_000
+
+/**
+ * 按画师/协议分层计算单任务有效执行超时上限（秒）：
+ * - 同步直连 API（GPT / Gemini / Grok）：封顶 150s，避免被 Dreamina/Muse 的 360s 长超时拖累
+ * - 异步轮询（Muse）：封顶 270s（覆盖 muse2api 250s 轮询 + 存图余量）
+ * - WaveSpeed 异步轮询：封顶 180s
+ * - Dreamina 浏览器桥 / 其余 Seedream 渠道：沿用全局 processingTimeoutSec（默认 360s）
+ * 若管理员手动将全局 processingTimeoutSec 调得更小，则以全局值为准。
+ */
+export function resolveEffectiveProcessingTimeoutSec(
+  cfg: GenerationQueueConfig | null | undefined,
+  provider: ImageProviderId,
+  endpointMode?: string | null
+): number {
+  const globalMax = (cfg ?? createDefaultGenerationQueueConfig()).processingTimeoutSec
+  if (endpointMode === 'dreamina') {
+    return globalMax
+  }
+  if (endpointMode === 'wavespeed') {
+    return Math.min(globalMax, 180)
+  }
+  if (provider === 'muse') {
+    return Math.min(globalMax, 270)
+  }
+  if (provider === 'seedream') {
+    return globalMax
+  }
+  // gpt / gemini / grok 同步直连画师
+  return Math.min(globalMax, 150)
+}
+
 export interface GenerationQueueInfo {
   /** 全站排队位次（1 表示队首第 1 位） */
   position: number
@@ -2910,11 +2993,66 @@ export interface SupplierChannelRef {
   model: string
 }
 
+export type SupplierAuthMode = 'api_key' | 'oauth_openai_codex' | 'oauth_xai'
+export type SupplierCredentialType = 'api_key' | 'oauth_token'
+
+export const SUPPLIER_AUTH_MODES: SupplierAuthMode[] = [
+  'api_key',
+  'oauth_openai_codex',
+  'oauth_xai',
+]
+
+export const SUPPLIER_AUTH_MODE_META: Record<
+  SupplierAuthMode,
+  {
+    label: string
+    shortLabel: string
+    description: string
+    defaultBaseUrl: string
+    defaultModels: string[]
+    recommendedProvider?: ImageProviderId
+  }
+> = {
+  api_key: {
+    label: 'API Key / 静态密钥',
+    shortLabel: 'API Key',
+    description: '适用于官方 API Key 或各类中转站（支持单条/批量导入多 Key 轮询）。',
+    defaultBaseUrl: 'https://',
+    defaultModels: [],
+  },
+  oauth_openai_codex: {
+    label: 'OpenAI Codex OAuth（ChatGPT 订阅）',
+    shortLabel: 'Codex OAuth',
+    description:
+      '使用 ChatGPT Plus / Pro / Team 订阅账号通过设备码或 PKCE 登录，自动托管刷新 Token，推理走 chatgpt.com/backend-api/codex。',
+    defaultBaseUrl: 'https://chatgpt.com/backend-api/codex',
+    defaultModels: [],
+    recommendedProvider: 'gpt',
+  },
+  oauth_xai: {
+    label: 'xAI Grok OAuth（SuperGrok 订阅）',
+    shortLabel: 'Grok OAuth',
+    description:
+      '使用 SuperGrok / X Premium+ 订阅账号通过设备码或 PKCE 登录，自动托管刷新 Token，推理走 cli-chat-proxy.grok.com/v1。',
+    defaultBaseUrl: 'https://cli-chat-proxy.grok.com/v1',
+    defaultModels: ['grok-imagine-image-2.0', 'grok-imagine-image-quality'],
+    recommendedProvider: 'grok',
+  },
+}
+
+export function normalizeSupplierAuthMode(raw: unknown): SupplierAuthMode {
+  if (raw === 'oauth_openai_codex' || raw === 'oauth_xai') return raw
+  return 'api_key'
+}
+
 export interface SupplierKeyDTO {
   id: string
   supplierId: string
   label: string
+  credentialType: SupplierCredentialType
   apiKeyHint: string
+  oauthExpiresAt: number
+  oauthAccountId: string
   enabled: boolean
   cooldownUntil: number
   lastError: string
@@ -2946,6 +3084,7 @@ export function normalizeSupplierModelIds(raw: unknown): string[] {
 export interface SupplierDTO {
   id: string
   name: string
+  authMode: SupplierAuthMode
   baseUrl: string
   hasApiKey: boolean
   apiKeyHint: string
@@ -2967,6 +3106,7 @@ export interface ProviderChannelDTO {
   profileId: string
   supplierId: string
   supplierName: string
+  supplierAuthMode?: SupplierAuthMode
   supplierBaseUrl: string
   supplierEnabled: boolean
   supplierHasKey: boolean
@@ -3054,12 +3194,15 @@ export interface RedeemCodeItem {
 }
 
 export interface GenerationSnapshot {
+  generationMode?: StudioGenerationMode
+  userPrompt?: string
+  remixGalleryItemId?: string
   recipe: RecipeState
   prompt: string
   stylePreset: string
   allowFaceStyleShift?: boolean
   allowPoseStyleShift?: boolean
-  aspectRatio: StudioAspectRatio
+  aspectRatio: GenerationAspectRatio
   resolution?: StudioResolution
   sceneNote?: string
   textFallbackOnly?: boolean
@@ -3150,6 +3293,7 @@ export interface GenerationLiveState {
   totalAttempts?: number
   startedAt?: number
   stageStartedAt?: number
+  heartbeatAt?: number
   percent?: number
 }
 
@@ -3244,7 +3388,7 @@ export interface GenerationHistoryItem {
   supplierId?: string | null
   supplierName?: string | null
   prompt: string
-  aspectRatio: StudioAspectRatio
+  aspectRatio: GenerationAspectRatio
   stylePreset: string
   imageUrl: string
   recipeSummary: string
@@ -3390,4 +3534,153 @@ export interface MioSyncStatus {
 export interface MioGalleryPayload extends MioSyncStatus {
   poses: PoseItem[]
   costumes: CostumeItem[]
+}
+
+export interface OutfitDbSyncStatus {
+  synced: boolean
+  updated: string | null
+  syncedAt: number | null
+  checkedAt: number | null
+  costumeCount: number
+  familyCount: number
+  sourceSha256: string | null
+  lastError: string | null
+  archiveUrl: string
+  dataUrl: string
+  authorName: string
+  authorHandle: string
+  authorUrl: string
+}
+
+export interface OutfitDbGalleryPayload extends OutfitDbSyncStatus {
+  costumes: CostumeItem[]
+}
+
+export const GALLERY_CATEGORIES = [
+  '写实人像',
+  '二次元',
+  '时尚穿搭',
+  '光影氛围',
+  '场景建筑',
+  '创意艺术',
+  '其他',
+] as const
+
+export type GalleryCategory = (typeof GALLERY_CATEGORIES)[number]
+export type GalleryItemSourceType = 'user_t2i' | 'user_recipe' | 'x_sync'
+export type GalleryItemStatus = 'pending' | 'published' | 'rejected' | 'hidden'
+export type GallerySortOrder = 'featured' | 'latest' | 'remixes' | 'popular'
+
+export interface GalleryPublicRecipeRef {
+  pose?: { id: string; name: string; thumb: string; item?: PoseItem } | null
+  costume?: { id: string; name: string; thumb: string; item?: CostumeItem } | null
+  portrait?: { id: string; name: string; thumb: string; item?: PortraitItem } | null
+  stylePreset?: string
+  sceneNote?: string
+  hasPrivateUploads?: boolean
+}
+
+export interface GalleryItemDTO {
+  id: string
+  sourceType: GalleryItemSourceType
+  status: GalleryItemStatus
+  authorUserId?: string | null
+  authorName: string
+  sourceJobId?: string | null
+  xTweetId?: string | null
+  xAuthorHandle?: string | null
+  xAuthorName?: string | null
+  xAuthorAvatar?: string | null
+  xTweetUrl?: string | null
+  title: string
+  /** 仅在用户公开文生图提示词或 X 同步作品时返回；配方合图绝不返回内部编译指令 */
+  promptText: string
+  promptZh: string
+  promptPublic: boolean
+  recipePublic?: GalleryPublicRecipeRef | null
+  aspectRatio: StudioAspectRatio
+  width?: number | null
+  height?: number | null
+  profileName?: string | null
+  stylePreset: string
+  imageUrl: string
+  thumbUrl: string
+  imageMime: string
+  imageBytes: number
+  tags: string[]
+  category: string
+  likeCount: number
+  bookmarkCount: number
+  commentCount: number
+  remixCount: number
+  likedByMe?: boolean
+  bookmarkedByMe?: boolean
+  isFeatured: boolean
+  reviewNote?: string
+  reviewedAt?: number | null
+  createdAt: number
+  updatedAt: number
+  publishedAt?: number | null
+}
+
+export interface GalleryCommentDTO {
+  id: string
+  itemId: string
+  itemTitle?: string
+  userId: string
+  authorName: string
+  authorAvatar?: string | null
+  replyToId?: string | null
+  replyToAuthorName?: string | null
+  content: string
+  createdAt: number
+  canDelete: boolean
+}
+
+export interface GalleryListResponse {
+  items: GalleryItemDTO[]
+  total: number
+}
+
+export interface AdminGalleryStatsSummary {
+  total: number
+  pending: number
+  published: number
+  rejected: number
+  hidden: number
+  xSync: number
+  userT2i: number
+  userRecipe: number
+}
+
+export interface XSyncSourceDTO {
+  id: string
+  handle: string
+  displayName: string
+  autoPublish: boolean
+  enabled: boolean
+  note: string
+  lastTweetId?: string | null
+  lastSyncedAt?: number | null
+  lastError?: string | null
+  createdAt: number
+  updatedAt: number
+}
+
+export interface ParsedXTweetPreview {
+  tweetId: string
+  tweetUrl: string
+  authorHandle: string
+  authorName: string
+  authorAvatar?: string | null
+  rawText: string
+  suggestedPrompt: string
+  suggestedTitle: string
+  images: Array<{
+    url: string
+    width?: number
+    height?: number
+  }>
+  suggestedAspectRatio: StudioAspectRatio
+  alreadyExists?: boolean
 }

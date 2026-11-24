@@ -1,6 +1,7 @@
 import { Hono } from 'hono'
 import {
   PROVIDER_ORDER,
+  buildTextToImagePrompt,
   formatUserFacingGenerationError,
   getEffectiveProfileCreditCost,
   getEffectiveStyleCatalog,
@@ -11,10 +12,11 @@ import {
   mergeVisionFallbackConfig,
   resolveStyleInfo,
   type GenerationAuditTrace,
+  type GenerationAspectRatio,
   type GenerationSnapshot,
   type ImageProviderId,
   type RecipeState,
-  type StudioAspectRatio,
+  type StudioGenerationMode,
   type StudioResolution,
 } from '../../shared/studio'
 import { extractRecipeSources, type ResolvedSource } from '../aiProviders'
@@ -25,6 +27,7 @@ import {
   mapJobRow,
   parseProfileRow,
   reapStaleProcessingJobs,
+  refundFailedJob,
   resolveProfileForGeneration,
   selectOrderedRunnableChannels,
   type JobRow,
@@ -39,13 +42,15 @@ import {
 import {
   admitOrEnqueueViaCoordinator,
   cancelQueuedJobViaCoordinator,
+  dispatchJobToRunner,
   notifyJobFinished,
   reconcileQueueViaCoordinator,
 } from '../generationQueue'
+import { logError } from '../logger'
 import { requireAuth } from '../middleware'
 import type { AppEnv } from '../types'
 
-const VALID_RATIOS = new Set<StudioAspectRatio>(['3:4', '1:1', '4:3', '9:16', '16:9'])
+const VALID_RATIOS = new Set<GenerationAspectRatio>(['3:4', '1:1', '4:3', '9:16', '16:9', 'auto'])
 
 export const generationRoutes = new Hono<AppEnv>()
 
@@ -205,7 +210,21 @@ generationRoutes.post('/', async (c) => {
     typeof body.idempotencyKey === 'string' && body.idempotencyKey.trim().length > 0
       ? body.idempotencyKey.trim().slice(0, 100)
       : crypto.randomUUID()
-  const textFallbackOnly = body.textFallbackOnly === true
+  const generationMode: StudioGenerationMode =
+    body.generationMode === 'prompt' ? 'prompt' : 'recipe'
+  const userPrompt =
+    typeof body.userPrompt === 'string'
+      ? body.userPrompt.replace(/\r\n?/g, '\n').trim().slice(0, 3000)
+      : ''
+  const remixGalleryItemId =
+    typeof body.remixGalleryItemId === 'string' && body.remixGalleryItemId.trim().length > 0
+      ? body.remixGalleryItemId.trim().slice(0, 100)
+      : undefined
+  const textFallbackOnly = generationMode === 'recipe' && body.textFallbackOnly === true
+
+  if (generationMode === 'prompt' && userPrompt.length < 2) {
+    return c.json({ error: { message: '请输入文生图提示词（至少 2 个字符）' } }, 400)
+  }
 
   const provider = body.provider as ImageProviderId
   if (!PROVIDER_ORDER.includes(provider)) {
@@ -224,8 +243,9 @@ generationRoutes.post('/', async (c) => {
     resolvedStyleInfo.negativePrompt
   )
 
-  const rawRatio = typeof body.aspectRatio === 'string' ? (body.aspectRatio as StudioAspectRatio) : '3:4'
-  const aspectRatio: StudioAspectRatio = VALID_RATIOS.has(rawRatio) ? rawRatio : '3:4'
+  const defaultRatio: GenerationAspectRatio = generationMode === 'prompt' ? 'auto' : '3:4'
+  const rawRatio = typeof body.aspectRatio === 'string' ? (body.aspectRatio as GenerationAspectRatio) : defaultRatio
+  const aspectRatio: GenerationAspectRatio = VALID_RATIOS.has(rawRatio) ? rawRatio : defaultRatio
   const sceneNote =
     typeof body.sceneNote === 'string'
       ? body.sceneNote.replace(/\r\n?/g, '\n').trim().slice(0, 500)
@@ -237,7 +257,17 @@ generationRoutes.post('/', async (c) => {
       : resolvedStyleInfo.poseMode === 'adaptive'
   const stitchedR2Key = typeof body.stitchedR2Key === 'string' ? body.stitchedR2Key.trim() : undefined
 
-  const recipe = (body.recipe || {}) as RecipeState
+  const recipe: RecipeState =
+    generationMode === 'prompt'
+      ? {
+          portrait: (body.recipe as RecipeState | undefined)?.portrait ?? null,
+          costume: (body.recipe as RecipeState | undefined)?.costume ?? null,
+          pose: (body.recipe as RecipeState | undefined)?.pose ?? null,
+          extraImages: Array.isArray((body.recipe as RecipeState | undefined)?.extraImages)
+            ? (body.recipe as RecipeState).extraImages
+            : [],
+        }
+      : ((body.recipe || {}) as RecipeState)
   if (!recipe || typeof recipe !== 'object') {
     return c.json({ error: { message: '缺少角色配方信息' } }, 400)
   }
@@ -245,7 +275,7 @@ generationRoutes.post('/', async (c) => {
   let extractedSources: { refs: ResolvedSource[]; stitched?: ResolvedSource }
   try {
     extractedSources = extractRecipeSources(recipe, user.id, stitchedR2Key)
-    if (extractedSources.refs.length === 0) {
+    if (generationMode === 'recipe' && extractedSources.refs.length === 0) {
       return c.json({ error: { message: '请至少选择或上传 1 张参考图' } }, 400)
     }
   } catch (err) {
@@ -334,33 +364,66 @@ generationRoutes.post('/', async (c) => {
   const primaryChannel = effectiveChannels[0]
   const executionPlan = buildExecutionPlan(effectiveChannels)
   const primaryUsesStitchedSingle =
+    generationMode === 'recipe' &&
     !textFallbackOnly &&
     Boolean(extractedSources.stitched) &&
     isChannelStitchedSingleMode(primaryChannel, extractedSources.refs.length)
 
   const { promptBuildOptions, finalPrompt, multiPrompt, stitchedSinglePrompt } =
-    buildGenerationPromptVariants({
-      platform,
-      recipe,
-      stylePreset,
-      sceneNote,
-      allowFaceStyleShift,
-      allowPoseStyleShift,
-      primaryUsesStitchedSingle,
-      hasStitchedSheet: Boolean(extractedSources.stitched),
-      refCount: extractedSources.refs.length,
-    })
+    generationMode === 'prompt'
+      ? (() => {
+          const t2iPrompt = buildTextToImagePrompt(userPrompt, stylePreset, {
+            stylePresets: platform.stylePresets,
+            styleCategories: platform.styleCategories,
+            styleSubcategories: platform.styleSubcategories,
+            hasReferenceImages: extractedSources.refs.length > 0,
+          })
+          return {
+            promptBuildOptions: {
+              prefix: '',
+              suffix: '',
+              negativePrompt: '',
+              promptTemplate: platform.promptTemplate,
+              poseSanitize: platform.poseSanitize,
+              sceneNote: '',
+              allowFaceStyleShift: false,
+              allowPoseStyleShift: false,
+              stylePresets: platform.stylePresets,
+              styleCategories: platform.styleCategories,
+              styleSubcategories: platform.styleSubcategories,
+            },
+            finalPrompt: t2iPrompt,
+            multiPrompt: t2iPrompt,
+            stitchedSinglePrompt: t2iPrompt,
+          }
+        })()
+      : buildGenerationPromptVariants({
+          platform,
+          recipe,
+          stylePreset,
+          sceneNote,
+          allowFaceStyleShift,
+          allowPoseStyleShift,
+          primaryUsesStitchedSingle,
+          hasStitchedSheet: Boolean(extractedSources.stitched),
+          refCount: extractedSources.refs.length,
+        })
 
   const recipeSummary =
-    [
-      recipe.pose?.姿势名称,
-      recipe.costume?.服装名称,
-      recipe.portrait?.发型名称,
-    ]
-      .filter(Boolean)
-      .join(' + ') || '自定义合成'
+    generationMode === 'prompt'
+      ? `文生图 · ${userPrompt.replace(/\s+/g, ' ').slice(0, 48)}${userPrompt.length > 48 ? '…' : ''}`
+      : [
+          recipe.pose?.姿势名称,
+          recipe.costume?.服装名称,
+          recipe.portrait?.发型名称,
+        ]
+          .filter(Boolean)
+          .join(' + ') || '自定义合成'
 
   const snapshot: GenerationSnapshot = {
+    generationMode,
+    ...(generationMode === 'prompt' ? { userPrompt } : {}),
+    ...(remixGalleryItemId ? { remixGalleryItemId } : {}),
     recipe,
     prompt: finalPrompt,
     stylePreset,
@@ -414,6 +477,7 @@ generationRoutes.post('/', async (c) => {
       totalAttempts: executionPlan.length,
       startedAt: createdAt,
       stageStartedAt: createdAt,
+      heartbeatAt: createdAt,
       percent: 12,
     },
     promptBreakdown: {
@@ -455,6 +519,8 @@ generationRoutes.post('/', async (c) => {
     requestOrigin,
     ...(stitchedR2Key ? { stitchedR2Key } : {}),
     ...(textFallbackOnly ? { textFallbackOnly: true } : {}),
+    ...(generationMode === 'prompt' ? { generationMode: 'prompt', userPrompt } : {}),
+    ...(remixGalleryItemId ? { remixGalleryItemId } : {}),
   }
 
   const admitRes = await admitOrEnqueueViaCoordinator(c.env, {
@@ -535,6 +601,223 @@ generationRoutes.post('/', async (c) => {
     })
   }
 
+  // 优先派发给独立的 GenerationJobRunner Durable Object 后台执行，
+  // 使生图生命周期彻底解耦于客户端 SSE 连接（刷新/切页/网络抖动均不会中断执行），
+  // 本接口的 SSE 流仅作为只读进度观察者实时转发状态与最终结果。
+  if (c.env.GENERATION_RUNNER) {
+    try {
+      await dispatchJobToRunner(c.env, jobId)
+    } catch (err) {
+      logError('generations.dispatch_runner_failed', { jobId, userId: user.id }, err)
+      await refundFailedJob(
+        c.env.DB,
+        jobId,
+        '后台绘制任务派发失败，系统已自动退还积分'
+      ).catch(() => {})
+      await notifyJobFinished(c.env, jobId).catch(() => {})
+      return c.json(
+        { error: { message: '后台绘制任务派发失败，积分已全额退还，请重试' } },
+        503
+      )
+    }
+
+    let streamClosed = false
+    let heartbeatTimer: ReturnType<typeof setInterval> | undefined
+    let pollSleepTimer: ReturnType<typeof setTimeout> | undefined
+    let wakePollSleep: (() => void) | undefined
+
+    const observerStream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        const sendEvent = (event: string, data: unknown) => {
+          if (streamClosed) return
+          try {
+            controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`))
+          } catch {
+            streamClosed = true
+          }
+        }
+
+        const sendComment = (text: string) => {
+          if (streamClosed) return
+          try {
+            controller.enqueue(encoder.encode(`: ${text}\n\n`))
+          } catch {
+            streamClosed = true
+          }
+        }
+
+        const stopTimers = () => {
+          if (heartbeatTimer) {
+            clearInterval(heartbeatTimer)
+            heartbeatTimer = undefined
+          }
+          if (pollSleepTimer) {
+            clearTimeout(pollSleepTimer)
+            pollSleepTimer = undefined
+          }
+          if (wakePollSleep) {
+            const wake = wakePollSleep
+            wakePollSleep = undefined
+            wake()
+          }
+        }
+
+        const closeStream = () => {
+          stopTimers()
+          if (!streamClosed) {
+            streamClosed = true
+            try {
+              controller.close()
+            } catch {
+              // ignore already closed
+            }
+          }
+        }
+
+        heartbeatTimer = setInterval(() => sendComment('keepalive'), 4000)
+
+        sendEvent('progress', {
+          stage: 'deducted',
+          message: '准备中…',
+          attempt: 0,
+          totalAttempts: executionPlan.length,
+          startedAt: createdAt,
+          stageStartedAt: createdAt,
+          percent: 14,
+          jobId,
+          creditBalance: admitRes.creditBalance,
+        })
+
+        let lastProgressSig = ''
+        let lastReapAt = Date.now()
+
+        const pollLoop = async () => {
+          try {
+            while (!streamClosed) {
+              await new Promise<void>((resolve) => {
+                wakePollSleep = resolve
+                pollSleepTimer = setTimeout(() => {
+                  pollSleepTimer = undefined
+                  wakePollSleep = undefined
+                  resolve()
+                }, 1200)
+              })
+              if (streamClosed) break
+
+              const now = Date.now()
+              if (now - lastReapAt >= 15_000) {
+                lastReapAt = now
+                const reapRes = await reapStaleProcessingJobs(c.env.DB, user.id).catch(() => ({
+                  reapedProcessing: 0,
+                  reapedQueued: 0,
+                }))
+                if (reapRes.reapedProcessing > 0 || reapRes.reapedQueued > 0) {
+                  void reconcileQueueViaCoordinator(c.env).catch(() => {})
+                }
+              }
+
+              const row = await c.env.DB.prepare(`SELECT * FROM generation_jobs WHERE id = ?`)
+                .bind(jobId)
+                .first<JobRow>()
+              if (!row) {
+                sendEvent('error', {
+                  message: '生成任务记录异常，请刷新作品集确认状态',
+                  refunded: false,
+                  creditBalance: admitRes.creditBalance,
+                  jobId,
+                })
+                break
+              }
+
+              if (row.status === 'succeeded') {
+                const userRow = await c.env.DB.prepare(
+                  `SELECT credit_balance FROM users WHERE id = ?`
+                )
+                  .bind(user.id)
+                  .first<{ credit_balance: number }>()
+                sendEvent('done', {
+                  job: mapJobRow(row),
+                  creditBalance: userRow?.credit_balance ?? admitRes.creditBalance,
+                })
+                break
+              }
+
+              if (row.status === 'failed' || row.status === 'cancelled') {
+                const userRow = await c.env.DB.prepare(
+                  `SELECT credit_balance FROM users WHERE id = ?`
+                )
+                  .bind(user.id)
+                  .first<{ credit_balance: number }>()
+                sendEvent('error', {
+                  message:
+                    row.status === 'cancelled'
+                      ? row.error_message || '任务已取消'
+                      : formatUserFacingGenerationError(
+                          row.error_message,
+                          row.provider,
+                          row.profile_name
+                        ),
+                  refunded: row.credits_refunded > 0,
+                  creditBalance: userRow?.credit_balance ?? admitRes.creditBalance,
+                  jobId,
+                })
+                break
+              }
+
+              if (row.trace_json) {
+                try {
+                  const parsedTrace = JSON.parse(row.trace_json) as GenerationAuditTrace
+                  const live = parsedTrace.liveState
+                  if (live) {
+                    const sig = `${live.stage}|${live.message}|${live.percent ?? ''}|${live.attempt ?? ''}`
+                    if (sig !== lastProgressSig) {
+                      lastProgressSig = sig
+                      sendEvent('progress', {
+                        ...live,
+                        jobId,
+                      })
+                    }
+                  }
+                } catch {
+                  // ignore malformed trace json
+                }
+              }
+            }
+          } catch (err) {
+            logError('generations.sse_observer_error', { jobId }, err)
+          } finally {
+            closeStream()
+          }
+        }
+
+        void pollLoop()
+      },
+      cancel() {
+        streamClosed = true
+        if (heartbeatTimer) {
+          clearInterval(heartbeatTimer)
+          heartbeatTimer = undefined
+        }
+        if (pollSleepTimer) {
+          clearTimeout(pollSleepTimer)
+          pollSleepTimer = undefined
+        }
+        if (wakePollSleep) {
+          const wake = wakePollSleep
+          wakePollSleep = undefined
+          wake()
+        }
+      },
+    })
+
+    return new Response(observerStream, {
+      headers: {
+        'Content-Type': 'text/event-stream; charset=utf-8',
+        'Cache-Control': 'no-cache, no-transform',
+      },
+    })
+  }
+
   let streamClosed = false
   let heartbeatTimer: ReturnType<typeof setInterval> | undefined
 
@@ -586,6 +869,8 @@ generationRoutes.post('/', async (c) => {
             channels: effectiveChannels,
             executionPlan,
             textFallbackOnly,
+            generationMode,
+            remixGalleryItemId,
             recipe,
             extractedSources,
             stylePreset,

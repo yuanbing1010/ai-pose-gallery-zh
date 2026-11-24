@@ -1,15 +1,13 @@
 import { ZoomViewport } from '@/components/common/ZoomViewport'
 import { useSuspenseQuery } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
+import { motion } from 'motion/react'
 import {
   BoxIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
+  Columns2Icon,
   LayersIcon,
-  RotateCcwIcon,
-  SearchIcon,
-  SlidersHorizontalIcon,
-  SparklesIcon,
   XIcon,
   ZoomInIcon,
 } from 'lucide-react'
@@ -19,8 +17,11 @@ import Stack from '@/components/cards/Stack'
 import { EmptyState } from '@/components/common/EmptyState'
 import { GalleryDensityControl } from '@/components/common/GalleryDensityControl'
 import { HorizontalFilterStrip } from '@/components/common/HorizontalFilterStrip'
+import { InfiniteScrollSentinel } from '@/components/common/InfiniteScrollSentinel'
+import { LibraryPageHeader } from '@/components/common/LibraryPageHeader'
 import { ScrollToTopButton } from '@/components/common/ScrollToTopButton'
 import { ShowcaseDialog, ShowcaseStageTabs, type ShowcaseStageTabItem } from '@/components/common/ShowcaseDialog'
+import { OpticalSplitCurtain } from '@/components/motion/SkeuomorphicInstruments'
 import { GlowCard3D } from '@/components/costumes/GlowCard3D'
 import { GalleryHoloCard } from '@/components/cards/GalleryHoloCard'
 import { PoseFilterModal, type PoseSourceFilter } from '@/components/poses/PoseFilterModal'
@@ -30,7 +31,7 @@ import { type GalleryDesktopCols, galleryGridClassName, useGalleryDesktopCols } 
 import { getPoseFrameBounds, POSE_THUMB_HEIGHT, POSE_THUMB_WIDTH } from '@/lib/poseBounds'
 import { hasPoseDepthMap, poseImagePath, poseThumbPath, referenceImageUrl, downloadFileName } from '@/lib/recipeImages'
 import { cn } from '@/lib/utils'
-import { useStudio } from '@/store/studioStore'
+import { useStudioActions, useStudioShallow } from '@/store/studioStore'
 import type { PoseGroup, PoseItem } from '@/types/gallery'
 import {
   MIO_ARCHIVE_ORIGIN,
@@ -110,7 +111,12 @@ function useMasonryColumns(desktopCols: GalleryDesktopCols) {
 
 function PosesPage() {
   const { data } = useSuspenseQuery(posesQuery)
-  const { recipe, togglePose, poseDepthMode, setPoseDepthMode } = useStudio()
+  const { recipePose, poseDepthMode } = useStudioShallow((s) => ({
+    recipePose: s.recipe.pose,
+    poseDepthMode: s.poseDepthMode,
+  }))
+  const { togglePose, setPoseDepthMode } = useStudioActions()
+  const recipe = { pose: recipePose }
   const search = Route.useSearch()
   const navigate = Route.useNavigate()
 
@@ -149,7 +155,7 @@ function PosesPage() {
   const [flippedIds, setFlippedIds] = useState<Record<string, boolean>>({})
   const [viewer, setViewer] = useState<{ groupIndex: number; item: PoseItem; dir?: 1 | -1; depth?: boolean } | null>(null)
   const [viewerOpen, setViewerOpen] = useState(false)
-  const [viewerStageMode, setViewerStageMode] = useState<'3d' | 'stack' | 'zoom'>('3d')
+  const [viewerStageMode, setViewerStageMode] = useState<'3d' | 'stack' | 'compare' | 'zoom'>('3d')
   const searchInputRef = useRef<HTMLInputElement>(null)
 
   const openViewer = (next: { groupIndex: number; item: PoseItem; depth?: boolean }) => {
@@ -194,8 +200,14 @@ function PosesPage() {
       if (sourceFilter === 'gia' && isMio) continue
       if (g.category) map.set(g.category, (map.get(g.category) || 0) + 1)
     }
+    const foundationPriority = ['立位', '坐位', '坐姿', '步行', '奔跑', '芭蕾', '可爱系', '蹲跪', '跪立', '侧坐', '背向坐位', '侧卧位']
+    const rankOf = (label: string) => {
+      if (/后入|挤胸|性感|诱惑|色气|开腿|骑乘/.test(label)) return 900
+      const idx = foundationPriority.findIndex((kw) => label.includes(kw))
+      return idx >= 0 ? idx : 100
+    }
     return [...map.entries()]
-      .sort((a, b) => a[0].localeCompare(b[0], 'zh-CN'))
+      .sort((a, b) => rankOf(a[0]) - rankOf(b[0]) || b[1] - a[1] || a[0].localeCompare(b[0], 'zh-CN'))
       .map(([label, count]) => ({ label, count }))
   }, [baseGroups, activeLine, sourceFilter])
 
@@ -279,7 +291,7 @@ function PosesPage() {
         target &&
         (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)
 
-      if ((e.key === '/' && !typing) || ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k')) {
+      if (e.key === '/' && !typing && !e.metaKey && !e.ctrlKey && !e.altKey) {
         e.preventDefault()
         searchInputRef.current?.focus()
         return
@@ -300,10 +312,6 @@ function PosesPage() {
   }
 
   const totalCount = filteredGroups.length
-  const matchedImageCount = useMemo(
-    () => filteredGroups.reduce((sum, g) => sum + g.order.length, 0),
-    [filteredGroups]
-  )
   const masonryCols = useMasonryColumns(desktopCols)
   const distributedCols = useMemo(() => {
     const columns: Array<Array<{ group: PoseGroup; gIdx: number }>> = Array.from(
@@ -336,182 +344,89 @@ function PosesPage() {
 
   return (
     <div className="space-y-5">
-      {/* 与服装库统一的 StyleKit 式顶栏 + 体系统计矩阵 */}
-      <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-end">
-        <div className="space-y-1.5">
-          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            <span className="inline-block h-px w-5 bg-foreground/40" aria-hidden="true" />
-            <span>人体动态与空间深度集合</span>
-          </div>
-          <h1 className="text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
-            动作姿势库
-          </h1>
-          <p className="text-xs text-muted-foreground sm:text-sm">
-            5 视角 3D 素体白模与深度图参考 · 当前匹配{' '}
-            <span className="font-mono font-medium text-foreground">{totalCount.toLocaleString('zh-CN')}</span> 组（{matchedImageCount.toLocaleString('zh-CN')} 张）
-          </p>
-        </div>
-
-        <div
-          role="tablist"
-          aria-label="姿势体系板块"
-          className="grid grid-cols-2 divide-x divide-y divide-border overflow-hidden rounded-xl border border-border bg-card [&>*:first-child:nth-last-child(odd)]:col-span-2 sm:auto-cols-fr sm:grid-flow-col sm:grid-cols-none sm:divide-y-0 sm:[&>*:first-child:nth-last-child(odd)]:col-span-1"
-        >
-          <button
-            type="button"
-            role="tab"
-            aria-selected={activeLine === ''}
-            onClick={() => {
+      <LibraryPageHeader
+        title="动作姿势"
+        tabsLabel="姿势体系板块"
+        tabs={[
+          {
+            id: 'all',
+            label: '全部',
+            count: baseGroups.length,
+            active: activeLine === '',
+            onClick: () => {
               setLine('')
               setCategory('all')
               setShown(60)
-            }}
-            className={cn(
-              'px-3.5 py-2.5 text-center transition-colors sm:px-5',
-              activeLine === ''
-                ? 'bg-primary text-primary-foreground'
-                : 'text-foreground hover:bg-muted/60'
-            )}
-          >
-            <div className={cn('text-xs whitespace-nowrap', activeLine === '' ? 'opacity-80' : 'text-muted-foreground')}>
-              全部姿势
-            </div>
-            <div className="mt-0.5 font-mono text-sm font-semibold tabular-nums">
-              {baseGroups.length}
-            </div>
-          </button>
-
-          {lineOptions.map((opt) => {
-            const active = activeLine === opt.label
-            return (
+            },
+          },
+          ...lineOptions.map((opt) => ({
+            id: opt.label,
+            label: lineShortLabel(opt.label),
+            count: opt.count,
+            active: activeLine === opt.label,
+            onClick: () => {
+              setLine(opt.label)
+              setCategory('all')
+              setShown(60)
+            },
+          })),
+        ]}
+        searchValue={query}
+        searchPlaceholder="搜索姿势名称、分类…"
+        searchInputRef={searchInputRef}
+        onSearchChange={(val) => {
+          setQuery(val)
+          setShown(60)
+        }}
+        onOpenFilter={() => setFilterOpen(true)}
+        activeFilterCount={activeFilterCount}
+        hasActiveFilters={hasActiveFilters}
+        filteredCount={filteredGroups.length}
+        onResetFilters={resetFilters}
+        extraControls={
+          <>
+            <div className="inline-flex h-10 shrink-0 items-center rounded-full border border-white/15 bg-black/40 p-0.5 backdrop-blur-md">
               <button
-                key={opt.label}
                 type="button"
-                role="tab"
-                aria-selected={active}
-                onClick={() => {
-                  setLine(opt.label)
-                  setCategory('all')
-                  setShown(60)
-                }}
+                onClick={() => setPoseDepthMode(false)}
                 className={cn(
-                  'px-3.5 py-2.5 text-center transition-colors sm:px-5',
-                  active
-                    ? 'bg-primary text-primary-foreground'
-                    : 'text-foreground hover:bg-muted/60'
+                  'relative h-full cursor-pointer rounded-full px-3 text-xs font-semibold transition-colors',
+                  !poseDepthMode ? 'text-[#151412]' : 'text-[#D2C9B8] hover:text-white'
                 )}
               >
-                <div className={cn('text-xs whitespace-nowrap', active ? 'opacity-80' : 'text-muted-foreground')}>
-                  {lineShortLabel(opt.label)}
-                </div>
-                <div className="mt-0.5 font-mono text-sm font-semibold tabular-nums">
-                  {opt.count}
-                </div>
+                {!poseDepthMode && (
+                  <motion.span
+                    layoutId="pose-depth-mode-pill"
+                    transition={{ type: 'spring', stiffness: 520, damping: 36 }}
+                    className="absolute inset-0 rounded-full bg-[#EFECE5] shadow-xs"
+                  />
+                )}
+                <span className="relative z-10">白模</span>
               </button>
-            )
-          })}
-        </div>
-      </div>
-
-      {/* 与服装库统一的控制栏：搜索 (/) + 筛选 (F) + 白模/深度切换 + 单行分类带 */}
-      <div className="space-y-3">
-        <div className="flex flex-wrap items-center gap-2.5">
-          <div className="relative flex h-10 min-w-[160px] flex-1 items-center rounded-xl border border-border bg-card px-3.5 transition-colors focus-within:border-foreground/40">
-            <SearchIcon className="mr-2.5 size-4 shrink-0 text-muted-foreground" />
-            <input
-              ref={searchInputRef}
-              type="search"
-              value={query}
-              onChange={(e) => {
-                setQuery(e.target.value)
-                setShown(60)
-              }}
-              placeholder="搜索姿势名称、动作分类或编号（如 站姿、坐姿、单膝）…"
-              className="w-full bg-transparent text-xs text-foreground placeholder:text-muted-foreground focus:outline-none"
-            />
-            {query ? (
               <button
                 type="button"
-                aria-label="清空搜索"
-                onClick={() => {
-                  setQuery('')
-                  setShown(60)
-                }}
-                className="ml-2 flex size-5 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground hover:text-foreground"
+                onClick={() => setPoseDepthMode(true)}
+                className={cn(
+                  'relative h-full cursor-pointer rounded-full px-3 text-xs font-semibold transition-colors',
+                  poseDepthMode ? 'text-[#151412]' : 'text-[#D2C9B8] hover:text-white'
+                )}
               >
-                <XIcon className="size-3" />
+                {poseDepthMode && (
+                  <motion.span
+                    layoutId="pose-depth-mode-pill"
+                    transition={{ type: 'spring', stiffness: 520, damping: 36 }}
+                    className="absolute inset-0 rounded-full bg-[#E5A918] shadow-xs"
+                  />
+                )}
+                <span className="relative z-10">深度</span>
               </button>
-            ) : (
-              <kbd className="ml-2 hidden shrink-0 rounded-md border border-border bg-muted px-1.5 py-0.5 font-mono text-xs text-muted-foreground sm:inline-block">
-                /
-              </kbd>
-            )}
-          </div>
+            </div>
+            <GalleryDensityControl value={desktopCols} onChange={setDesktopCols} />
+          </>
+        }
+      />
 
-          <button
-            type="button"
-            onClick={() => setFilterOpen(true)}
-            className={cn(
-              'inline-flex h-10 shrink-0 items-center gap-2 rounded-xl border px-4 text-xs font-medium transition-colors active:scale-[0.98]',
-              activeFilterCount > 0
-                ? 'border-primary bg-primary text-primary-foreground hover:opacity-90'
-                : 'border-border bg-card text-foreground hover:bg-muted'
-            )}
-          >
-            <SlidersHorizontalIcon className="size-3.5" />
-            <span>筛选</span>
-            {activeFilterCount > 0 ? (
-              <span className="flex size-4 items-center justify-center rounded-full bg-background font-mono text-xs font-semibold text-foreground">
-                {activeFilterCount}
-              </span>
-            ) : (
-              <kbd className="hidden rounded-md border border-border bg-muted px-1.5 py-0.5 font-mono text-xs text-muted-foreground sm:inline-block">
-                F
-              </kbd>
-            )}
-          </button>
-
-          <div className="inline-flex h-10 shrink-0 items-center rounded-xl border border-border bg-card p-1">
-            <button
-              type="button"
-              onClick={() => setPoseDepthMode(false)}
-              className={cn(
-                'h-full rounded-lg px-3 text-xs font-medium transition-colors',
-                !poseDepthMode
-                  ? 'bg-primary text-primary-foreground'
-                  : 'text-muted-foreground hover:text-foreground'
-              )}
-            >
-              素体白模
-            </button>
-            <button
-              type="button"
-              onClick={() => setPoseDepthMode(true)}
-              className={cn(
-                'h-full rounded-lg px-3 text-xs font-medium transition-colors',
-                poseDepthMode
-                  ? 'bg-primary text-primary-foreground'
-                  : 'text-muted-foreground hover:text-foreground'
-              )}
-            >
-              深度图
-            </button>
-          </div>
-
-          <GalleryDensityControl value={desktopCols} onChange={setDesktopCols} />
-
-          {hasActiveFilters && (
-            <button
-              type="button"
-              onClick={resetFilters}
-              className="inline-flex h-10 shrink-0 items-center gap-1.5 rounded-xl border border-border bg-card px-3.5 text-xs font-medium text-foreground transition-colors hover:bg-muted active:scale-[0.98]"
-            >
-              <RotateCcwIcon className="size-3.5" />
-              <span>重置</span>
-            </button>
-          )}
-        </div>
-
+      <div className="space-y-3">
         {/* 单行横向轻盈动作分类胶囊 */}
         <HorizontalFilterStrip>
           {sourceFilter !== 'all' && (
@@ -587,11 +502,30 @@ function PosesPage() {
 
       {/* 真实姿势高度驱动的错落自由手牌瀑布流 */}
       {totalCount === 0 ? (
-        <EmptyState title="没有找到匹配的姿势" description="试试更换搜索词或重置筛选条件" />
+        <EmptyState
+          title="没有找到匹配的姿势"
+          description="试试更换搜索词或重置筛选条件"
+          action={
+            hasActiveFilters ? (
+              <button
+                type="button"
+                onClick={resetFilters}
+                className="inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-full border border-border bg-card px-4 text-xs font-semibold text-foreground transition-[transform,background-color] duration-150 ease-[var(--ease-out)] hover:bg-muted active:scale-95"
+              >
+                <span>重置全部筛选</span>
+              </button>
+            ) : undefined
+          }
+        />
       ) : (
-        <div className={cn(galleryGridClassName(desktopCols), 'items-start gap-5')}>
+        <div
+          className={cn(
+            galleryGridClassName(desktopCols),
+            'items-start gap-4 sm:gap-5'
+          )}
+        >
           {distributedCols.map((colItems, colIdx) => (
-            <div key={colIdx} className="flex flex-col gap-6">
+            <div key={colIdx} className="flex flex-col gap-4 sm:gap-5">
               {colItems.map(({ group, gIdx }) => {
                 const item = getActiveGroupItem(group)
                 const isMio = item.source === 'mio'
@@ -620,8 +554,12 @@ function PosesPage() {
                           <img
                             src={referenceImageUrl(poseThumbPath(item, false))}
                             alt={group.name}
-                            loading="lazy"
+                            loading={gIdx < 6 ? 'eager' : 'lazy'}
+                            fetchPriority={gIdx < 4 ? 'high' : undefined}
                             decoding="async"
+                            onError={(e) => {
+                              e.currentTarget.style.opacity = '0.2'
+                            }}
                             className="pointer-events-none block size-full select-none object-contain"
                           />
                         </div>
@@ -629,14 +567,19 @@ function PosesPage() {
                         <div
                           style={{ aspectRatio: `${POSE_THUMB_WIDTH} / ${bounds.cropH}` }}
                           className={cn(
-                            'relative w-full overflow-hidden transition-[aspect-ratio] duration-300',
-                            poseDepthMode ? 'bg-[#2B2B32]' : 'bg-white'
+                            'relative w-full overflow-hidden',
+                            poseDepthMode ? 'bg-[#2B2B32]' : 'bg-[#FAF9F5] dark:bg-[#E7E4DC]'
                           )}
                         >
                           <img
                             src={referenceImageUrl(poseThumbPath(item, poseDepthMode))}
                             alt={group.name}
-                            loading="lazy"
+                            loading={gIdx < 6 ? 'eager' : 'lazy'}
+                            fetchPriority={gIdx < 4 ? 'high' : undefined}
+                            decoding="async"
+                            onError={(e) => {
+                              e.currentTarget.style.opacity = '0.2'
+                            }}
                             style={{
                               position: 'absolute',
                               left: 0,
@@ -645,7 +588,10 @@ function PosesPage() {
                               height: `${(POSE_THUMB_HEIGHT / bounds.cropH) * 100}%`,
                               maxWidth: 'none',
                             }}
-                            className="pointer-events-none block select-none object-cover"
+                            className={cn(
+                              'pointer-events-none block select-none object-cover',
+                              !poseDepthMode && 'dark:brightness-[0.88] dark:contrast-[1.04] dark:sepia-[0.06]'
+                            )}
                           />
                         </div>
                       )
@@ -660,6 +606,8 @@ function PosesPage() {
                         <img
                           src={referenceImageUrl(poseThumbPath(item, !poseDepthMode))}
                           alt={group.name}
+                          loading="lazy"
+                          decoding="async"
                           className="h-full w-full object-contain"
                         />
                         <span className="pointer-events-none absolute top-2 left-2 rounded-full bg-black/70 px-2 py-0.5 text-xs font-semibold text-white backdrop-blur-xs">
@@ -675,18 +623,12 @@ function PosesPage() {
         </div>
       )}
 
-      {shown < totalCount && (
-        <div className="flex justify-center pt-4">
-          <button
-            type="button"
-            onClick={() => setShown((s) => s + 60)}
-            className="inline-flex h-10 items-center gap-2 rounded-full border border-border bg-card px-6 text-xs font-medium text-foreground transition-colors hover:bg-muted active:scale-[0.98]"
-          >
-            <SparklesIcon className="size-3.5 text-muted-foreground" />
-            加载更多姿势（剩余 {totalCount - shown} 组）
-          </button>
-        </div>
-      )}
+      <InfiniteScrollSentinel
+        shown={shown}
+        total={totalCount}
+        unitLabel="组姿势"
+        onLoadMore={() => setShown((s) => s + 60)}
+      />
 
       {/* 5 视角卡牌堆叠赏析与高清预览弹窗 */}
       {viewer && (() => {
@@ -702,10 +644,15 @@ function PosesPage() {
         const stackItems = grp ? ANGLES.map((a) => grp.angles[a]).filter(Boolean) : [it]
         const hasMultiAngles = stackItems.length > 1
         const activeAngleIdx = Math.max(0, stackItems.findIndex((x) => x.id === it.id))
-        const effectiveStageMode = viewerStageMode === 'stack' && !hasMultiAngles ? '3d' : viewerStageMode
-        const stageTabItems: ShowcaseStageTabItem<'3d' | 'stack' | 'zoom'>[] = [
+        const effectiveStageMode =
+          (viewerStageMode === 'stack' && !hasMultiAngles) ||
+          (viewerStageMode === 'compare' && !hasDepth)
+            ? '3d'
+            : viewerStageMode
+        const stageTabItems: ShowcaseStageTabItem<'3d' | 'stack' | 'compare' | 'zoom'>[] = [
           { id: '3d', label: '3D 卡牌', icon: BoxIcon },
           ...(hasMultiAngles ? [{ id: 'stack' as const, label: '叠牌视角', icon: LayersIcon }] : []),
+          ...(hasDepth ? [{ id: 'compare' as const, label: '光幕对比', icon: Columns2Icon }] : []),
           { id: 'zoom', label: '细节缩放', icon: ZoomInIcon },
         ]
         const switchGroup = (delta: 1 | -1) => {
@@ -751,7 +698,17 @@ function PosesPage() {
               />
             }
             stageContent={
-              effectiveStageMode === 'zoom' ? (
+              effectiveStageMode === 'compare' && hasDepth ? (
+                <div className="w-full max-w-[440px] pt-2">
+                  <OpticalSplitCurtain
+                    leftSrc={referenceImageUrl(poseImagePath(it, true))}
+                    rightSrc={referenceImageUrl(poseImagePath(it, false))}
+                    title={`${it.姿势名称} · ${it.角度}`}
+                    countLabel="白模 ⇄ 深度高清对比"
+                    viewportClassName="h-[340px] sm:h-[410px]"
+                  />
+                </div>
+              ) : effectiveStageMode === 'zoom' ? (
                 <div className="w-full pt-2">
                   <ZoomViewport
                     imageUrl={activeImgUrl}
@@ -823,7 +780,7 @@ function PosesPage() {
                           const prev = stackItems[(activeAngleIdx - 1 + stackItems.length) % stackItems.length]
                           setViewer((v) => ({ groupIndex: viewer.groupIndex, item: prev, dir: -1, depth: v?.depth }))
                         }}
-                        className="absolute top-1/2 left-4 z-20 flex size-9 -translate-y-1/2 items-center justify-center rounded-full border border-border bg-background/85 text-foreground backdrop-blur-md transition-all hover:bg-primary hover:text-primary-foreground active:scale-95"
+                        className="absolute top-1/2 left-4 z-20 flex size-9 -translate-y-1/2 items-center justify-center rounded-full border border-border bg-background/85 text-foreground backdrop-blur-md transition-[transform,background-color,color] duration-150 hover:bg-primary hover:text-primary-foreground active:scale-95"
                       >
                         <ChevronLeftIcon className="size-4" />
                       </button>
@@ -834,7 +791,7 @@ function PosesPage() {
                           const next = stackItems[(activeAngleIdx + 1) % stackItems.length]
                           setViewer((v) => ({ groupIndex: viewer.groupIndex, item: next, dir: 1, depth: v?.depth }))
                         }}
-                        className="absolute top-1/2 right-4 z-20 flex size-9 -translate-y-1/2 items-center justify-center rounded-full border border-border bg-background/85 text-foreground backdrop-blur-md transition-all hover:bg-primary hover:text-primary-foreground active:scale-95"
+                        className="absolute top-1/2 right-4 z-20 flex size-9 -translate-y-1/2 items-center justify-center rounded-full border border-border bg-background/85 text-foreground backdrop-blur-md transition-[transform,background-color,color] duration-150 hover:bg-primary hover:text-primary-foreground active:scale-95"
                       >
                         <ChevronRightIcon className="size-4" />
                       </button>
@@ -865,11 +822,15 @@ function PosesPage() {
                                 const dir: 1 | -1 = idx < activeAngleIdx ? -1 : 1
                                 setViewer((v) => ({ groupIndex: viewer.groupIndex, item: angleItem, dir, depth: v?.depth }))
                               }}
-                              className={cn(
-                                'h-2 rounded-full transition-all duration-300',
-                                active ? 'w-6 bg-foreground' : 'w-2 bg-muted-foreground/35 hover:bg-muted-foreground/65'
-                              )}
-                            />
+                              className="group/dot inline-flex min-h-7 min-w-7 cursor-pointer items-center justify-center rounded-full p-1.5"
+                            >
+                              <span
+                                className={cn(
+                                  'h-2 rounded-full transition-[transform,background-color] duration-200 ease-[var(--ease-out)]',
+                                  active ? 'w-5 bg-foreground' : 'w-2 bg-muted-foreground/35 group-hover/dot:bg-muted-foreground/65'
+                                )}
+                              />
+                            </button>
                           )
                         })}
                       </div>
@@ -900,7 +861,7 @@ function PosesPage() {
                           if (grp) setFlippedIds((prev) => ({ ...prev, [grp.key]: false }))
                         }}
                         className={cn(
-                          'rounded-xl py-2 text-xs font-medium transition-all',
+                          'rounded-xl py-2 text-xs font-medium transition-colors duration-150',
                           !viewerDepth ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
                         )}
                       >
@@ -914,7 +875,7 @@ function PosesPage() {
                           if (grp) setFlippedIds((prev) => ({ ...prev, [grp.key]: false }))
                         }}
                         className={cn(
-                          'rounded-xl py-2 text-xs font-medium transition-all',
+                          'rounded-xl py-2 text-xs font-medium transition-colors duration-150',
                           viewerDepth ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
                         )}
                       >
@@ -928,7 +889,7 @@ function PosesPage() {
                   <div className="space-y-2.5">
                     <div className="flex items-center justify-between text-xs">
                       <span className="font-medium tracking-wide text-muted-foreground">快速切换视角</span>
-                      <span className="font-mono text-muted-foreground">← / →</span>
+                      <span className="font-mono text-muted-foreground">↑ / ↓</span>
                     </div>
                     <div className="grid grid-cols-5 gap-1.5">
                       {stackItems.map((angItem, idx) => {
@@ -942,7 +903,7 @@ function PosesPage() {
                               setViewer((v) => ({ groupIndex: viewer.groupIndex, item: angItem, dir, depth: v?.depth }))
                             }}
                             className={cn(
-                              'rounded-xl py-2 text-xs font-medium transition-all',
+                              'rounded-xl py-2 text-xs font-medium transition-colors duration-150',
                               isCurrent
                                 ? 'bg-primary text-primary-foreground shadow-sm'
                                 : 'border border-border bg-muted/40 text-muted-foreground hover:bg-muted hover:text-foreground'

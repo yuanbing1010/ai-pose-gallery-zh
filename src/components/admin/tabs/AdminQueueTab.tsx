@@ -237,6 +237,7 @@ export function AdminQueueTab({
   return (
     <div className="space-y-6">
       <AdminPageHeader
+        eyebrow="SECTION 11 // LIVE QUEUE & CONCURRENCY"
         title="任务队列与并发调度"
         description="实时监控全站正在执行的绘制任务、FIFO 等待队列及各画笔档位占用；支持动态调整全站/单模型/单用户并发度与超时规则。"
         actions={
@@ -643,9 +644,9 @@ export function AdminQueueTab({
             </AdminField>
 
             <AdminField
-              label="绘制执行超时（秒）"
+              label="绘制执行超时上限（秒）"
               htmlFor="q-proc-timeout"
-              hint="开始执行后超过该时间未完成则自动回收并退积分（30~900，建议 150）"
+              hint="全局兜底上限（30~900，默认 360 供长轮询通道使用）；同步直连画师自动封顶 150s，且 60s 无心跳即自动回收退积分"
             >
               <Input
                 id="q-proc-timeout"

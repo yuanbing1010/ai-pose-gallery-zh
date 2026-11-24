@@ -148,18 +148,18 @@ function AdminLoginPage() {
 
   return (
     <div className="flex min-h-dvh flex-col justify-between bg-white text-zinc-950 dark:bg-zinc-950 dark:text-zinc-50">
-      <header className="flex h-12 items-center justify-between border-b border-zinc-950 px-6 text-xs dark:border-zinc-200">
+      <header className="flex h-12 items-center justify-between border-b-2 border-zinc-950 px-4 text-xs sm:px-6 dark:border-zinc-100">
         <div className="flex items-center gap-3">
-          <span className="bg-zinc-950 px-2 py-0.5 font-bold text-white dark:bg-zinc-100 dark:text-zinc-950">
-            管理控制台
+          <span className="bg-zinc-950 px-2 py-0.5 font-mono font-bold text-white dark:bg-zinc-100 dark:text-zinc-950">
+            CASTDECK // ADMIN
           </span>
-          <span className="hidden text-zinc-500 sm:inline">全站运维与资产管理中心</span>
+          <span className="hidden font-mono text-zinc-500 sm:inline">全站运维与资产控制网关</span>
         </div>
         <div className="flex items-center gap-2">
           <ThemeToggle square />
           <Link
             to="/"
-            className="inline-flex items-center gap-1.5 border border-zinc-300 px-3 py-1 text-xs transition-colors hover:border-zinc-950 hover:bg-zinc-100 dark:border-zinc-800 dark:hover:border-zinc-200 dark:hover:bg-zinc-900"
+            className="inline-flex h-8 items-center gap-1.5 border border-zinc-300 px-3 text-xs transition-colors hover:border-zinc-950 hover:bg-zinc-100 dark:border-zinc-800 dark:hover:border-zinc-200 dark:hover:bg-zinc-900"
           >
             <ArrowLeftIcon className="size-3.5" />
             <span>返回用户前端</span>
@@ -167,8 +167,62 @@ function AdminLoginPage() {
         </div>
       </header>
 
-      <main className="mx-auto flex w-full max-w-md flex-1 flex-col justify-center px-4 py-12">
-        <div className="border border-zinc-950 bg-white dark:border-zinc-200 dark:bg-zinc-950">
+      <main className="mx-auto grid w-full max-w-5xl flex-1 grid-cols-1 items-center gap-8 px-4 py-10 sm:px-6 lg:grid-cols-[1.05fr_minmax(0,440px)] lg:gap-12">
+        {/* 左侧：瑞士建筑排版系统规范面板（桌面端展示） */}
+        <section className="hidden h-full max-h-[540px] flex-col justify-between border border-zinc-200 bg-zinc-50/70 p-8 lg:flex dark:border-zinc-800 dark:bg-zinc-900/35">
+          <div className="space-y-4">
+            <div className="inline-flex items-center gap-2 border border-zinc-950 px-2.5 py-1 font-mono text-xs font-bold dark:border-zinc-200">
+              <span
+                className={`size-1.5 ${
+                  checking
+                    ? 'animate-pulse bg-amber-500'
+                    : connectError
+                      ? 'bg-red-500'
+                      : 'bg-emerald-500'
+                }`}
+              />
+              <span>
+                {checking
+                  ? 'GATEWAY // CHECKING'
+                  : connectError
+                    ? 'GATEWAY // OFFLINE'
+                    : needsSetup
+                      ? 'GATEWAY // BOOTSTRAP'
+                      : 'GATEWAY // READY'}
+              </span>
+            </div>
+
+            <h2 className="text-4xl leading-[1.06] font-extrabold tracking-[-0.035em]">
+              OPERATIONS
+              <br />
+              CONTROL
+              <br />
+              SURFACE
+            </h2>
+
+            <p className="max-w-sm text-xs leading-relaxed text-zinc-600 dark:text-zinc-400">
+              统一管理成员准入、原子积分账本、多厂商加密凭证、画笔路由调度、画风图鉴与全链路生成审计。
+            </p>
+          </div>
+
+          <div className="divide-y divide-zinc-200 border-t border-b border-zinc-200 font-mono text-xs dark:divide-zinc-800 dark:border-zinc-800">
+            <div className="flex items-center justify-between py-2.5">
+              <span className="text-zinc-500">01. SESSION ISOLATION</span>
+              <span className="font-bold">独立 HttpOnly 会话</span>
+            </div>
+            <div className="flex items-center justify-between py-2.5">
+              <span className="text-zinc-500">02. KEY VAULT</span>
+              <span className="font-bold">AES-GCM 服务端加密</span>
+            </div>
+            <div className="flex items-center justify-between py-2.5">
+              <span className="text-zinc-500">03. LEDGER ENGINE</span>
+              <span className="font-bold">D1 原子批处理账本</span>
+            </div>
+          </div>
+        </section>
+
+        {/* 右侧：精密认证表单卡片 */}
+        <div className="mx-auto w-full max-w-md border-2 border-zinc-950 bg-white dark:border-zinc-100 dark:bg-zinc-950">
           <div className="flex items-center justify-between border-b border-zinc-950 bg-zinc-100 px-5 py-3 text-xs dark:border-zinc-200 dark:bg-zinc-900">
             <span className="font-bold">
               {connectError
@@ -279,10 +333,12 @@ function AdminLoginPage() {
                       id="admin-setup-token"
                       type="password"
                       autoComplete="off"
+                      autoCapitalize="none"
+                      autoCorrect="off"
                       value={setupToken}
                       onChange={(e) => setSetupToken(e.target.value)}
                       placeholder="填写 BOOTSTRAP_SETUP_TOKEN"
-                      className="h-10 w-full rounded-none border border-zinc-300 bg-transparent px-3 font-mono text-xs placeholder:text-zinc-500 outline-none focus:border-zinc-950 dark:border-zinc-700 dark:placeholder:text-zinc-400 dark:focus:border-zinc-100"
+                      className="h-10 w-full rounded-none border border-zinc-300 bg-transparent px-3 font-mono text-xs placeholder:text-zinc-500 outline-none focus:border-zinc-950 focus-visible:ring-2 focus-visible:ring-zinc-950/25 dark:border-zinc-700 dark:placeholder:text-zinc-400 dark:focus:border-zinc-100 dark:focus-visible:ring-zinc-100/30"
                     />
                   </div>
                 )}
@@ -295,10 +351,13 @@ function AdminLoginPage() {
                     id="admin-user"
                     type="text"
                     autoComplete="username"
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    enterKeyHint="next"
                     value={account}
                     onChange={(e) => setAccount(e.target.value)}
                     placeholder={needsSetup ? '例如 admin（3~32 位字母数字）' : '管理员用户名或邮箱'}
-                    className="h-10 w-full rounded-none border border-zinc-300 bg-transparent px-3 font-mono text-xs placeholder:text-zinc-500 outline-none focus:border-zinc-950 dark:border-zinc-700 dark:placeholder:text-zinc-400 dark:focus:border-zinc-100"
+                    className="h-10 w-full rounded-none border border-zinc-300 bg-transparent px-3 font-mono text-xs placeholder:text-zinc-500 outline-none focus:border-zinc-950 focus-visible:ring-2 focus-visible:ring-zinc-950/25 dark:border-zinc-700 dark:placeholder:text-zinc-400 dark:focus:border-zinc-100 dark:focus-visible:ring-zinc-100/30"
                   />
                 </div>
 
@@ -311,16 +370,17 @@ function AdminLoginPage() {
                       id="admin-pass"
                       type={showPassword ? 'text' : 'password'}
                       autoComplete={needsSetup ? 'new-password' : 'current-password'}
+                      enterKeyHint={needsSetup ? 'next' : 'done'}
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
                       placeholder="至少 6 位字符"
-                      className="h-10 w-full rounded-none border border-zinc-300 bg-transparent px-3 pr-10 font-mono text-xs placeholder:text-zinc-500 outline-none focus:border-zinc-950 dark:border-zinc-700 dark:placeholder:text-zinc-400 dark:focus:border-zinc-100"
+                      className="h-10 w-full rounded-none border border-zinc-300 bg-transparent px-3 pr-10 font-mono text-xs placeholder:text-zinc-500 outline-none focus:border-zinc-950 focus-visible:ring-2 focus-visible:ring-zinc-950/25 dark:border-zinc-700 dark:placeholder:text-zinc-400 dark:focus:border-zinc-100 dark:focus-visible:ring-zinc-100/30"
                     />
                     <button
                       type="button"
                       aria-label={showPassword ? '隐藏密码' : '显示密码'}
                       onClick={() => setShowPassword((v) => !v)}
-                      className="absolute top-1/2 right-2 -translate-y-1/2 p-1 text-zinc-500 hover:text-zinc-950 dark:text-zinc-400 dark:hover:text-white"
+                      className="absolute top-1/2 right-1 flex size-8 -translate-y-1/2 items-center justify-center text-zinc-500 before:absolute before:-inset-1.5 before:content-[''] hover:text-zinc-950 dark:text-zinc-400 dark:hover:text-white"
                     >
                       {showPassword ? <EyeOffIcon className="size-3.5" /> : <EyeIcon className="size-3.5" />}
                     </button>
@@ -337,16 +397,17 @@ function AdminLoginPage() {
                         id="admin-pass-confirm"
                         type={showConfirmPassword ? 'text' : 'password'}
                         autoComplete="new-password"
+                        enterKeyHint="done"
                         value={confirmPassword}
                         onChange={(e) => setConfirmPassword(e.target.value)}
                         placeholder="再次输入密码"
-                        className="h-10 w-full rounded-none border border-zinc-300 bg-transparent px-3 pr-10 font-mono text-xs placeholder:text-zinc-500 outline-none focus:border-zinc-950 dark:border-zinc-700 dark:placeholder:text-zinc-400 dark:focus:border-zinc-100"
+                        className="h-10 w-full rounded-none border border-zinc-300 bg-transparent px-3 pr-10 font-mono text-xs placeholder:text-zinc-500 outline-none focus:border-zinc-950 focus-visible:ring-2 focus-visible:ring-zinc-950/25 dark:border-zinc-700 dark:placeholder:text-zinc-400 dark:focus:border-zinc-100 dark:focus-visible:ring-zinc-100/30"
                       />
                       <button
                         type="button"
                         aria-label={showConfirmPassword ? '隐藏确认密码' : '显示确认密码'}
                         onClick={() => setShowConfirmPassword((v) => !v)}
-                        className="absolute top-1/2 right-2 -translate-y-1/2 p-1 text-zinc-500 hover:text-zinc-950 dark:text-zinc-400 dark:hover:text-white"
+                        className="absolute top-1/2 right-1 flex size-8 -translate-y-1/2 items-center justify-center text-zinc-500 before:absolute before:-inset-1.5 before:content-[''] hover:text-zinc-950 dark:text-zinc-400 dark:hover:text-white"
                       >
                         {showConfirmPassword ? (
                           <EyeOffIcon className="size-3.5" />

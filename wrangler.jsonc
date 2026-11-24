@@ -2,12 +2,24 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "ai-pose-gallery-zh",
   "main": "worker.ts",
-  "compatibility_date": "2025-10-01",
+  "compatibility_date": "2026-03-01",
   "observability": {
-    "enabled": true
+    "enabled": true,
+    "redact_query_string": true,
+    "logs": {
+      "enabled": true,
+      "head_sampling_rate": 1
+    },
+    "traces": {
+      "enabled": true,
+      "head_sampling_rate": 0.1
+    }
+  },
+  "placement": {
+    "mode": "smart"
   },
   "triggers": {
-    "crons": ["30 12 * * *"]
+    "crons": ["0 13 * * *"]
   },
   "previews": {},
   // 部署前请先运行 `npx wrangler d1 create ai-pose-gallery-db` 与 `npx wrangler r2 bucket create ai-pose-gallery-bucket`

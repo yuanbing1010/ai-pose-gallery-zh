@@ -1,8 +1,15 @@
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useRef } from 'react'
 import { create } from 'zustand'
 import { useShallow } from 'zustand/react/shallow'
-import { arrayMove } from '@dnd-kit/sortable'
 import { toast } from '@/lib/notifications'
+
+function arrayMove<T>(list: readonly T[], from: number, to: number): T[] {
+  const next = list.slice()
+  const [item] = next.splice(from, 1)
+  if (item === undefined) return next
+  next.splice(to, 0, item)
+  return next
+}
 import { idbRead, idbWrite } from '@/lib/idbStorage'
 import { recipeBackup } from '@/lib/recipeImages'
 import { randomSlot, type RandomScope, type ReferencePools, type ReferenceSlot } from '@/lib/randomRecipe'
@@ -22,7 +29,6 @@ import {
   uploadReferenceFileApi,
   type StreamGenerationProgress,
 } from '@/lib/apiClient'
-import { dataUrlToBlob, stitchRecipeCanvas } from '@/services/aiGenerator'
 import {
   DEFAULT_PLATFORM_CONFIG,
   DEFAULT_WECHAT_LOGIN_INFO,
@@ -37,6 +43,8 @@ import {
 import type {
   CostumeItem,
   ExtraReferenceImage,
+  GalleryItemDTO,
+  GenerationAspectRatio,
   GenerationHistoryItem,
   GenerationStatus,
   ImageProviderId,
@@ -48,6 +56,7 @@ import type {
   PublicUser,
   RecipeState,
   StudioAspectRatio,
+  StudioGenerationMode,
   StudioResolution,
   WechatLoginPublicInfo,
 } from '@/types/gallery'
@@ -63,7 +72,15 @@ interface PoseAdaptOverride {
   enabled: boolean
 }
 
+export interface RemixGallerySource {
+  itemId: string
+  title: string
+  authorName: string
+}
+
 interface ClientPrefs {
+  studioMode: StudioGenerationMode
+  userPrompt: string
   selectedProvider: ImageProviderId
   selectedProfileByProvider: Partial<Record<ImageProviderId, string>>
   selectedResolutionByProfile: Record<string, StudioResolution>
@@ -77,6 +94,8 @@ interface ClientPrefs {
 }
 
 const DEFAULT_PREFS: ClientPrefs = {
+  studioMode: 'recipe',
+  userPrompt: '',
   selectedProvider: 'gpt',
   selectedProfileByProvider: {},
   selectedResolutionByProfile: {},
@@ -146,6 +165,8 @@ const initialPrefs = (): ClientPrefs => {
     if (!raw) return DEFAULT_PREFS
     const parsed = JSON.parse(raw) as Partial<ClientPrefs>
     return {
+      studioMode: parsed.studioMode === 'prompt' ? 'prompt' : 'recipe',
+      userPrompt: typeof parsed.userPrompt === 'string' ? parsed.userPrompt : DEFAULT_PREFS.userPrompt,
       selectedProvider:
         parsed.selectedProvider && PROVIDER_ORDER.includes(parsed.selectedProvider)
           ? parsed.selectedProvider
@@ -267,15 +288,22 @@ interface StudioZustandStore {
   selectedProfileByProvider: Partial<Record<ImageProviderId, string>>
   selectedResolutionByProfile: Record<string, StudioResolution>
   stylePreset: string
+  promptStyleEnabled: boolean
+  promptStylePreset: string
   allowFaceStyleShift: boolean
   poseAdaptOverride: PoseAdaptOverride | null
   allowPoseStyleShift: boolean
   aspectRatio: StudioAspectRatio
+  promptAspectRatioEnabled: boolean
+  promptAspectRatio: StudioAspectRatio
   history: GenerationHistoryItem[]
   poseDepthMode: boolean
   poseFrontOnly: boolean
   sceneNote: string
   textToImageMode: boolean
+  studioMode: StudioGenerationMode
+  userPrompt: string
+  remixGallerySource: RemixGallerySource | null
   previewUrl: string
   isSubmitting: boolean
   submittingProvider: ImageProviderId | null
@@ -303,14 +331,21 @@ interface StudioZustandStore {
   setSelectedResolutionForProfile: (profileId: string, resolution: StudioResolution) => void
   setSelectedResolutionByProfileState: (val: Record<string, StudioResolution>) => void
   setStylePreset: (val: string) => void
+  setPromptStyleEnabled: (enabled: boolean) => void
+  setPromptStylePreset: (val: string) => void
   setAllowFaceStyleShift: (updater: Updater<boolean>) => void
   setAllowPoseStyleShift: (updater: Updater<boolean>) => void
   setAspectRatio: (val: StudioAspectRatio) => void
+  setPromptAspectRatioEnabled: (enabled: boolean) => void
+  setPromptAspectRatio: (val: StudioAspectRatio) => void
   setHistory: (updater: Updater<GenerationHistoryItem[]>) => void
   setPoseDepthModeState: (updater: Updater<boolean>) => void
   setPoseFrontOnly: (updater: Updater<boolean>) => void
   setSceneNote: (updater: Updater<string>) => void
   setTextToImageMode: (updater: Updater<boolean>) => void
+  setStudioMode: (mode: StudioGenerationMode) => void
+  setUserPrompt: (updater: Updater<string>) => void
+  setRemixGallerySource: (source: RemixGallerySource | null) => void
   setPreviewUrl: (updater: Updater<string>) => void
   setIsSubmitting: (val: boolean) => void
   setSubmittingMeta: (provider: ImageProviderId | null, profileId: string | null) => void
@@ -341,6 +376,8 @@ export const useStudioStore = create<StudioZustandStore>((set) => {
     selectedProfileByProvider: prefs.selectedProfileByProvider,
     selectedResolutionByProfile: prefs.selectedResolutionByProfile,
     stylePreset: prefs.stylePreset,
+    promptStyleEnabled: false,
+    promptStylePreset: 'none',
     allowFaceStyleShift: prefs.allowFaceStyleShift,
     poseAdaptOverride: prefs.poseAdaptOverride,
     allowPoseStyleShift: resolveEffectivePoseAdapt(
@@ -349,11 +386,16 @@ export const useStudioStore = create<StudioZustandStore>((set) => {
       prefs.poseAdaptOverride
     ),
     aspectRatio: prefs.aspectRatio,
+    promptAspectRatioEnabled: false,
+    promptAspectRatio: '3:4',
     history: [],
     poseDepthMode: Boolean(rec.pose?.useDepth),
     poseFrontOnly: prefs.poseFrontOnly,
     sceneNote: prefs.sceneNote,
     textToImageMode: prefs.textToImageMode,
+    studioMode: prefs.studioMode,
+    userPrompt: prefs.userPrompt,
+    remixGallerySource: null,
     previewUrl: '',
     isSubmitting: false,
     submittingProvider: null,
@@ -403,6 +445,8 @@ export const useStudioStore = create<StudioZustandStore>((set) => {
           allowPoseStyleShift: resolveEffectivePoseAdapt(s.platform, stylePreset, null),
         }
       }),
+    setPromptStyleEnabled: (promptStyleEnabled) => set({ promptStyleEnabled }),
+    setPromptStylePreset: (promptStylePreset) => set({ promptStylePreset }),
     setAllowFaceStyleShift: (updater) =>
       set((s) => ({
         allowFaceStyleShift:
@@ -422,6 +466,8 @@ export const useStudioStore = create<StudioZustandStore>((set) => {
         }
       }),
     setAspectRatio: (aspectRatio) => set({ aspectRatio }),
+    setPromptAspectRatioEnabled: (promptAspectRatioEnabled) => set({ promptAspectRatioEnabled }),
+    setPromptAspectRatio: (promptAspectRatio) => set({ promptAspectRatio }),
     setHistory: (updater) =>
       set((s) => ({ history: typeof updater === 'function' ? updater(s.history) : updater })),
     setPoseDepthModeState: (updater) =>
@@ -432,6 +478,10 @@ export const useStudioStore = create<StudioZustandStore>((set) => {
       set((s) => ({ sceneNote: typeof updater === 'function' ? updater(s.sceneNote) : updater })),
     setTextToImageMode: (updater) =>
       set((s) => ({ textToImageMode: typeof updater === 'function' ? updater(s.textToImageMode) : updater })),
+    setStudioMode: (studioMode) => set({ studioMode }),
+    setUserPrompt: (updater) =>
+      set((s) => ({ userPrompt: typeof updater === 'function' ? updater(s.userPrompt) : updater })),
+    setRemixGallerySource: (remixGallerySource) => set({ remixGallerySource }),
     setPreviewUrl: (updater) =>
       set((s) => ({ previewUrl: typeof updater === 'function' ? updater(s.previewUrl) : updater })),
     setIsSubmitting: (isSubmitting) => set({ isSubmitting }),
@@ -476,14 +526,21 @@ interface StudioContextValue {
   selectedProfileByProvider: Partial<Record<ImageProviderId, string>>
   selectedResolutionByProfile: Record<string, StudioResolution>
   stylePreset: string
+  promptStyleEnabled: boolean
+  promptStylePreset: string
   allowFaceStyleShift: boolean
   allowPoseStyleShift: boolean
   aspectRatio: StudioAspectRatio
+  promptAspectRatioEnabled: boolean
+  promptAspectRatio: StudioAspectRatio
   history: GenerationHistoryItem[]
   poseDepthMode: boolean
   poseFrontOnly: boolean
   sceneNote: string
   textToImageMode: boolean
+  studioMode: StudioGenerationMode
+  userPrompt: string
+  remixGallerySource: RemixGallerySource | null
   previewUrl: string
   isSubmitting: boolean
   submittingProvider: ImageProviderId | null
@@ -517,13 +574,21 @@ interface StudioContextValue {
   setSelectedProfileForProvider: (providerId: ImageProviderId, profileId: string) => void
   setSelectedResolutionForProfile: (profileId: string, resolution: StudioResolution) => void
   setStylePreset: (preset: string) => void
+  setPromptStyleEnabled: (enabled: boolean) => void
+  setPromptStylePreset: (preset: string) => void
   setAllowFaceStyleShift: (updater: Updater<boolean>) => void
   setAllowPoseStyleShift: (updater: Updater<boolean>) => void
   setAspectRatio: (ratio: StudioAspectRatio) => void
+  setPromptAspectRatioEnabled: (enabled: boolean) => void
+  setPromptAspectRatio: (ratio: StudioAspectRatio) => void
   setPoseDepthMode: (val: boolean) => void
   setPoseFrontOnly: (val: boolean) => void
   setSceneNote: (updater: Updater<string>) => void
   setTextToImageMode: (updater: Updater<boolean>) => void
+  setStudioMode: (mode: StudioGenerationMode) => void
+  setUserPrompt: (updater: Updater<string>) => void
+  setRemixGallerySource: (source: RemixGallerySource | null) => void
+  applyGalleryRemix: (item: GalleryItemDTO) => void
   toggleRecipePoseDepth: () => void
   setPreviewUrl: (url: string) => void
   sendForegroundToBackground: () => void
@@ -567,13 +632,21 @@ export type StudioActionsValue = Pick<
   | 'setSelectedProfileForProvider'
   | 'setSelectedResolutionForProfile'
   | 'setStylePreset'
+  | 'setPromptStyleEnabled'
+  | 'setPromptStylePreset'
   | 'setAllowFaceStyleShift'
   | 'setAllowPoseStyleShift'
   | 'setAspectRatio'
+  | 'setPromptAspectRatioEnabled'
+  | 'setPromptAspectRatio'
   | 'setPoseDepthMode'
   | 'setPoseFrontOnly'
   | 'setSceneNote'
   | 'setTextToImageMode'
+  | 'setStudioMode'
+  | 'setUserPrompt'
+  | 'setRemixGallerySource'
+  | 'applyGalleryRemix'
   | 'toggleRecipePoseDepth'
   | 'setPreviewUrl'
   | 'sendForegroundToBackground'
@@ -617,15 +690,22 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     selectedProfileByProvider,
     selectedResolutionByProfile,
     stylePreset,
+    promptStyleEnabled,
+    promptStylePreset,
     allowFaceStyleShift,
     poseAdaptOverride,
     allowPoseStyleShift,
     aspectRatio,
+    promptAspectRatioEnabled,
+    promptAspectRatio,
     history,
     poseDepthMode,
     poseFrontOnly,
     sceneNote,
     textToImageMode,
+    studioMode,
+    userPrompt,
+    remixGallerySource,
     previewUrl,
     isSubmitting,
     submittingProvider,
@@ -653,14 +733,21 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     setSelectedResolutionForProfile,
     setSelectedResolutionByProfileState,
     setStylePreset,
+    setPromptStyleEnabled,
+    setPromptStylePreset,
     setAllowFaceStyleShift,
     setAllowPoseStyleShift,
     setAspectRatio,
+    setPromptAspectRatioEnabled,
+    setPromptAspectRatio,
     setHistory,
     setPoseDepthModeState,
     setPoseFrontOnly,
     setSceneNote,
     setTextToImageMode,
+    setStudioMode,
+    setUserPrompt,
+    setRemixGallerySource,
     setPreviewUrl,
     setIsSubmitting,
     setSubmittingMeta,
@@ -878,6 +965,12 @@ export function StudioProvider({ children }: { children: ReactNode }) {
         }
       }
 
+      const curPromptStyle = useStudioStore.getState().promptStylePreset
+      if (curPromptStyle !== 'none' && !validStyleIds.has(curPromptStyle)) {
+        setPromptStylePreset('none')
+        setPromptStyleEnabled(false)
+      }
+
       // 对每个画师已保存的模型档位与分辨率做有效性与回退校准
       const curState = useStudioStore.getState()
       const nextProfiles: Partial<Record<ImageProviderId, string>> = {}
@@ -921,6 +1014,8 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     setSelectedProfileByProviderState,
     setSelectedProvider,
     setSelectedResolutionByProfileState,
+    setPromptStyleEnabled,
+    setPromptStylePreset,
     setStylePreset,
     setUser,
     setWechatLogin,
@@ -1033,6 +1128,8 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       localStorage.setItem(
         PREFS_KEY,
         JSON.stringify({
+          studioMode,
+          userPrompt,
           selectedProvider,
           selectedProfileByProvider,
           selectedResolutionByProfile,
@@ -1047,6 +1144,8 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       )
     } catch {}
   }, [
+    studioMode,
+    userPrompt,
     selectedProvider,
     selectedProfileByProvider,
     selectedResolutionByProfile,
@@ -1343,6 +1442,11 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       poses?: PoseItem[]
     }) => {
       const live = useStudioStore.getState()
+      const snapshot = {
+        ...live.recipe,
+        extraImages: [...(live.recipe.extraImages || [])],
+      }
+      const hadExisting = Boolean(snapshot.portrait || snapshot.costume || snapshot.pose)
       const allPoses = pools.poses || []
       const frontPosePool = live.poseFrontOnly
         ? allPoses.filter((p) => p.角度 === '正面')
@@ -1365,7 +1469,19 @@ export function StudioProvider({ children }: { children: ReactNode }) {
           return { ...picked, useDepth: hasPoseDepthMap(picked) ? live.poseDepthMode : false }
         })(),
       }))
-      toast.success('已随机抽取一套角色配方')
+      if (hadExisting) {
+        toast.success('已随机抽取一套角色配方', {
+          duration: 5000,
+          action: {
+            label: '撤销',
+            onClick: () => {
+              setRecipe(snapshot)
+            },
+          },
+        })
+      } else {
+        toast.success('已随机抽取一套角色配方')
+      }
     },
     [setRecipe]
   )
@@ -1472,6 +1588,13 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     async (currentRecipe: RecipeState): Promise<RecipeState> => {
       const next = structuredClone(currentRecipe)
       let changed = false
+      const needsUpload =
+        (next.portrait?.source === 'upload' && !next.portrait.r2Key && next.portrait.原图.startsWith('data:')) ||
+        (next.costume?.source === 'upload' && !next.costume.r2Key && next.costume.原图.startsWith('data:')) ||
+        (next.pose?.source === 'upload' && !next.pose.r2Key && next.pose.原图.startsWith('data:')) ||
+        (next.extraImages || []).some((extra) => !extra.r2Key && extra.url.startsWith('data:'))
+      if (!needsUpload) return next
+      const { dataUrlToBlob } = await import('@/services/aiGenerator')
 
       if (next.portrait?.source === 'upload' && !next.portrait.r2Key && next.portrait.原图.startsWith('data:')) {
         const uploaded = await uploadReferenceFileApi({
@@ -1604,13 +1727,16 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       stylePreset: string
       allowFaceStyleShift: boolean
       allowPoseStyleShift: boolean
-      aspectRatio: StudioAspectRatio
+      aspectRatio: GenerationAspectRatio
       sceneNote: string
       recipe: RecipeState
       providerMeta: ProviderPublicInfo
-      mode: 'regular' | 'text_fallback'
+      mode: 'regular' | 'text_fallback' | 'prompt'
+      userPrompt?: string
+      remixGalleryItemId?: string
     }) => {
       const isTextFallback = params.mode === 'text_fallback'
+      const isPromptMode = params.mode === 'prompt'
       const clientStartedAt = Date.now()
       const localToken = crypto.randomUUID()
       let maxPercent = isTextFallback ? 8 : 5
@@ -1636,13 +1762,21 @@ export function StudioProvider({ children }: { children: ReactNode }) {
               stageStartedAt: clientStartedAt,
               percent: 8,
             }
-          : {
-              stage: 'uploading',
-              message: '正在准备参考素材…',
-              startedAt: clientStartedAt,
-              stageStartedAt: clientStartedAt,
-              percent: 5,
-            }
+          : isPromptMode
+            ? {
+                stage: 'deducted',
+                message: '正在提交文生图创作任务…',
+                startedAt: clientStartedAt,
+                stageStartedAt: clientStartedAt,
+                percent: 10,
+              }
+            : {
+                stage: 'uploading',
+                message: '正在准备参考素材…',
+                startedAt: clientStartedAt,
+                stageStartedAt: clientStartedAt,
+                percent: 5,
+              }
       )
 
       const releaseSubmitSlotIfOwner = () => {
@@ -1655,17 +1789,20 @@ export function StudioProvider({ children }: { children: ReactNode }) {
         setSubmittingProgress(null)
       }
 
-      const summaryFallback =
-        [
-          params.recipe.pose?.姿势名称,
-          params.recipe.costume?.服装名称,
-          params.recipe.portrait?.发型名称,
-        ]
-          .filter(Boolean)
-          .join(' + ') || '自定义合成'
+      const summaryFallback = isPromptMode
+        ? `文生图 · ${(params.userPrompt || '').replace(/\s+/g, ' ').slice(0, 40)}`
+        : [
+            params.recipe.pose?.姿势名称,
+            params.recipe.costume?.服装名称,
+            params.recipe.portrait?.发型名称,
+          ]
+            .filter(Boolean)
+            .join(' + ') || '自定义合成'
 
       try {
-        uploadedRecipe = await ensureRecipeImagesUploaded(params.recipe)
+        uploadedRecipe = isPromptMode
+          ? { portrait: null, costume: null, pose: null, extraImages: [] }
+          : await ensureRecipeImagesUploaded(params.recipe)
 
         const refImageCount =
           (uploadedRecipe.pose ? 1 : 0) +
@@ -1676,9 +1813,11 @@ export function StudioProvider({ children }: { children: ReactNode }) {
         let stitchedR2Key: string | undefined
         const livePlatform = useStudioStore.getState().platform
         if (
+          !isPromptMode &&
           !isTextFallback &&
           (livePlatform.sendStitchedSheet || (refImageCount >= 2 && params.activeProfile?.needsStitchedSheet))
         ) {
+          const { dataUrlToBlob, stitchRecipeCanvas } = await import('@/services/aiGenerator')
           const stitchedDataUrl = await stitchRecipeCanvas(uploadedRecipe, {
             sanitizeForCloud: true,
           })
@@ -1699,18 +1838,22 @@ export function StudioProvider({ children }: { children: ReactNode }) {
           return
         }
 
-        const pendingSummary =
-          [
-            uploadedRecipe.pose?.姿势名称,
-            uploadedRecipe.costume?.服装名称,
-            uploadedRecipe.portrait?.发型名称,
-          ]
-            .filter(Boolean)
-            .join(' + ') || summaryFallback
+        const pendingSummary = isPromptMode
+          ? summaryFallback
+          : [
+              uploadedRecipe.pose?.姿势名称,
+              uploadedRecipe.costume?.服装名称,
+              uploadedRecipe.portrait?.发型名称,
+            ]
+              .filter(Boolean)
+              .join(' + ') || summaryFallback
 
         const result = await startGenerationStreamApi(
           {
             idempotencyKey: crypto.randomUUID(),
+            generationMode: isPromptMode ? 'prompt' : 'recipe',
+            ...(isPromptMode && params.userPrompt ? { userPrompt: params.userPrompt } : {}),
+            ...(params.remixGalleryItemId ? { remixGalleryItemId: params.remixGalleryItemId } : {}),
             provider: params.providerId,
             modelProfileId: params.activeProfile?.profileId,
             resolution: params.activeResolution ?? undefined,
@@ -1768,9 +1911,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
                     profileId: params.activeProfile?.profileId ?? null,
                     profileName: params.activeProfile?.displayName ?? null,
                     resolution: params.activeResolution,
-                    model: params.activeProfile
-                      ? `${params.providerMeta.artist.name} · ${params.activeProfile.displayName}`
-                      : params.providerMeta.artist.name,
+                    model: params.activeProfile?.displayName || '默认画笔',
                     prompt: '',
                     aspectRatio: params.aspectRatio,
                     stylePreset: params.stylePreset,
@@ -2028,6 +2169,36 @@ export function StudioProvider({ children }: { children: ReactNode }) {
         return
       }
 
+      const isPromptMode = live.studioMode === 'prompt'
+      if (isPromptMode) {
+        const cleanPrompt = live.userPrompt.trim()
+        if (cleanPrompt.length < 2) {
+          toast.error('请输入文生图提示词（至少 2 个字符）')
+          return
+        }
+        const effectivePromptStyle = live.promptStyleEnabled ? live.promptStylePreset : 'none'
+        const effectivePromptAspectRatio: GenerationAspectRatio = live.promptAspectRatioEnabled
+          ? live.promptAspectRatio
+          : 'auto'
+        await runGenerationTask({
+          providerId,
+          activeProfile,
+          activeResolution,
+          activeCost,
+          stylePreset: effectivePromptStyle,
+          allowFaceStyleShift: false,
+          allowPoseStyleShift: false,
+          aspectRatio: effectivePromptAspectRatio,
+          sceneNote: '',
+          recipe: { portrait: null, costume: null, pose: null, extraImages: [] },
+          providerMeta,
+          mode: 'prompt',
+          userPrompt: cleanPrompt,
+          remixGalleryItemId: live.remixGallerySource?.itemId,
+        })
+        return
+      }
+
       const hasAnyRef = Boolean(
         live.recipe.portrait || live.recipe.costume || live.recipe.pose || (live.recipe.extraImages?.length ?? 0) > 0
       )
@@ -2065,9 +2236,64 @@ export function StudioProvider({ children }: { children: ReactNode }) {
         recipe: live.recipe,
         providerMeta,
         mode: effectiveTextMode ? 'text_fallback' : 'regular',
+        remixGalleryItemId: live.remixGallerySource?.itemId,
       })
     },
     [openAccountModal, openAuthModal, runGenerationTask]
+  )
+
+  const applyGalleryRemix = useCallback(
+    (item: GalleryItemDTO) => {
+      setRemixGallerySource({
+        itemId: item.id,
+        title: item.title || '画廊作品',
+        authorName: item.authorName || '创作者',
+      })
+      if (item.sourceType === 'user_recipe' && item.recipePublic) {
+        setAspectRatio(item.aspectRatio)
+        setStudioMode('recipe')
+        const nextRecipe: RecipeState = {
+          pose: item.recipePublic.pose?.item ?? null,
+          costume: item.recipePublic.costume?.item ?? null,
+          portrait: item.recipePublic.portrait?.item ?? null,
+          extraImages: [],
+        }
+        applyRecipe(nextRecipe)
+        if (item.recipePublic.stylePreset) {
+          setStylePreset(item.recipePublic.stylePreset)
+        }
+        if (item.recipePublic.sceneNote) {
+          setSceneNote(item.recipePublic.sceneNote)
+        }
+        toast.success('已载入画廊同款配方到工作台')
+        return
+      }
+
+      setStudioMode('prompt')
+      setPromptAspectRatio(item.aspectRatio)
+      setPromptAspectRatioEnabled(false)
+      const preferredPrompt = (item.promptText || item.promptZh || '').trim()
+      if (preferredPrompt) {
+        setUserPrompt(preferredPrompt)
+      }
+      const nextPromptStyle = item.stylePreset && item.stylePreset !== 'none' ? item.stylePreset : 'none'
+      setPromptStylePreset(nextPromptStyle)
+      setPromptStyleEnabled(nextPromptStyle !== 'none')
+      toast.success('已载入画廊提示词到文生图工作台')
+    },
+    [
+      applyRecipe,
+      setAspectRatio,
+      setPromptAspectRatio,
+      setPromptAspectRatioEnabled,
+      setPromptStyleEnabled,
+      setPromptStylePreset,
+      setRemixGallerySource,
+      setSceneNote,
+      setStudioMode,
+      setStylePreset,
+      setUserPrompt,
+    ]
   )
 
   const actionsValue = useMemo<StudioActionsValue>(
@@ -2087,13 +2313,21 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       setSelectedProfileForProvider,
       setSelectedResolutionForProfile,
       setStylePreset,
+      setPromptStyleEnabled,
+      setPromptStylePreset,
       setAllowFaceStyleShift,
       setAllowPoseStyleShift,
       setAspectRatio,
+      setPromptAspectRatioEnabled,
+      setPromptAspectRatio,
       setPoseDepthMode,
       setPoseFrontOnly,
       setSceneNote,
       setTextToImageMode,
+      setStudioMode,
+      setUserPrompt,
+      setRemixGallerySource,
+      applyGalleryRemix,
       toggleRecipePoseDepth,
       setPreviewUrl,
       sendForegroundToBackground,
@@ -2135,13 +2369,21 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       setSelectedProfileForProvider,
       setSelectedResolutionForProfile,
       setStylePreset,
+      setPromptStyleEnabled,
+      setPromptStylePreset,
       setAllowFaceStyleShift,
       setAllowPoseStyleShift,
       setAspectRatio,
+      setPromptAspectRatioEnabled,
+      setPromptAspectRatio,
       setPoseDepthMode,
       setPoseFrontOnly,
       setSceneNote,
       setTextToImageMode,
+      setStudioMode,
+      setUserPrompt,
+      setRemixGallerySource,
+      applyGalleryRemix,
       toggleRecipePoseDepth,
       setPreviewUrl,
       sendForegroundToBackground,
@@ -2183,14 +2425,21 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       selectedProfileByProvider,
       selectedResolutionByProfile,
       stylePreset,
+      promptStyleEnabled,
+      promptStylePreset,
       allowFaceStyleShift,
       allowPoseStyleShift,
       aspectRatio,
+      promptAspectRatioEnabled,
+      promptAspectRatio,
       history,
       poseDepthMode,
       poseFrontOnly,
       sceneNote,
       textToImageMode,
+      studioMode,
+      userPrompt,
+      remixGallerySource,
       previewUrl,
       isSubmitting,
       submittingProvider,
@@ -2219,14 +2468,21 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       selectedProfileByProvider,
       selectedResolutionByProfile,
       stylePreset,
+      promptStyleEnabled,
+      promptStylePreset,
       allowFaceStyleShift,
       allowPoseStyleShift,
       aspectRatio,
+      promptAspectRatioEnabled,
+      promptAspectRatio,
       history,
       poseDepthMode,
       poseFrontOnly,
       sceneNote,
       textToImageMode,
+      studioMode,
+      userPrompt,
+      remixGallerySource,
       previewUrl,
       isSubmitting,
       submittingProvider,

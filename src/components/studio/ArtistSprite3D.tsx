@@ -21,6 +21,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from '@/components/ui/popover'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import {
   BRUSH_NIB_LABELS,
   getBrushPalette,
@@ -38,6 +39,7 @@ import {
   unlockStudioAudio,
 } from '@/lib/studioAudio'
 import { cn } from '@/lib/utils'
+import '@/styles/studio-sprites.css'
 import type {
   ImageProviderId,
   ProviderModelPublicInfo,
@@ -141,16 +143,16 @@ const POKE_LINES: Record<ImageProviderId, string[]> = {
   gpt: ['核心校准完成', '咔哒！灵感 +1', '六瓣全开运转中', '别戳花心啦 > <', '随时准备出图 ✦'],
   grok: ['黑洞视界已锁定', '吸积光流加速中', '小心被吸进去啦', '别戳事件视界 > <', '随时跃迁出图 ✦'],
   gemini: ['棱镜星芒充能中', '灵感色彩流动起来了', '捕捉到高光灵犀', '呀、好痒 > <', '幻彩魔法就绪 ✦'],
-  muse: ['灵感波浪同频中', 'Muse 笔触流动起来啦', '捕捉到一缕灵犀', '轻点！波纹会痒 > <', '随时织梦出图 ✦'],
-  seedream: ['四重音浪同频中 ♪', '咚咚！灵感字节跳起来啦', '即梦绘境，节奏拉满！', '别戳音柱啦，会跑调的 > <', '随时为你跃动出图 ✦'],
+  muse: ['灵感波浪同频中', '灵犀笔触流动起来啦', '捕捉到一缕灵犀', '轻点！波纹会痒 > <', '随时织梦出图 ✦'],
+  seedream: ['四重音浪同频中 ♪', '咚咚！灵感字节跳起来啦', '四重幻境，节奏拉满！', '别戳音柱啦，会跑调的 > <', '随时为你跃动出图 ✦'],
 }
 
 function getArtistGlowColor(providerId: ImageProviderId): string {
-  if (providerId === 'gpt') return '#2DD4BF'
-  if (providerId === 'grok') return '#818CF8'
-  if (providerId === 'muse') return '#0082FB'
-  if (providerId === 'seedream') return '#22D3EE'
-  return '#60A5FA'
+  if (providerId === 'gpt') return '#19857B'
+  if (providerId === 'grok') return '#78716C'
+  if (providerId === 'muse') return '#B88300'
+  if (providerId === 'seedream') return '#C42F16'
+  return '#C78F00'
 }
 
 interface IdleChoreoPose {
@@ -341,7 +343,7 @@ function GeminiRandomStars({
   prefersReduced: boolean
 }) {
   const scaleFactor = isLg ? 1.32 : 1
-  const [stars, setStars] = useState<GeminiRandomStarSpec[]>(() =>
+  const [stars] = useState<GeminiRandomStarSpec[]>(() =>
     GEMINI_SLOT_DURS.map((_, idx) => sampleGeminiStarSpec(idx, true))
   )
 
@@ -358,14 +360,6 @@ function GeminiRandomStars({
           <svg
             key={idx}
             viewBox="0 0 24 24"
-            onAnimationIteration={
-              prefersReduced
-                ? undefined
-                : () =>
-                    setStars((prev) =>
-                      prev.map((item, i) => (i === idx ? sampleGeminiStarSpec(i, false) : item))
-                    )
-            }
             className="st-star-sparkle absolute overflow-visible"
             style={
               {
@@ -511,16 +505,16 @@ function AmbientSpriteParticles({
         data-particle-kind="grok-blackhole"
         className="pointer-events-none absolute inset-[-8%] z-0"
       >
-        {/* 紧贴黑洞外环的中心暗影晕 */}
+        {/* 紧贴黑洞外环的暖炭金暗影晕（遵循 DESIGN.md 无蓝紫霓虹约束） */}
         <span
           className="absolute inset-[18%] rounded-full"
           style={{
             background: active
-              ? 'radial-gradient(circle, rgba(30,27,75,0.42) 24%, rgba(79,70,229,0.2) 54%, transparent 78%)'
-              : 'radial-gradient(circle, rgba(30,27,75,0.24) 24%, rgba(79,70,229,0.11) 54%, transparent 78%)',
+              ? 'radial-gradient(circle, rgba(24,22,19,0.52) 24%, rgba(168,144,104,0.22) 54%, transparent 78%)'
+              : 'radial-gradient(circle, rgba(24,22,19,0.28) 24%, rgba(168,144,104,0.12) 54%, transparent 78%)',
           }}
         />
-        {/* 5 道紧凑匀速衔接的同心水波光晕：持续不断由深变浅晕染扩散 */}
+        {/* 5 道紧凑匀速衔接的同心金属水波环 */}
         {GROK_HALO_WAVES.map((w, idx) => (
           <span
             key={idx}
@@ -528,8 +522,8 @@ function AmbientSpriteParticles({
             style={
               {
                 background: active
-                  ? 'radial-gradient(circle, transparent 36%, rgba(79,70,229,0.28) 49%, rgba(99,102,241,0.44) 60%, rgba(167,139,250,0.22) 72%, rgba(199,210,254,0.08) 81%, transparent 90%)'
-                  : 'radial-gradient(circle, transparent 36%, rgba(79,70,229,0.18) 49%, rgba(99,102,241,0.28) 60%, rgba(167,139,250,0.13) 72%, rgba(199,210,254,0.05) 81%, transparent 90%)',
+                  ? 'radial-gradient(circle, transparent 36%, rgba(120,113,108,0.24) 49%, rgba(229,169,24,0.34) 60%, rgba(214,209,198,0.18) 72%, rgba(245,241,232,0.06) 81%, transparent 90%)'
+                  : 'radial-gradient(circle, transparent 36%, rgba(120,113,108,0.14) 49%, rgba(229,169,24,0.20) 60%, rgba(214,209,198,0.10) 72%, rgba(245,241,232,0.04) 81%, transparent 90%)',
                 '--bh-dur': w.dur,
                 '--bh-delay': w.delay,
               } as CSSProperties
@@ -895,15 +889,16 @@ export function ArtistSprite3D({
         className
       )}
     >
-      {/* 悬浮底座投影光盘（径向渐变替代实时高斯模糊，减小合成开销） */}
+      {/* 悬浮底座物理接触投影（暖灰微影，拒绝蓝青荧光底光） */}
       <span
         aria-hidden="true"
         className="pointer-events-none absolute -bottom-1 left-1/2 -translate-x-1/2 rounded-full transition-opacity duration-300"
         style={{
           width: isLg ? '72%' : selected || hovered ? '76%' : '60%',
-          height: isLg ? 12 : 9,
-          background: `radial-gradient(closest-side, ${selected || generating ? accentGlow : getArtistGlowColor(providerId)} 0%, transparent 100%)`,
-          opacity: disabled ? 0.16 : frustrated ? 0.2 : generating ? 0.55 : selected ? 0.45 : hovered ? 0.35 : 0.18,
+          height: isLg ? 11 : 8,
+          backgroundColor: 'rgba(20, 18, 14, 0.24)',
+          filter: 'blur(4px)',
+          opacity: disabled ? 0.14 : frustrated ? 0.18 : generating ? 0.45 : selected ? 0.38 : hovered ? 0.3 : 0.18,
         }}
       />
 
@@ -976,7 +971,7 @@ export function ArtistSprite3D({
           <div
             className={cn(
               'absolute origin-center',
-              isLg ? '-right-8 bottom-0' : '-right-6 -bottom-0.5',
+              isLg ? '-right-8 bottom-0' : '-right-2 -bottom-0.5',
               cheering
                 ? '-rotate-45 -translate-y-2'
                 : frustrated
@@ -996,7 +991,7 @@ export function ArtistSprite3D({
               nibStyle={brushNibStyle}
               active={Boolean((selected || generating || cheering) && !frustrated)}
               style={{
-                width: isLg ? 100 : 82,
+                width: isLg ? 100 : 68,
                 aspectRatio: `${brushViewWidth} / 48`,
               }}
             />
@@ -1340,7 +1335,7 @@ const RACK_BRUSH_HEIGHT = 52
 const RACK_BRUSH_CAP_LEFT = 52
 const RACK_BRUSH_CAP_RIGHT = Math.ceil((28 * RACK_BRUSH_HEIGHT) / 48)
 const RACK_BARREL_H_PADDING = 28
-const HELD_BRUSH_WIDTH = 82
+const HELD_BRUSH_WIDTH = 68
 
 interface FlyingBrushFlight {
   id: number
@@ -1368,6 +1363,7 @@ function buildSmoothBrushFlightTrack(
   endRotate: number,
   baseWidth: number,
   baseHeight: number,
+  startScale: number,
   endScale: number
 ) {
   const dx = endX - startX
@@ -1417,7 +1413,7 @@ function buildSmoothBrushFlightTrack(
     rotate.push(startRotate + (endRotate - startRotate) * u)
     // 从一开始的巨型状态在飞往画师手中过程中逐渐等比缩小
     const shrinkT = Math.pow(u, 0.85)
-    scale.push(1.04 + (endScale - 1.04) * shrinkT)
+    scale.push(startScale + (endScale - startScale) * shrinkT)
     times.push(s)
   }
   return { x, y, rotate, scale, times }
@@ -1554,14 +1550,16 @@ export function ArtistStageSelector({
         const palette = getBrushPalette(idx)
         const nibStyle = resolveBrushNibStyle(modelOpt)
         const label = modelOpt.displayName?.trim() || modelOpt.profileId
-        const baseWidth = fromEl.offsetWidth || Math.round(fromRect.width) || uniformBrushWidth
-        const baseHeight = fromEl.offsetHeight || Math.round(fromRect.height) || RACK_BRUSH_HEIGHT
+        const sourceWidth = fromEl.offsetWidth || Math.round(fromRect.width) || uniformBrushWidth
+        const baseWidth = uniformBrushWidth
+        const baseHeight = RACK_BRUSH_HEIGHT
+        const startScale = Math.min(1.04, Math.max(0.5, sourceWidth / baseWidth) * 1.04)
         const endScale = Math.min(1, Math.max(0.2, HELD_BRUSH_WIDTH / baseWidth))
         const startX = fromRect.left + fromRect.width * 0.5
         const startY = fromRect.top + fromRect.height * 0.5
-        // 对齐画师右掌持笔位置 (-right-6 -bottom-0.5, 宽度 82px, 角度 -28deg)
-        const endX = toRect.right - 17
-        const endY = toRect.bottom - 7
+        // 对齐画师右掌持笔位置 (-right-2 -bottom-0.5, 宽度 68px, 角度 -28deg)
+        const endX = toRect.right - 26
+        const endY = toRect.bottom - 5.5
         // 顺时针旋转一圈后平稳落至 -28deg（332deg），并在飞行过程中从巨型逐渐缩小到掌中尺寸
         const track = buildSmoothBrushFlightTrack(
           startX,
@@ -1572,6 +1570,7 @@ export function ArtistStageSelector({
           332,
           baseWidth,
           baseHeight,
+          startScale,
           endScale
         )
 
@@ -1619,7 +1618,7 @@ export function ArtistStageSelector({
       <div
         role="radiogroup"
         aria-label="选择AI小画家"
-        className="grid grid-cols-2 gap-1.5 pt-1 @[460px]/controls:grid-cols-5"
+        className="no-scrollbar flex snap-x gap-1.5 overflow-x-auto overscroll-x-contain pt-1 pb-0.5 @[460px]/controls:grid @[460px]/controls:grid-cols-5 @[460px]/controls:overflow-visible @[460px]/controls:pb-0"
       >
         {artists.map((artist) => {
           const pInfo = providers.find((p) => p.providerId === artist.id)
@@ -1957,7 +1956,7 @@ function ArtistPenSlotsRack({
                   : undefined
               }
               className={cn(
-                'group/stand relative flex h-[82px] min-w-0 cursor-pointer flex-col items-center justify-end overflow-hidden rounded-xl border text-center transition-[transform,border-color,background-color,box-shadow] duration-100 select-none active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-ring',
+                'group/stand relative flex h-[82px] min-w-0 cursor-pointer flex-col items-center justify-end overflow-hidden rounded-xl border text-center transition-[transform,border-color,background-color] duration-150 ease-[var(--ease-out)] select-none active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-ring',
                 isActive
                   ? 'bg-white text-foreground dark:bg-[#24211D] dark:text-white'
                   : 'border-border/75 bg-[#ECE8DE]/85 text-foreground/85 hover:border-foreground/35 hover:bg-[#F5F2EA] hover:text-foreground dark:bg-[#151412]/95 dark:hover:bg-[#1E1C19]'
@@ -2210,7 +2209,7 @@ function ArtistPencilCaseRack({
                   ? '点击打开实木画笔盒，或在此栏滚动滚轮快切画笔'
                   : '点击查看画笔详情'
               }
-              className="group/case flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 rounded-lg px-1 py-0.5 text-left transition-colors hover:bg-black/[0.03] active:scale-[0.99] focus-visible:outline-2 focus-visible:outline-ring @[400px]/controls:gap-2.5 @[400px]/controls:px-1.5 dark:hover:bg-white/[0.04]"
+              className="group/case flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 rounded-lg px-1 py-0.5 text-left transition-[transform,background-color] duration-150 ease-[var(--ease-out)] hover:bg-black/[0.03] active:scale-[0.99] focus-visible:outline-2 focus-visible:outline-ring @[400px]/controls:gap-2.5 @[400px]/controls:px-1.5 dark:hover:bg-white/[0.04]"
             >
               {/* 笔匣左侧主画笔凹槽 */}
               <span className="relative flex h-[28px] w-[58px] shrink-0 items-center justify-center overflow-hidden rounded-lg border border-border/75 bg-[#EFECE4]/95 shadow-[inset_0_1px_2px_rgba(0,0,0,0.08)] @[400px]/controls:h-[32px] @[400px]/controls:w-[84px] dark:bg-[#141311] dark:shadow-[inset_0_1px_3px_rgba(0,0,0,0.5)]">
@@ -2299,7 +2298,7 @@ function ArtistPencilCaseRack({
                   aria-label="上一支画笔"
                   title="上一支画笔"
                   onClick={() => stepBrush(-1)}
-                  className="inline-flex size-6 cursor-pointer items-center justify-center rounded-lg border border-transparent text-muted-foreground transition-colors hover:border-border/80 hover:bg-white hover:text-foreground active:scale-90 @[400px]/controls:size-7 dark:hover:bg-card"
+                  className="inline-flex size-6 cursor-pointer items-center justify-center rounded-lg border border-transparent text-muted-foreground transition-[transform,background-color,border-color,color] duration-150 ease-[var(--ease-out)] hover:border-border/80 hover:bg-white hover:text-foreground active:scale-90 @[400px]/controls:size-7 dark:hover:bg-card"
                 >
                   <ChevronLeftIcon className="size-3.5" />
                 </button>
@@ -2308,7 +2307,7 @@ function ArtistPencilCaseRack({
                   aria-label="下一支画笔"
                   title="下一支画笔"
                   onClick={() => stepBrush(1)}
-                  className="inline-flex size-6 cursor-pointer items-center justify-center rounded-lg border border-transparent text-muted-foreground transition-colors hover:border-border/80 hover:bg-white hover:text-foreground active:scale-90 @[400px]/controls:size-7 dark:hover:bg-card"
+                  className="inline-flex size-6 cursor-pointer items-center justify-center rounded-lg border border-transparent text-muted-foreground transition-[transform,background-color,border-color,color] duration-150 ease-[var(--ease-out)] hover:border-border/80 hover:bg-white hover:text-foreground active:scale-90 @[400px]/controls:size-7 dark:hover:bg-card"
                 >
                   <ChevronRightIcon className="size-3.5" />
                 </button>
@@ -2409,7 +2408,7 @@ function ArtistPencilCaseRack({
                       : undefined
                   }
                   className={cn(
-                    'group/slot relative flex min-h-[44px] min-w-0 cursor-pointer items-center gap-1.5 overflow-hidden rounded-xl border px-2 py-1.5 text-left transition-[transform,border-color,background-color,box-shadow] duration-100 select-none active:scale-[0.98] focus-visible:outline-2 focus-visible:outline-ring',
+                    'group/slot relative flex min-h-[44px] min-w-0 cursor-pointer items-center gap-1.5 overflow-hidden rounded-xl border px-2 py-1.5 text-left transition-[transform,border-color,background-color] duration-150 ease-[var(--ease-out)] select-none active:scale-[0.98] focus-visible:outline-2 focus-visible:outline-ring',
                     isActive
                       ? 'bg-white text-foreground dark:bg-[#24211D] dark:text-white'
                       : 'border-border/75 bg-[#EFECE3]/85 text-foreground/85 hover:border-foreground/35 hover:bg-white hover:text-foreground dark:bg-[#141311]/90 dark:hover:bg-[#1F1D19]'
@@ -2496,7 +2495,24 @@ function ArtistBrushRack({
 }) {
   const prefersReducedMotion = useReducedMotion()
   const penRestRef = useRef<HTMLDivElement | null>(null)
+  const slotRef = useRef<HTMLDivElement | null>(null)
   const lastWheelAtRef = useRef(0)
+  const [slotWidth, setSlotWidth] = useState(0)
+
+  useLayoutEffect(() => {
+    const el = slotRef.current
+    if (!el) return
+    const sync = () => setSlotWidth(el.clientWidth)
+    sync()
+    if (typeof ResizeObserver === 'undefined') return
+    const ro = new ResizeObserver(sync)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+
+  const fitScale = slotWidth > 0 ? Math.min(1, Math.max(0.55, (slotWidth - 8) / uniformWidth)) : 1
+  const fittedWidth = Math.round(uniformWidth * fitScale)
+  const fittedHeight = Math.round(RACK_BRUSH_HEIGHT * fitScale)
 
   const activeIdx = Math.max(
     0,
@@ -2549,9 +2565,9 @@ function ArtistBrushRack({
     <div
       data-brush-rack="true"
       data-brush-count={models.length}
-      className="rounded-xl border border-border/80 bg-[#FAF8F4]/90 p-1.5 dark:bg-muted/30"
+      className="space-y-1 pt-0.5"
     >
-      <div className="flex min-h-[20px] items-center gap-1.5 px-1 pb-1.5">
+      <div className="flex min-h-[18px] items-center gap-1.5 px-1 pb-1">
         <span className="text-xs font-extrabold tracking-tight text-foreground">
           选择画笔
         </span>
@@ -2560,7 +2576,7 @@ function ArtistBrushRack({
         </span>
       </div>
 
-      {/* 实体主画笔笔搁（左右切换按键 + 粗大拟物画笔本体且笔身刻有画笔名称） */}
+      {/* 实体主画笔笔搁（无缝内陷凹槽 + 左右切换按键 + 粗大拟物画笔本体） */}
       <div
         ref={penRestRef}
         role="group"
@@ -2568,10 +2584,11 @@ function ArtistBrushRack({
         tabIndex={models.length > 1 ? 0 : undefined}
         onKeyDown={handleKeyDown}
         data-brush-pen-rest="true"
+        data-impeccable-ignore="nested-cards"
         data-brush-option={activeModel?.profileId}
         data-brush-name={activeLabel}
         className={cn(
-          'relative flex min-h-[68px] w-full items-center justify-between gap-1.5 overflow-hidden rounded-xl border border-border/75 bg-[#EFECE4]/90 px-1.5 py-1 shadow-[inset_0_1px_3px_rgba(0,0,0,0.08)] focus-visible:outline-2 focus-visible:outline-ring @[360px]/controls:min-h-[74px] dark:bg-[#161513]/90 dark:shadow-[inset_0_1px_4px_rgba(0,0,0,0.45)]',
+          'ks-recess relative flex min-h-[54px] w-full items-center justify-between gap-1.5 overflow-hidden rounded-xl bg-[#EFECE4]/90 px-1.5 py-0.5 focus-visible:outline-2 focus-visible:outline-ring @[360px]/controls:min-h-[58px] dark:bg-[#161513]/90',
           models.length > 1 && 'cursor-ns-resize'
         )}
       >
@@ -2587,13 +2604,16 @@ function ArtistBrushRack({
             type="button"
             aria-label="上一支画笔"
             onClick={() => stepBrush(-1)}
-            className="relative z-10 inline-flex size-9 shrink-0 cursor-pointer items-center justify-center rounded-lg border border-border/80 bg-white/90 text-foreground/80 shadow-2xs transition-[transform,border-color,background-color,color] duration-100 hover:border-foreground/45 hover:bg-white hover:text-foreground active:scale-90 focus-visible:outline-2 focus-visible:outline-ring dark:bg-card/85"
+            className="relative z-10 inline-flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-lg border border-border/80 bg-white/90 text-foreground/80 shadow-2xs transition-[transform,border-color,background-color,color] duration-150 ease-[var(--ease-out)] hover:border-foreground/45 hover:bg-white hover:text-foreground active:scale-[0.96] focus-visible:outline-2 focus-visible:outline-ring @[360px]/controls:size-9 dark:bg-card/85"
           >
             <ChevronLeftIcon className="size-4.5" />
           </button>
         )}
 
-        <div className="relative z-10 flex min-w-0 flex-1 overflow-x-auto px-1 py-2.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        <div
+          ref={slotRef}
+          className="relative z-10 flex min-w-0 flex-1 items-center justify-center overflow-visible px-1 py-1"
+        >
           <motion.button
             key={`${activeModel?.profileId ?? 'none'}-${activeNibStyle}`}
             type="button"
@@ -2614,6 +2634,7 @@ function ArtistBrushRack({
             whileHover={prefersReducedMotion ? undefined : { scale: 1.03, rotate: -1 }}
             whileTap={prefersReducedMotion ? undefined : { scale: 0.95, rotate: -4 }}
             transition={{ type: 'spring', stiffness: 500, damping: 26 }}
+            style={{ width: fittedWidth, height: fittedHeight }}
             className="mx-auto flex shrink-0 cursor-pointer items-center justify-center rounded-lg focus-visible:outline-2 focus-visible:outline-ring"
           >
             <ArtistPaintbrush
@@ -2627,6 +2648,9 @@ function ArtistBrushRack({
               style={{
                 width: uniformWidth,
                 height: RACK_BRUSH_HEIGHT,
+                flexShrink: 0,
+                transform: fitScale < 1 ? `scale(${fitScale})` : undefined,
+                transformOrigin: 'center center',
               }}
             />
           </motion.button>
@@ -2637,7 +2661,7 @@ function ArtistBrushRack({
             type="button"
             aria-label="下一支画笔"
             onClick={() => stepBrush(1)}
-            className="relative z-10 inline-flex size-9 shrink-0 cursor-pointer items-center justify-center rounded-lg border border-border/80 bg-white/90 text-foreground/80 shadow-2xs transition-[transform,border-color,background-color,color] duration-100 hover:border-foreground/45 hover:bg-white hover:text-foreground active:scale-90 focus-visible:outline-2 focus-visible:outline-ring dark:bg-card/85"
+            className="relative z-10 inline-flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-lg border border-border/80 bg-white/90 text-foreground/80 shadow-2xs transition-[transform,border-color,background-color,color] duration-150 ease-[var(--ease-out)] hover:border-foreground/45 hover:bg-white hover:text-foreground active:scale-[0.96] focus-visible:outline-2 focus-visible:outline-ring @[360px]/controls:size-9 dark:bg-card/85"
           >
             <ChevronRightIcon className="size-4.5" />
           </button>
@@ -2777,11 +2801,21 @@ function ArtistPedestalCard({
         : null
   const activeModel = models.find((m) => m.profileId === activeProfileId) || models[0] || null
   const showBrushPips = !statusFallback && models.length > 0
+  const brushPreviewNames = models
+    .map((m) => m.displayName?.trim())
+    .filter((name): name is string => Boolean(name))
+  const brushTooltipText =
+    brushPreviewNames.length > 0
+      ? `可选画笔（${brushPreviewNames.length}）：${brushPreviewNames.slice(0, 4).join(' · ')}${brushPreviewNames.length > 4 ? ' …' : ''}`
+      : statusFallback
+        ? `当前状态：${statusFallback}`
+        : null
 
   return (
     <div
       ref={cardRef}
       onPointerEnter={(e) => {
+        if (e.pointerType !== 'mouse') return
         if (!away) {
           setHovered(true)
           updatePointerTilt(e)
@@ -2789,18 +2823,20 @@ function ArtistPedestalCard({
         if (enabled) playSpriteHover(artist.id)
       }}
       onPointerMove={(e) => {
+        if (e.pointerType !== 'mouse') return
         if (!away) updatePointerTilt(e)
       }}
-      onPointerLeave={() => {
+      onPointerLeave={(e) => {
+        if (e.pointerType !== 'mouse') return
         setHovered(false)
         clearPointerTilt()
       }}
       className={cn(
-        'ks-paper-keycap group relative flex min-h-[108px] min-w-0 flex-col items-center justify-between overflow-visible rounded-xl border px-2 pt-1.5 pb-2 text-center transition-[transform,border-color,background-color] duration-150 @[320px]/controls:min-h-[118px]',
+        'ks-paper-keycap group relative flex min-h-[92px] min-w-[78px] shrink-0 snap-start flex-col items-center justify-between overflow-visible rounded-xl border px-1.5 pt-1 pb-1.5 text-center transition-[transform,border-color,background-color] duration-150 ease-[var(--ease-out)] @[320px]/controls:min-h-[98px] @[460px]/controls:min-w-0',
         !enabled && 'opacity-55',
         selected
-          ? '-translate-y-0.5 bg-white text-foreground dark:bg-[#23211E] dark:text-white'
-          : 'border-border/80 bg-[#FAF8F4] text-foreground hover:-translate-y-0.5 hover:border-foreground/45 dark:bg-muted/35'
+          ? 'z-20 -translate-y-0.5 bg-white text-foreground dark:bg-[#23211E] dark:text-white'
+          : 'border-border/80 bg-[#FAF8F4] text-foreground hover:z-10 hover:-translate-y-0.5 hover:border-foreground/45 dark:bg-muted/35'
       )}
       style={
         selected
@@ -2811,22 +2847,48 @@ function ArtistPedestalCard({
           : undefined
       }
     >
-      <button
-        type="button"
-        role="radio"
-        aria-checked={selected}
-        aria-label={
-          statusFallback
-            ? `${artist.name}（${statusFallback}）`
-            : away
-              ? `${artist.name}（${awayFrustrated ? '失落中' : '出勤中'}）`
-              : activeModel
-                ? `${artist.name} · ${activeModel.displayName}`
-                : artist.name
-        }
-        onClick={handleArtistClick}
-        className="absolute inset-0 z-0 cursor-pointer rounded-[inherit] active:scale-[0.985] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-      />
+      {brushTooltipText ? (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              role="radio"
+              aria-checked={selected}
+              aria-label={
+                statusFallback
+                  ? `AI小画家（${statusFallback}）`
+                  : away
+                    ? `AI小画家（${awayFrustrated ? '失落中' : '出勤中'}）`
+                    : activeModel
+                      ? activeModel.displayName
+                      : 'AI小画家'
+              }
+              onClick={handleArtistClick}
+              className="absolute inset-0 z-0 cursor-pointer rounded-[inherit] active:scale-[0.985] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+            />
+          </TooltipTrigger>
+          <TooltipContent side="top" className="max-w-[240px] text-xs">
+            {brushTooltipText}
+          </TooltipContent>
+        </Tooltip>
+      ) : (
+        <button
+          type="button"
+          role="radio"
+          aria-checked={selected}
+          aria-label={
+            statusFallback
+              ? `AI小画家（${statusFallback}）`
+              : away
+                ? `AI小画家（${awayFrustrated ? '失落中' : '出勤中'}）`
+                : activeModel
+                  ? activeModel.displayName
+                  : 'AI小画家'
+          }
+          onClick={handleArtistClick}
+          className="absolute inset-0 z-0 cursor-pointer rounded-[inherit] active:scale-[0.985] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+        />
+      )}
 
       {/* 活泼亮彩选中光效 */}
       {selected && (
@@ -2869,7 +2931,7 @@ function ArtistPedestalCard({
             initial={{ opacity: 0, y: 4, scale: 0.9 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: -3, scale: 0.92 }}
-            transition={{ duration: 0.14, ease: [0.22, 1, 0.36, 1] }}
+            transition={{ duration: 0.14, ease: [0.23, 1, 0.32, 1] }}
             className="pointer-events-none absolute -top-2.5 left-1/2 z-30 max-w-[180px] -translate-x-1/2 truncate rounded-full border border-border/90 bg-popover px-2 py-0.5 text-xs font-bold leading-none whitespace-nowrap text-popover-foreground shadow-md"
           >
             {bubbleText}
@@ -2877,10 +2939,10 @@ function ArtistPedestalCard({
         )}
       </AnimatePresence>
 
-      {/* 3D 互动精灵主体（出勤中占位与实体小精灵维持完全相同的 84×84 盒尺寸与槽位偏移，避免起落返程移位） */}
+      {/* 3D 互动精灵主体（出勤中占位与实体小精灵维持完全相同的 74×74 盒尺寸与槽位偏移，避免起落返程移位） */}
       <div
         data-artist-sprite-target={artist.id}
-        className="pointer-events-none relative z-10 flex size-[84px] shrink-0 items-center justify-center"
+        className="pointer-events-none relative z-10 flex size-[74px] shrink-0 items-center justify-center"
       >
         {away ? (
           <div
@@ -2934,19 +2996,17 @@ function ArtistPedestalCard({
               <span
                 key={modelOpt.profileId}
                 className={cn(
-                  'h-1.5 rounded-full transition-all duration-150',
+                  'h-1.5 w-2 rounded-full transition-[transform,background-color,opacity] duration-150 ease-[var(--ease-out)]',
                   isActivePip
                     ? selected
-                      ? 'w-3.5 opacity-100'
-                      : 'w-2.5 opacity-85'
+                      ? 'scale-x-[1.65] opacity-100'
+                      : 'scale-x-[1.25] opacity-85'
                     : selected
-                      ? 'w-1.5 opacity-55'
-                      : 'w-1.5 opacity-35'
+                      ? 'scale-x-[0.75] opacity-55'
+                      : 'scale-x-[0.75] opacity-35'
                 )}
                 style={{
                   backgroundColor: palette.hex,
-                  boxShadow:
-                    isActivePip && selected ? `0 0 6px ${palette.glowHex}` : undefined,
                 }}
               />
             )

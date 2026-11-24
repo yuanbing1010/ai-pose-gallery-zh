@@ -2,7 +2,11 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" media="(prefers-color-scheme: light)" content="#f7f6f2">
+<meta name="theme-color" media="(prefers-color-scheme: dark)" content="#121110">
+<link rel="preload" href="/data/home-preview.json?v=20261123" as="fetch" crossorigin="anonymous">
 <title>CASTDECK · 姿势 × 服装 × 人像参考工作台</title>
 <meta name="description" content="CASTDECK 收录 1,439 张多角度人体姿势图、3,224 套服装穿搭与 1,499 张人像发型参考。支持自由组装「脸 + 衣服 + 姿势」角色配方，一键生成多种画风角色立绘。">
 <meta name="keywords" content="CASTDECK,姿势参考,服装参考,人像参考,人体姿势,绘画参考,角色配方,画风合成,参考工作台">
@@ -10,7 +14,7 @@
 <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1">
 <meta name="application-name" content="CASTDECK">
 <link rel="canonical" href="https://castdeck.geminirun.com/">
-<link rel="sitemap" type="application/xml" href="/sitemap.xml">
+<link rel="sitemap" type="application/xml" href="https://castdeck.geminirun.com/sitemap.xml">
 <link rel="alternate" hreflang="zh-CN" href="https://castdeck.geminirun.com/">
 <meta property="og:type" content="website">
 <meta property="og:locale" content="zh_CN">
@@ -42,10 +46,13 @@
   ]
 }
 </script>
+<script>
+(function(){try{var t=localStorage.getItem('todaynew-admin:theme');var d=t==='dark'||(t==='system'&&window.matchMedia('(prefers-color-scheme: dark)').matches);if(d){document.documentElement.classList.add('dark');}document.documentElement.style.colorScheme=d?'dark':'light';var c=d?'#121110':'#f7f6f2';var metas=document.querySelectorAll('meta[name="theme-color"]');for(var i=0;i<metas.length;i++){metas[i].setAttribute('content',c);}}catch(e){}})();
+</script>
 </head>
 <body>
   <div id="root"></div>
   <script type="module" src="/src/main.tsx"></script>
-  <script defer src="https://u.authbox.cn/script.js" data-website-id="cde8a23b-4bf6-4ded-8cd9-2c9551dc8d38"></script>
+  <script async src="https://u.authbox.cn/script.js" data-website-id="cde8a23b-4bf6-4ded-8cd9-2c9551dc8d38"></script>
 </body>
 </html>

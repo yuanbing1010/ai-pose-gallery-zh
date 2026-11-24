@@ -1,9 +1,9 @@
-name: Sync Mio Design Archive
+name: Sync Sleepyzone Archives
 
 on:
   schedule:
-    # 每日 20:30 CST (12:30 UTC)，紧随 sleepyzone.online 20:00 CST 更新后同步静态快照
-    - cron: '30 12 * * *'
+    # 每日 21:00 CST (13:00 UTC)，紧随 sleepyzone.online 20:00~20:45 CST 更新后同步静态快照
+    - cron: '0 13 * * *'
   workflow_dispatch:
 
 permissions:
@@ -24,18 +24,25 @@ jobs:
       - name: Sync mio-design-archive metadata
         run: python scripts/import_mio.py --sync
 
-      - name: Verify snapshot rebuild
+      - name: Verify mio snapshot rebuild
         run: python scripts/import_mio.py
+
+      - name: Sync outfit-db-cn metadata
+        run: python scripts/import_outfit_db.py --sync
+
+      - name: Verify outfit-db snapshot rebuild
+        run: python scripts/import_outfit_db.py
 
       - name: Commit updated snapshots if changed
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data/mio/data.json data/mio/source.json data/pose-mio-zh.json data/costume-mio-zh.json
+          git add data/mio/data.json data/mio/source.json data/pose-mio-zh.json data/costume-mio-zh.json data/outfit-db/data.js data/outfit-db/source.json data/costume-outfit-db-zh.json
           if ! git diff --cached --quiet; then
-            GENERATED=$(python -c "import json; print(json.load(open('data/mio/source.json', encoding='utf-8')).get('generated', 'unknown'))")
-            git commit -m "chore(data): sync mio-design-archive (${GENERATED})"
+            MIO_DATE=$(python -c "import json; print(json.load(open('data/mio/source.json', encoding='utf-8')).get('generated', 'unknown'))")
+            OUTFIT_DATE=$(python -c "import json; print(json.load(open('data/outfit-db/source.json', encoding='utf-8')).get('updated', 'unknown'))")
+            git commit -m "chore(data): sync sleepyzone archives (mio ${MIO_DATE}, outfit-db ${OUTFIT_DATE})"
             git push
           else
-            echo "No changes from sleepyzone.online/mio-design-archive/"
+            echo "No changes from sleepyzone.online archives"
           fi

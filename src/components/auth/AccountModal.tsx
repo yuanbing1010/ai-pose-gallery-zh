@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { Link } from '@tanstack/react-router'
+import { motion } from 'motion/react'
 import {
   CoinsIcon,
   EyeIcon,
@@ -242,7 +243,7 @@ export function AccountModal() {
         </DialogHeader>
 
         {/* 选项卡 */}
-        <div className="grid grid-cols-4 gap-1 rounded-xl border border-border bg-muted/60 p-1">
+        <div role="tablist" aria-label="账户管理功能分区" className="ks-recess grid grid-cols-4 gap-1 rounded-xl border border-border p-1">
           {tabs.map((t) => {
             const Icon = t.icon
             const active = accountModalTab === t.id
@@ -250,18 +251,27 @@ export function AccountModal() {
               <button
                 key={t.id}
                 type="button"
+                role="tab"
+                aria-selected={active}
                 onClick={() => {
                   setBindingWechat(false)
                   setConfirmingUnbind(false)
                   openAccountModal(t.id)
                 }}
                 className={cn(
-                  'flex h-8 items-center justify-center gap-1 rounded-lg px-1.5 text-xs font-semibold whitespace-nowrap transition-colors sm:px-2',
-                  active ? 'bg-card text-foreground shadow-xs' : 'text-muted-foreground hover:text-foreground'
+                  'relative flex h-9 items-center justify-center gap-1 rounded-lg px-1.5 text-xs font-semibold whitespace-nowrap transition-colors sm:h-8 sm:px-2',
+                  active ? 'text-foreground' : 'text-muted-foreground hover:text-foreground'
                 )}
               >
-                <Icon className="hidden size-3.5 shrink-0 sm:inline" />
-                <span>{t.label}</span>
+                {active && (
+                  <motion.span
+                    layoutId="account-modal-tab-pill"
+                    transition={{ type: 'spring', stiffness: 500, damping: 36 }}
+                    className="ks-paper-keycap pointer-events-none absolute inset-0 rounded-lg bg-card dark:bg-[#2A2722] dark:ring-1 dark:ring-[#E5A918]/35"
+                  />
+                )}
+                <Icon className="relative z-10 hidden size-3.5 shrink-0 sm:inline" />
+                <span className="relative z-10">{t.label}</span>
               </button>
             )
           })}
@@ -270,9 +280,12 @@ export function AccountModal() {
         {accountModalTab === 'overview' && (
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-3">
-              <div className="rounded-xl border border-border bg-[#FAF8F4] p-4 dark:bg-muted/30">
-                <div className="text-xs text-muted-foreground">可用积分余额</div>
-                <div className="mt-1 font-mono text-2xl font-extrabold text-foreground">
+              <div className="relative overflow-hidden rounded-xl border border-[#E5A918]/35 bg-gradient-to-br from-[#FAF8F4] via-card to-[#E5A918]/[0.08] p-4 dark:from-[#1B1A16] dark:via-card dark:to-[#E5A918]/[0.09]">
+                <div className="flex items-center justify-between text-xs text-muted-foreground">
+                  <span>可用积分余额</span>
+                  <span className="font-mono text-xs text-[#7A5200] dark:text-[#E5A918]">CREDITS</span>
+                </div>
+                <div className="mt-1.5 font-mono text-2xl font-extrabold tabular-nums text-foreground">
                   {user.creditBalance}
                 </div>
                 <button
@@ -283,9 +296,12 @@ export function AccountModal() {
                   使用兑换码充值 →
                 </button>
               </div>
-              <div className="rounded-xl border border-border bg-[#FAF8F4] p-4 dark:bg-muted/30">
-                <div className="text-xs text-muted-foreground">云端已存作品</div>
-                <div className="mt-1 font-mono text-2xl font-extrabold text-foreground">
+              <div className="relative overflow-hidden rounded-xl border border-border bg-gradient-to-br from-[#FAF8F4] to-card p-4 dark:from-[#1B1A16] dark:to-card">
+                <div className="flex items-center justify-between text-xs text-muted-foreground">
+                  <span>云端已存作品</span>
+                  <span className="font-mono text-xs text-[#116E65] dark:text-[#4FD1C5]">ARCHIVE</span>
+                </div>
+                <div className="mt-1.5 font-mono text-2xl font-extrabold tabular-nums text-foreground">
                   {history.filter((h) => h.status === 'succeeded').length}
                 </div>
                 <Link
@@ -347,7 +363,7 @@ export function AccountModal() {
         {accountModalTab === 'redeem' && (
           <form onSubmit={handleRedeem} className="space-y-4">
             <div className="rounded-xl border border-border bg-[#FAF8F4] p-4 text-xs leading-relaxed text-muted-foreground dark:bg-muted/30">
-              输入管理员发放的积分兑换码（例如 <code className="font-mono font-semibold text-foreground">POSE-XXXX-XXXX</code>），积分将立即充入当前账号。
+              输入管理员发放的积分兑换码（例如 <code className="font-mono font-semibold text-foreground">CAST-XXXX-XXXX</code>），积分将立即充入当前账号。如暂无兑换码，请联系站点管理员或通过社区活动获取。
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="redeem-code-input" className="text-xs font-semibold">
@@ -356,15 +372,18 @@ export function AccountModal() {
               <div className="flex items-center gap-2">
                 <Input
                   id="redeem-code-input"
+                  autoCapitalize="characters"
+                  autoCorrect="off"
+                  enterKeyHint="done"
                   value={code}
                   onChange={(e) => setCode(e.target.value.toUpperCase())}
-                  placeholder="POSE-XXXX-XXXX"
+                  placeholder="CAST-XXXX-XXXX"
                   className="h-10 rounded-xl font-mono text-xs uppercase"
                 />
                 <Button
                   type="submit"
                   disabled={redeeming}
-                  className="h-10 shrink-0 rounded-xl bg-[#D9381E] px-5 text-xs font-bold text-white hover:bg-[#C23018]"
+                  className="skin-accent-btn h-10 shrink-0 rounded-xl border-0 px-5 text-xs font-bold text-white"
                 >
                   {redeeming ? <LoaderCircleIcon className="size-4 animate-spin" /> : '立即兑换'}
                 </Button>

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   CheckIcon,
   CopyIcon,
+  ExternalLinkIcon,
   EyeIcon,
   EyeOffIcon,
   KeyRoundIcon,
@@ -10,6 +11,7 @@ import {
   PlusIcon,
   RefreshCwIcon,
   SearchIcon,
+  ShieldCheckIcon,
   Trash2Icon,
   WifiIcon,
   XIcon,
@@ -21,24 +23,38 @@ import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import {
   addAdminSupplierKeysApi,
+  completeAdminSupplierOAuthPkceApi,
   createAdminSupplierApi,
   deleteAdminSupplierApi,
   deleteAdminSupplierKeyApi,
   fetchAdminSuppliersApi,
+  importAdminSupplierOAuthJsonApi,
+  pollAdminSupplierOAuthDeviceApi,
   queryAdminSupplierModelsApi,
+  refreshAdminSupplierKeyTokenApi,
+  startAdminSupplierOAuthDeviceApi,
+  startAdminSupplierOAuthPkceApi,
   testAdminSupplierApi,
   updateAdminSupplierApi,
   updateAdminSupplierKeyApi,
+  type DraftOAuthAccountSummary,
   type SupplierKeyTestResult,
+  type SupplierOAuthDeviceStartResult,
+  type SupplierOAuthPkceStartResult,
 } from '@/lib/apiClient'
 import { toast } from '@/lib/notifications'
 import type {
   ImageProviderId,
+  SupplierAuthMode,
   SupplierDTO,
   SupplierKeyDTO,
   SupplierQueriedModel,
 } from '@/types/gallery'
-import { PROVIDER_META } from '../../../../shared/studio'
+import {
+  PROVIDER_META,
+  SUPPLIER_AUTH_MODES,
+  SUPPLIER_AUTH_MODE_META,
+} from '../../../../shared/studio'
 import { AdminBadge, AdminField, AdminPageHeader } from '../AdminPrimitives'
 import {
   ADMIN_BTN_CLS,
@@ -52,6 +68,7 @@ import {
 interface SupplierFormState {
   id?: string
   name: string
+  authMode: SupplierAuthMode
   baseUrl: string
   apiKey: string
   rawKeysText: string
@@ -82,6 +99,30 @@ const INITIAL_MODEL_QUERY_STATE: ModelQueryState = {
   filter: '',
 }
 
+function formatTokenExpiryBadge(expiresAt: number, nowTs: number): {
+  tone: 'success' | 'warning' | 'danger' | 'neutral'
+  text: string
+} {
+  if (!expiresAt) return { tone: 'neutral', text: '未记录有效期' }
+  const diffMs = expiresAt - nowTs
+  if (diffMs <= 0) {
+    return { tone: 'warning', text: 'Access 已过期（调用时自动续期）' }
+  }
+  const mins = Math.floor(diffMs / 60_000)
+  if (mins < 10) {
+    return { tone: 'warning', text: `即将续期 · 剩 ${mins} 分钟` }
+  }
+  const hours = Math.floor(mins / 60)
+  if (hours >= 24) {
+    const days = Math.floor(hours / 24)
+    return { tone: 'success', text: `Token 有效 · 剩 ${days} 天` }
+  }
+  if (hours >= 1) {
+    return { tone: 'success', text: `Token 有效 · 剩 ${hours} 小时` }
+  }
+  return { tone: 'success', text: `Token 有效 · 剩 ${mins} 分钟` }
+}
+
 interface AdminSuppliersTabProps {
   reloadTick: number
   onLoadingChange: (loading: boolean) => void
@@ -97,6 +138,441 @@ function countBatchLines(raw: string): number {
     .filter((line) => line && !line.startsWith('#')).length
 }
 
+interface OAuthAuthorizePanelProps {
+  authMode: SupplierAuthMode
+  supplierId?: string
+  onAuthorizedExisting: (nextSuppliers: SupplierDTO[], updatedExisting?: boolean) => Promise<void> | void
+  onAuthorizedDraft?: (draft: DraftOAuthAccountSummary) => void
+  onTestAll?: () => void
+  testAllDisabled?: boolean
+  testAllBusy?: boolean
+}
+
+function OAuthAuthorizePanel({
+  authMode,
+  supplierId,
+  onAuthorizedExisting,
+  onAuthorizedDraft,
+  onTestAll,
+  testAllDisabled = false,
+  testAllBusy = false,
+}: OAuthAuthorizePanelProps) {
+  const [oauthTab, setOauthTab] = useState<'device' | 'pkce' | 'import'>('device')
+  const [accountLabel, setAccountLabel] = useState('')
+  const [starting, setStarting] = useState(false)
+  const [deviceSession, setDeviceSession] = useState<SupplierOAuthDeviceStartResult | null>(null)
+  const [pollingError, setPollingError] = useState('')
+  const [pkceSession, setPkceSession] = useState<SupplierOAuthPkceStartResult | null>(null)
+  const [callbackInput, setCallbackInput] = useState('')
+  const [completingPkce, setCompletingPkce] = useState(false)
+  const [importJsonText, setImportJsonText] = useState('')
+  const [importingJson, setImportingJson] = useState(false)
+
+  const handleCompleted = useCallback(
+    async (res: {
+      suppliers?: SupplierDTO[]
+      draftAccount?: DraftOAuthAccountSummary
+      updatedExisting?: boolean
+    }) => {
+      setDeviceSession(null)
+      setPkceSession(null)
+      setCallbackInput('')
+      setImportJsonText('')
+      setAccountLabel('')
+      setPollingError('')
+      if (res.suppliers) {
+        await onAuthorizedExisting(res.suppliers, res.updatedExisting)
+      } else if (res.draftAccount) {
+        onAuthorizedDraft?.(res.draftAccount)
+      }
+    },
+    [onAuthorizedDraft, onAuthorizedExisting]
+  )
+
+  const runDevicePollOnce = useCallback(
+    async (sessionId: string) => {
+      try {
+        const res = await pollAdminSupplierOAuthDeviceApi({
+          supplierId,
+          sessionId,
+        })
+        if (res.status === 'completed') {
+          await handleCompleted(res)
+          toast.success(
+            res.updatedExisting ? '订阅账号授权已刷新并同步入库' : 'OAuth 订阅账号授权成功！'
+          )
+          return
+        }
+        if (res.status === 'expired' || res.status === 'failed') {
+          setDeviceSession(null)
+          setPollingError(res.error || '设备码授权已失效')
+          toast.error(res.error || '设备码授权已失效')
+          return
+        }
+        if (res.intervalSec) {
+          setDeviceSession((prev) =>
+            prev && prev.sessionId === sessionId ? { ...prev, intervalSec: res.intervalSec! } : prev
+          )
+        }
+      } catch (err) {
+        setPollingError(err instanceof Error ? err.message : '轮询授权状态失败')
+      }
+    },
+    [handleCompleted, supplierId]
+  )
+
+  useEffect(() => {
+    if (!deviceSession) return
+    const intervalMs = Math.max(3, deviceSession.intervalSec || 5) * 1000
+    const timer = window.setInterval(() => {
+      void runDevicePollOnce(deviceSession.sessionId)
+    }, intervalMs)
+    return () => window.clearInterval(timer)
+  }, [deviceSession, runDevicePollOnce])
+
+  const handleStartDevice = async () => {
+    setStarting(true)
+    setPollingError('')
+    try {
+      const session = await startAdminSupplierOAuthDeviceApi({
+        supplierId,
+        authMode,
+        label: accountLabel.trim() || undefined,
+      })
+      setDeviceSession(session)
+      toast.success('已生成设备码，请打开官方授权页确认登录')
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : '获取设备码失败'
+      setPollingError(msg)
+      toast.error(msg)
+    } finally {
+      setStarting(false)
+    }
+  }
+
+  const handleStartPkce = async () => {
+    setStarting(true)
+    setPollingError('')
+    try {
+      const session = await startAdminSupplierOAuthPkceApi({
+        supplierId,
+        authMode,
+        label: accountLabel.trim() || undefined,
+      })
+      setPkceSession(session)
+      setCallbackInput('')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '生成授权链接失败')
+    } finally {
+      setStarting(false)
+    }
+  }
+
+  const handleCompletePkce = async () => {
+    if (!pkceSession || !callbackInput.trim()) return
+    setCompletingPkce(true)
+    try {
+      const res = await completeAdminSupplierOAuthPkceApi({
+        supplierId,
+        sessionId: pkceSession.sessionId,
+        callbackInput: callbackInput.trim(),
+      })
+      await handleCompleted(res)
+      toast.success(res.updatedExisting ? '订阅账号 Token 已更新' : 'OAuth 订阅账号已授权绑定')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '完成 PKCE 绑定失败')
+    } finally {
+      setCompletingPkce(false)
+    }
+  }
+
+  const handleImportJson = async () => {
+    if (!importJsonText.trim()) return
+    setImportingJson(true)
+    try {
+      const res = await importAdminSupplierOAuthJsonApi({
+        supplierId,
+        authMode,
+        rawJson: importJsonText,
+        label: accountLabel.trim() || undefined,
+      })
+      await handleCompleted(res)
+      toast.success(res.updatedExisting ? '已覆盖更新订阅账号凭证' : '已导入 OAuth 订阅账号')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '导入 auth.json 失败')
+    } finally {
+      setImportingJson(false)
+    }
+  }
+
+  return (
+    <div className="min-w-0 space-y-3 border border-zinc-200 bg-zinc-50/70 p-3 dark:border-zinc-800 dark:bg-zinc-900/40">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="font-bold">
+          {supplierId ? '添加 / 续期' : '授权绑定'}{' '}
+          {SUPPLIER_AUTH_MODE_META[authMode]?.shortLabel} 订阅账号
+        </span>
+        <div className="inline-flex flex-wrap border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
+          {(
+            [
+              { id: 'device', label: '设备码授权（推荐）' },
+              { id: 'pkce', label: '浏览器 PKCE' },
+              { id: 'import', label: '导入 auth.json' },
+            ] as const
+          ).map((tabItem) => (
+            <button
+              key={tabItem.id}
+              type="button"
+              onClick={() => setOauthTab(tabItem.id)}
+              className={`px-2.5 py-1 text-xs whitespace-nowrap ${
+                oauthTab === tabItem.id
+                  ? 'bg-zinc-950 text-white dark:bg-zinc-100 dark:text-zinc-950'
+                  : 'text-zinc-500 hover:text-zinc-950 dark:hover:text-zinc-100'
+              }`}
+            >
+              {tabItem.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2">
+        <Input
+          value={accountLabel}
+          onChange={(e) => setAccountLabel(e.target.value)}
+          placeholder="可选账号备注，例如：主号 Plus / 备用号"
+          className={`min-w-[180px] flex-1 ${ADMIN_TEXT_INPUT_CLS}`}
+        />
+        {onTestAll && (
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className={`${ADMIN_BTN_SM_CLS} shrink-0`}
+            disabled={testAllDisabled || testAllBusy}
+            onClick={onTestAll}
+          >
+            {testAllBusy ? (
+              <LoaderCircleIcon className="size-3 animate-spin" />
+            ) : (
+              <WifiIcon className="size-3" />
+            )}
+            全部测活
+          </Button>
+        )}
+      </div>
+
+      {pollingError && (
+        <div className="border border-red-300 bg-red-50 px-2.5 py-2 text-xs text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-300">
+          {pollingError}
+        </div>
+      )}
+
+      {oauthTab === 'device' && (
+        <div className="space-y-2.5 border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-950">
+          {!deviceSession ? (
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="min-w-0 flex-1 text-zinc-500">
+                点击右侧按钮申请一次性设备码，在官方页面登录订阅账号并输入设备码即可完成绑定。
+              </div>
+              <Button
+                type="button"
+                size="sm"
+                className={`${ADMIN_BTN_SM_CLS} shrink-0`}
+                disabled={starting}
+                onClick={() => void handleStartDevice()}
+              >
+                {starting ? (
+                  <LoaderCircleIcon className="size-3 animate-spin" />
+                ) : (
+                  <ShieldCheckIcon className="size-3" />
+                )}
+                获取设备码
+              </Button>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-xs text-zinc-500">
+                    1. 复制下方设备码，然后打开官方授权页输入确认：
+                  </div>
+                  <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                    <code className="border border-zinc-950 bg-zinc-50 px-3 py-1.5 font-mono text-base font-bold tracking-widest dark:border-zinc-100 dark:bg-zinc-900">
+                      {deviceSession.userCode}
+                    </code>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className={ADMIN_BTN_SM_CLS}
+                      onClick={() => {
+                        void navigator.clipboard.writeText(deviceSession.userCode)
+                        toast.success('已复制设备码')
+                      }}
+                    >
+                      <CopyIcon className="size-3" />
+                      复制
+                    </Button>
+                  </div>
+                </div>
+                <a
+                  href={deviceSession.verificationUriComplete || deviceSession.verificationUri}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex shrink-0 items-center gap-1.5 border border-zinc-950 bg-zinc-950 px-3 py-1.5 font-mono text-xs font-bold text-white hover:opacity-90 dark:border-zinc-100 dark:bg-zinc-100 dark:text-zinc-950"
+                >
+                  <ExternalLinkIcon className="size-3.5" />
+                  打开官方授权页
+                </a>
+              </div>
+              <div className="flex flex-wrap items-center justify-between gap-2 border-t border-zinc-200 pt-2 text-zinc-500 dark:border-zinc-800">
+                <span className="inline-flex items-center gap-1.5 font-mono">
+                  <LoaderCircleIcon className="size-3 shrink-0 animate-spin" />
+                  等待你在官方页确认授权（每 {deviceSession.intervalSec}s 自动检查）…
+                </span>
+                <div className="flex items-center gap-1.5">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className={ADMIN_BTN_SM_CLS}
+                    onClick={() => void runDevicePollOnce(deviceSession.sessionId)}
+                  >
+                    <RefreshCwIcon className="size-3" />
+                    立即检查
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className={ADMIN_BTN_SM_CLS}
+                    onClick={() => setDeviceSession(null)}
+                  >
+                    取消
+                  </Button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {oauthTab === 'pkce' && (
+        <div className="space-y-2.5 border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-950">
+          {!pkceSession ? (
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="min-w-0 flex-1 text-zinc-500">
+                若设备码受限，可走标准 PKCE 授权：登录完成后把浏览器跳转的{' '}
+                <span className="font-mono">localhost:1455/auth/callback?...</span> 地址粘回即可。
+              </div>
+              <Button
+                type="button"
+                size="sm"
+                className={`${ADMIN_BTN_SM_CLS} shrink-0`}
+                disabled={starting}
+                onClick={() => void handleStartPkce()}
+              >
+                {starting ? (
+                  <LoaderCircleIcon className="size-3 animate-spin" />
+                ) : (
+                  <ExternalLinkIcon className="size-3" />
+                )}
+                生成授权链接
+              </Button>
+            </div>
+          ) : (
+            <div className="space-y-2.5">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="min-w-0 flex-1 text-zinc-600 dark:text-zinc-400">
+                  1. 点击右侧打开官方登录页，完成授权后浏览器会跳向无法打开的{' '}
+                  <span className="font-mono">localhost:1455</span>：
+                </span>
+                <a
+                  href={pkceSession.authorizeUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex shrink-0 items-center gap-1.5 border border-zinc-950 bg-zinc-950 px-3 py-1.5 font-mono text-xs font-bold text-white hover:opacity-90 dark:border-zinc-100 dark:bg-zinc-100 dark:text-zinc-950"
+                >
+                  <ExternalLinkIcon className="size-3.5" />
+                  前往官方登录
+                </a>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Input
+                  value={callbackInput}
+                  onChange={(e) => setCallbackInput(e.target.value)}
+                  placeholder="2. 粘贴浏览器地址栏完整回调 URL（或 code 参数）"
+                  className={`min-w-[200px] flex-1 ${ADMIN_INPUT_CLS}`}
+                />
+                <Button
+                  type="button"
+                  size="sm"
+                  className={ADMIN_BTN_SM_CLS}
+                  disabled={completingPkce || !callbackInput.trim()}
+                  onClick={() => void handleCompletePkce()}
+                >
+                  {completingPkce ? (
+                    <LoaderCircleIcon className="size-3 animate-spin" />
+                  ) : (
+                    <CheckIcon className="size-3" />
+                  )}
+                  完成绑定
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className={ADMIN_BTN_SM_CLS}
+                  onClick={() => setPkceSession(null)}
+                >
+                  重置
+                </Button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {oauthTab === 'import' && (
+        <div className="space-y-2 border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-950">
+          <div className="text-zinc-500">
+            支持直接粘贴 <span className="font-mono">~/.codex/auth.json</span>、
+            <span className="font-mono">~/.grok/auth.json</span> 或 CLIProxyAPI 导出的凭证 JSON：
+          </div>
+          <Textarea
+            rows={4}
+            value={importJsonText}
+            onChange={(e) => setImportJsonText(e.target.value)}
+            placeholder={
+              authMode === 'oauth_openai_codex'
+                ? '{"tokens":{"access_token":"eyJ...","refresh_token":"rt_...","id_token":"eyJ...","account_id":"..."}}'
+                : '{"access_token":"...","refresh_token":"..."}'
+            }
+            className="rounded-none font-mono text-xs"
+          />
+          <div className="flex justify-end">
+            <Button
+              type="button"
+              size="sm"
+              className={ADMIN_BTN_SM_CLS}
+              disabled={importingJson || !importJsonText.trim()}
+              onClick={() => void handleImportJson()}
+            >
+              {importingJson ? (
+                <LoaderCircleIcon className="size-3 animate-spin" />
+              ) : (
+                <PlusIcon className="size-3" />
+              )}
+              导入订阅凭证
+            </Button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 export function AdminSuppliersTab({
   reloadTick,
   onLoadingChange,
@@ -108,6 +584,7 @@ export function AdminSuppliersTab({
   const [supplierDialogOpen, setSupplierDialogOpen] = useState(false)
   const [supplierForm, setSupplierForm] = useState<SupplierFormState>({
     name: '',
+    authMode: 'api_key',
     baseUrl: 'https://',
     apiKey: '',
     rawKeysText: '',
@@ -124,17 +601,23 @@ export function AdminSuppliersTab({
   const [savingSupplier, setSavingSupplier] = useState(false)
   const [testingSupplierId, setTestingSupplierId] = useState<string | null>(null)
 
-  // 密钥池管理弹窗
+  // 密钥池 / OAuth 订阅账号管理弹窗
   const [keyPoolSupplierId, setKeyPoolSupplierId] = useState<string | null>(null)
   const [batchImportText, setBatchImportText] = useState('')
   const [importingKeys, setImportingKeys] = useState(false)
   const [editingKeyId, setEditingKeyId] = useState<string | null>(null)
   const [editingKeyLabel, setEditingKeyLabel] = useState('')
   const [testingKeyId, setTestingKeyId] = useState<string | null>(null)
+  const [refreshingKeyId, setRefreshingKeyId] = useState<string | null>(null)
   const [keyTestResults, setKeyTestResults] = useState<Record<string, SupplierKeyTestResult>>({})
   const [nowTs, setNowTs] = useState(() => Date.now())
+  const [draftOAuthAccounts, setDraftOAuthAccounts] = useState<DraftOAuthAccountSummary[]>([])
+  const [oauthResetNonce, setOauthResetNonce] = useState(0)
 
   const activePoolSupplier = suppliers.find((s) => s.id === keyPoolSupplierId) ?? null
+  const activeFormSupplier = supplierForm.id
+    ? suppliers.find((s) => s.id === supplierForm.id) ?? null
+    : null
 
   const syncSuppliersState = useCallback((next: SupplierDTO[]) => {
     setSuppliers(next)
@@ -160,11 +643,18 @@ export function AdminSuppliersTab({
     return () => window.clearTimeout(timer)
   }, [loadData, reloadTick])
 
+  const resetOAuthDialogState = useCallback(() => {
+    setDraftOAuthAccounts([])
+    setOauthResetNonce((n) => n + 1)
+  }, [])
+
   const openNewSupplier = () => {
     setShowSupplierKey(false)
     setModelQuery(INITIAL_MODEL_QUERY_STATE)
+    resetOAuthDialogState()
     setSupplierForm({
       name: '',
+      authMode: 'api_key',
       baseUrl: 'https://',
       apiKey: '',
       rawKeysText: '',
@@ -182,8 +672,10 @@ export function AdminSuppliersTab({
   const openCloneSupplier = (s: SupplierDTO) => {
     setShowSupplierKey(false)
     setModelQuery(INITIAL_MODEL_QUERY_STATE)
+    resetOAuthDialogState()
     setSupplierForm({
       name: `${s.name} 副本`,
+      authMode: s.authMode || 'api_key',
       baseUrl: s.baseUrl,
       apiKey: '',
       rawKeysText: '',
@@ -201,9 +693,11 @@ export function AdminSuppliersTab({
   const openEditSupplier = (s: SupplierDTO) => {
     setShowSupplierKey(false)
     setModelQuery(INITIAL_MODEL_QUERY_STATE)
+    resetOAuthDialogState()
     setSupplierForm({
       id: s.id,
       name: s.name,
+      authMode: s.authMode || 'api_key',
       baseUrl: s.baseUrl,
       apiKey: '',
       rawKeysText: '',
@@ -224,6 +718,34 @@ export function AdminSuppliersTab({
     setEditingKeyId(null)
     setEditingKeyLabel('')
     setKeyTestResults({})
+    resetOAuthDialogState()
+  }
+
+  const handleAuthModeChange = (nextMode: SupplierAuthMode) => {
+    const prevMeta = SUPPLIER_AUTH_MODE_META[supplierForm.authMode]
+    const nextMeta = SUPPLIER_AUTH_MODE_META[nextMode]
+    setModelQuery(INITIAL_MODEL_QUERY_STATE)
+    setDraftOAuthAccounts([])
+    setOauthResetNonce((n) => n + 1)
+    setSupplierForm((prev) => {
+      const trimmedUrl = prev.baseUrl.trim()
+      const shouldReplaceUrl =
+        !trimmedUrl ||
+        trimmedUrl === 'https://' ||
+        trimmedUrl === 'https:' ||
+        trimmedUrl === prevMeta.defaultBaseUrl
+      const isDefaultPrevModels =
+        prev.selectedModels.length === 0 ||
+        (prevMeta.defaultModels.length > 0 &&
+          prev.selectedModels.length === prevMeta.defaultModels.length &&
+          prev.selectedModels.every((m, idx) => m === prevMeta.defaultModels[idx]))
+      return {
+        ...prev,
+        authMode: nextMode,
+        baseUrl: shouldReplaceUrl ? nextMeta.defaultBaseUrl : prev.baseUrl,
+        selectedModels: isDefaultPrevModels ? [...nextMeta.defaultModels] : prev.selectedModels,
+      }
+    })
   }
 
   const filteredQueriedModels = useMemo(() => {
@@ -251,14 +773,19 @@ export function AdminSuppliersTab({
     try {
       const res = await queryAdminSupplierModelsApi({
         supplierId: supplierForm.id,
+        authMode: supplierForm.authMode,
         baseUrl: cleanBase,
         apiKey:
-          supplierForm.keyEntryMode === 'single'
+          supplierForm.authMode === 'api_key' && supplierForm.keyEntryMode === 'single'
             ? supplierForm.apiKey.trim() || undefined
             : undefined,
         rawKeysText:
-          supplierForm.keyEntryMode === 'batch'
+          supplierForm.authMode === 'api_key' && supplierForm.keyEntryMode === 'batch'
             ? supplierForm.rawKeysText.trim() || undefined
+            : undefined,
+        oauthSessionIds:
+          supplierForm.authMode !== 'api_key' && !supplierForm.id && draftOAuthAccounts.length > 0
+            ? draftOAuthAccounts.map((a) => a.sessionId)
             : undefined,
       })
       setModelQuery((prev) => ({
@@ -332,50 +859,66 @@ export function AdminSuppliersTab({
     }
     setSavingSupplier(true)
     try {
+      const isOAuth = supplierForm.authMode !== 'api_key'
       if (supplierForm.id) {
         const res = await updateAdminSupplierApi(supplierForm.id, {
           name: supplierForm.name.trim(),
+          authMode: supplierForm.authMode,
           baseUrl: supplierForm.baseUrl.trim(),
           apiKey:
-            supplierForm.keyEntryMode === 'single'
+            !isOAuth && supplierForm.keyEntryMode === 'single'
               ? supplierForm.apiKey.trim() || undefined
               : undefined,
           rawKeysText:
-            supplierForm.keyEntryMode === 'batch'
+            !isOAuth && supplierForm.keyEntryMode === 'batch'
               ? supplierForm.rawKeysText.trim() || undefined
               : undefined,
           models: supplierForm.selectedModels,
           enabled: supplierForm.enabled,
           note: supplierForm.note.trim(),
         })
-        setSuppliers(res.suppliers)
+        syncSuppliersState(res.suppliers)
         setSupplierDialogOpen(false)
         await onRefreshBootstrap()
         toast.success('供应商已更新（引用它的全部渠道已即时生效）')
       } else {
         const res = await createAdminSupplierApi({
           name: supplierForm.name.trim(),
+          authMode: supplierForm.authMode,
           baseUrl: supplierForm.baseUrl.trim(),
           apiKey:
-            supplierForm.keyEntryMode === 'single'
+            !isOAuth && supplierForm.keyEntryMode === 'single'
               ? supplierForm.apiKey.trim() || undefined
               : undefined,
           rawKeysText:
-            supplierForm.keyEntryMode === 'batch'
+            !isOAuth && supplierForm.keyEntryMode === 'batch'
               ? supplierForm.rawKeysText.trim() || undefined
+              : undefined,
+          oauthSessionIds:
+            isOAuth && draftOAuthAccounts.length > 0
+              ? draftOAuthAccounts.map((a) => a.sessionId)
               : undefined,
           models: supplierForm.selectedModels,
           enabled: supplierForm.enabled,
           note: supplierForm.note.trim(),
         })
-        setSuppliers(res.suppliers)
+        syncSuppliersState(res.suppliers)
         setSupplierDialogOpen(false)
+        setDraftOAuthAccounts([])
         await onRefreshBootstrap()
-        toast.success(
-          res.addedCount && res.addedCount > 1
-            ? `供应商已创建，已导入 ${res.addedCount} 个 API 密钥`
-            : '供应商已创建'
-        )
+        if (isOAuth) {
+          toast.success(
+            res.addedCount && res.addedCount > 0
+              ? `OAuth 供应商已创建，已绑定 ${res.addedCount} 个订阅账号`
+              : 'OAuth 供应商已创建（可随时在「订阅账号」中补充授权）'
+          )
+        } else {
+          toast.success(
+            res.addedCount && res.addedCount > 1
+              ? `供应商已创建，已导入 ${res.addedCount} 个 API 密钥`
+              : '供应商已创建'
+          )
+        }
       }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : '保存供应商失败')
@@ -564,16 +1107,31 @@ export function AdminSuppliersTab({
       destructive: true,
       run: async () => {
         const res = await deleteAdminSupplierKeyApi(s.id, k.id)
-        setSuppliers(res.suppliers)
+        syncSuppliersState(res.suppliers)
         await onRefreshBootstrap()
-        toast.success('已移除该密钥')
+        toast.success('已移除该凭证')
       },
     })
+  }
+
+  const handleRefreshOAuthKey = async (s: SupplierDTO, k: SupplierKeyDTO) => {
+    setRefreshingKeyId(k.id)
+    try {
+      const res = await refreshAdminSupplierKeyTokenApi(s.id, k.id)
+      syncSuppliersState(res.suppliers)
+      await onRefreshBootstrap()
+      toast.success(`${k.label || k.apiKeyHint}：${res.message}`)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '刷新 Token 失败')
+    } finally {
+      setRefreshingKeyId(null)
+    }
   }
 
   return (
     <div className="space-y-6">
       <AdminPageHeader
+        eyebrow="SECTION 03 // SUPPLIER KEY VAULT"
         title={`供应商凭证池 (${suppliers.length})`}
         description="统一管理官方或中转站接口域名与多 Key 凭证池（AES-GCM 加密入库）；同一个站点只需配置 1 个供应商并导入多个 API Key，渠道即可自动轮询与池内容灾。"
         actions={
@@ -612,20 +1170,29 @@ export function AdminSuppliersTab({
                 return (
                   <tr key={s.id} className="hover:bg-zinc-50/70 dark:hover:bg-zinc-900/50">
                     <td className="px-4 py-3">
-                      <div className="font-bold">{s.name}</div>
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className="font-bold">{s.name}</span>
+                        {s.authMode !== 'api_key' && (
+                          <AdminBadge tone="info">
+                            {SUPPLIER_AUTH_MODE_META[s.authMode]?.shortLabel || s.authMode}
+                          </AdminBadge>
+                        )}
+                      </div>
                       {s.note && <div className="text-xs text-zinc-500">{s.note}</div>}
                     </td>
                     <td className="max-w-[240px] truncate px-4 py-3 font-mono">{s.baseUrl}</td>
                     <td className="px-4 py-3">
                       <div className="flex flex-wrap items-center gap-1.5">
                         {s.keyCount === 0 ? (
-                          <AdminBadge tone="danger">未配置</AdminBadge>
+                          <AdminBadge tone="danger">
+                            {s.authMode !== 'api_key' ? '未授权' : '未配置'}
+                          </AdminBadge>
                         ) : s.activeKeyCount === 0 ? (
                           <AdminBadge tone="warning">0/{s.keyCount} 启用</AdminBadge>
                         ) : (
                           <AdminBadge tone="success">
                             {s.keyCount > 1
-                              ? `${s.activeKeyCount}/${s.keyCount} 密钥`
+                              ? `${s.activeKeyCount}/${s.keyCount} ${s.authMode !== 'api_key' ? '账号' : '密钥'}`
                               : s.apiKeyHint || '已配置'}
                           </AdminBadge>
                         )}
@@ -638,8 +1205,17 @@ export function AdminSuppliersTab({
                           className={ADMIN_BTN_SM_CLS}
                           onClick={() => openKeyPoolModal(s)}
                         >
-                          <KeyRoundIcon className="size-3" />
-                          密钥池 ({s.keyCount})
+                          {s.authMode !== 'api_key' ? (
+                            <>
+                              <ShieldCheckIcon className="size-3" />
+                              订阅账号 ({s.keyCount})
+                            </>
+                          ) : (
+                            <>
+                              <KeyRoundIcon className="size-3" />
+                              密钥池 ({s.keyCount})
+                            </>
+                          )}
                         </Button>
                       </div>
                     </td>
@@ -774,21 +1350,56 @@ export function AdminSuppliersTab({
       {/* 新建/编辑供应商弹窗 */}
       <Dialog open={supplierDialogOpen} onOpenChange={setSupplierDialogOpen}>
         <DialogContent
-          className={`max-h-[90dvh] w-[95vw] max-w-2xl overflow-y-auto sm:max-w-2xl ${ADMIN_DIALOG_CLS}`}
+          className={`max-h-[90dvh] w-[95vw] max-w-3xl overflow-y-auto sm:max-w-3xl ${ADMIN_DIALOG_CLS}`}
         >
-          <DialogHeader>
+          <DialogHeader className="pr-8">
             <DialogTitle className="text-sm font-bold">
               {supplierForm.id ? '编辑供应商凭证' : '新建供应商凭证'}
             </DialogTitle>
           </DialogHeader>
-          <div className="space-y-4 pt-2 text-xs">
+          <div className="min-w-0 space-y-4 pt-2 text-xs">
             <AdminField label="供应商名称" required>
               <Input
                 value={supplierForm.name}
                 onChange={(e) => setSupplierForm((p) => ({ ...p, name: e.target.value }))}
-                placeholder="例如：官方直连 / 聚合中转站"
+                placeholder="例如：官方直连 / Codex 订阅 / Grok 订阅"
                 className={ADMIN_TEXT_INPUT_CLS}
               />
+            </AdminField>
+
+            <AdminField label="认证方式">
+              <div className="space-y-2">
+                <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-3">
+                  {SUPPLIER_AUTH_MODES.map((mode) => {
+                    const meta = SUPPLIER_AUTH_MODE_META[mode]
+                    const active = supplierForm.authMode === mode
+                    return (
+                      <button
+                        key={mode}
+                        type="button"
+                        onClick={() => handleAuthModeChange(mode)}
+                        className={`border px-3 py-2 text-left transition-colors ${
+                          active
+                            ? 'border-zinc-950 bg-zinc-950 text-white dark:border-zinc-100 dark:bg-zinc-100 dark:text-zinc-950'
+                            : 'border-zinc-200 bg-white text-zinc-700 hover:border-zinc-400 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-300'
+                        }`}
+                      >
+                        <div className="font-mono text-xs font-bold">{meta.shortLabel}</div>
+                        <div className="mt-0.5 text-xs opacity-75">
+                          {mode === 'api_key'
+                            ? '静态密钥 / 中转站'
+                            : mode === 'oauth_openai_codex'
+                              ? 'ChatGPT Plus / Pro'
+                              : 'SuperGrok / X Premium+'}
+                        </div>
+                      </button>
+                    )
+                  })}
+                </div>
+                <div className="text-xs text-zinc-500">
+                  {SUPPLIER_AUTH_MODE_META[supplierForm.authMode].description}
+                </div>
+              </div>
             </AdminField>
 
             <AdminField label="接口基础地址 (HTTPS)" required>
@@ -796,115 +1407,218 @@ export function AdminSuppliersTab({
                 type="url"
                 value={supplierForm.baseUrl}
                 onChange={(e) => setSupplierForm((p) => ({ ...p, baseUrl: e.target.value }))}
-                placeholder="https://api.example.com"
+                placeholder={SUPPLIER_AUTH_MODE_META[supplierForm.authMode].defaultBaseUrl}
                 className={ADMIN_INPUT_CLS}
               />
             </AdminField>
 
-            <AdminField
-              label={
-                <div className="flex w-full items-center justify-between gap-2">
-                  <span>
-                    {supplierForm.id
-                      ? supplierForm.keyCount > 1
-                        ? `追加新密钥（当前密钥池共 ${supplierForm.keyCount} 个）`
-                        : '访问密钥'
-                      : '访问密钥（支持批量导入多 Key）'}
-                    {supplierForm.hasExistingKey && supplierForm.keyCount <= 1 && (
-                      <span className="ml-1 font-mono font-normal text-zinc-500">
-                        （当前：{supplierForm.apiKeyHint}）
-                      </span>
-                    )}
-                  </span>
-                  <div className="inline-flex border border-zinc-200 dark:border-zinc-800">
-                    <button
-                      type="button"
-                      onClick={() => setSupplierForm((p) => ({ ...p, keyEntryMode: 'single' }))}
-                      className={`px-2 py-0.5 text-xs ${
-                        supplierForm.keyEntryMode === 'single'
-                          ? 'bg-zinc-950 text-white dark:bg-zinc-100 dark:text-zinc-950'
-                          : 'text-zinc-500 hover:text-zinc-950 dark:hover:text-zinc-100'
-                      }`}
-                    >
-                      单条
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setSupplierForm((p) => ({ ...p, keyEntryMode: 'batch' }))}
-                      className={`px-2 py-0.5 text-xs ${
-                        supplierForm.keyEntryMode === 'batch'
-                          ? 'bg-zinc-950 text-white dark:bg-zinc-100 dark:text-zinc-950'
-                          : 'text-zinc-500 hover:text-zinc-950 dark:hover:text-zinc-100'
-                      }`}
-                    >
-                      批量多行
-                    </button>
-                  </div>
-                </div>
-              }
-            >
-              {supplierForm.keyEntryMode === 'single' ? (
-                <div className="flex gap-1.5">
-                  <div className="relative flex-1">
-                    <Input
-                      type={showSupplierKey ? 'text' : 'password'}
-                      value={supplierForm.apiKey}
-                      onChange={(e) => setSupplierForm((p) => ({ ...p, apiKey: e.target.value }))}
-                      placeholder={
-                        supplierForm.id
-                          ? supplierForm.keyCount > 1
-                            ? '输入新密钥将追加到密钥池（管理已有密钥请点击表格「密钥池」）'
-                            : supplierForm.hasExistingKey
-                              ? '留空表示保持原有密钥不变'
-                              : '输入访问密钥'
-                          : '输入访问密钥'
-                      }
-                      className={`${ADMIN_INPUT_CLS} pr-9`}
-                    />
-                    <button
-                      type="button"
-                      aria-label={showSupplierKey ? '隐藏密钥' : '显示密钥'}
-                      onClick={() => setShowSupplierKey((v) => !v)}
-                      className="absolute top-1/2 right-2.5 -translate-y-1/2 text-zinc-500"
-                    >
-                      {showSupplierKey ? (
-                        <EyeOffIcon className="size-4" />
-                      ) : (
-                        <EyeIcon className="size-4" />
+            {supplierForm.authMode !== 'api_key' ? (
+              <div className="min-w-0 space-y-2.5">
+                {/* 已授权的待保存/已绑定账号展示 */}
+                {!supplierForm.id ? (
+                  draftOAuthAccounts.length > 0 && (
+                    <div className="space-y-1.5 border border-emerald-600/35 bg-emerald-500/8 p-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-bold text-emerald-700 dark:text-emerald-400">
+                          已就绪待保存的订阅账号 ({draftOAuthAccounts.length})
+                        </span>
+                        <span className="text-xs text-zinc-500">
+                          可直接点击下方「查询模型列表」或「保存供应商」
+                        </span>
+                      </div>
+                      <div className="space-y-1.5">
+                        {draftOAuthAccounts.map((acc) => {
+                          const exp = formatTokenExpiryBadge(acc.expiresAt, nowTs)
+                          return (
+                            <div
+                              key={acc.sessionId}
+                              className="flex flex-wrap items-center justify-between gap-2 border border-zinc-200 bg-white px-2.5 py-1.5 dark:border-zinc-800 dark:bg-zinc-950"
+                            >
+                              <div className="flex min-w-0 flex-wrap items-center gap-2">
+                                <span className="max-w-[200px] truncate font-semibold">
+                                  {acc.label}
+                                </span>
+                                <span className="font-mono text-zinc-500">{acc.accountHint}</span>
+                                <AdminBadge tone={exp.tone}>{exp.text}</AdminBadge>
+                              </div>
+                              <button
+                                type="button"
+                                title="移除此待绑定账号"
+                                onClick={() =>
+                                  setDraftOAuthAccounts((prev) =>
+                                    prev.filter((item) => item.sessionId !== acc.sessionId)
+                                  )
+                                }
+                                className="text-zinc-400 hover:text-red-600"
+                              >
+                                <XIcon className="size-3.5" />
+                              </button>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  )
+                ) : (
+                  <div className="flex flex-wrap items-center justify-between gap-2 border border-zinc-200 bg-zinc-50/70 px-3 py-2 dark:border-zinc-800 dark:bg-zinc-900/40">
+                    <span className="font-bold">
+                      已绑定订阅账号 ({activeFormSupplier?.keyCount ?? supplierForm.keyCount})
+                      {activeFormSupplier?.apiKeyHint && (
+                        <span className="ml-2 font-mono font-normal text-zinc-500">
+                          {activeFormSupplier.apiKeyHint}
+                        </span>
                       )}
-                    </button>
+                    </span>
+                    {activeFormSupplier && (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className={ADMIN_BTN_SM_CLS}
+                        onClick={() => {
+                          setSupplierDialogOpen(false)
+                          openKeyPoolModal(activeFormSupplier)
+                        }}
+                      >
+                        <ShieldCheckIcon className="size-3" />
+                        管理全部账号 / 测活
+                      </Button>
+                    )}
                   </div>
-                  {supplierForm.id && supplierForm.keyCount > 0 && (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      title="清空全部已保存的 API 密钥"
-                      className={ADMIN_BTN_CLS}
-                      disabled={savingSupplier}
-                      onClick={handleClearSupplierKey}
-                    >
-                      <Trash2Icon className="size-3.5" />
-                    </Button>
-                  )}
-                </div>
-              ) : (
-                <div className="space-y-1.5">
-                  <Textarea
-                    rows={4}
-                    value={supplierForm.rawKeysText}
-                    onChange={(e) =>
-                      setSupplierForm((p) => ({ ...p, rawKeysText: e.target.value }))
+                )}
+
+                <OAuthAuthorizePanel
+                  key={`${supplierForm.authMode}:${supplierForm.id ?? 'draft'}:${oauthResetNonce}`}
+                  authMode={supplierForm.authMode}
+                  supplierId={supplierForm.id}
+                  onAuthorizedExisting={async (nextSuppliers) => {
+                    syncSuppliersState(nextSuppliers)
+                    const updated = nextSuppliers.find((item) => item.id === supplierForm.id)
+                    if (updated) {
+                      setSupplierForm((prev) => ({
+                        ...prev,
+                        hasExistingKey: updated.hasApiKey,
+                        apiKeyHint: updated.apiKeyHint,
+                        keyCount: updated.keyCount,
+                      }))
                     }
-                    placeholder={'每行一个密钥，自动去重；可选「备注|密钥」格式，例如：\n主力Key|sk-xxxx1\nsk-xxxx2'}
-                    className="rounded-none font-mono text-xs"
-                  />
-                  <div className="text-xs text-zinc-500">
-                    已识别 {countBatchLines(supplierForm.rawKeysText)} 行待导入密钥
+                    await onRefreshBootstrap()
+                  }}
+                  onAuthorizedDraft={(draft) => {
+                    setDraftOAuthAccounts((prev) => {
+                      const exists = prev.some((item) => item.sessionId === draft.sessionId)
+                      return exists ? prev : [...prev, draft]
+                    })
+                    setNowTs(Date.now())
+                  }}
+                />
+              </div>
+            ) : (
+              <AdminField
+                label={
+                  <div className="flex w-full items-center justify-between gap-2">
+                    <span>
+                      {supplierForm.id
+                        ? supplierForm.keyCount > 1
+                          ? `追加新密钥（当前密钥池共 ${supplierForm.keyCount} 个）`
+                          : '访问密钥'
+                        : '访问密钥（支持批量导入多 Key）'}
+                      {supplierForm.hasExistingKey && supplierForm.keyCount <= 1 && (
+                        <span className="ml-1 font-mono font-normal text-zinc-500">
+                          （当前：{supplierForm.apiKeyHint}）
+                        </span>
+                      )}
+                    </span>
+                    <div className="inline-flex border border-zinc-200 dark:border-zinc-800">
+                      <button
+                        type="button"
+                        onClick={() => setSupplierForm((p) => ({ ...p, keyEntryMode: 'single' }))}
+                        className={`px-2 py-0.5 text-xs ${
+                          supplierForm.keyEntryMode === 'single'
+                            ? 'bg-zinc-950 text-white dark:bg-zinc-100 dark:text-zinc-950'
+                            : 'text-zinc-500 hover:text-zinc-950 dark:hover:text-zinc-100'
+                        }`}
+                      >
+                        单条
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setSupplierForm((p) => ({ ...p, keyEntryMode: 'batch' }))}
+                        className={`px-2 py-0.5 text-xs ${
+                          supplierForm.keyEntryMode === 'batch'
+                            ? 'bg-zinc-950 text-white dark:bg-zinc-100 dark:text-zinc-950'
+                            : 'text-zinc-500 hover:text-zinc-950 dark:hover:text-zinc-100'
+                        }`}
+                      >
+                        批量多行
+                      </button>
+                    </div>
                   </div>
-                </div>
-              )}
-            </AdminField>
+                }
+              >
+                {supplierForm.keyEntryMode === 'single' ? (
+                  <div className="flex gap-1.5">
+                    <div className="relative flex-1">
+                      <Input
+                        type={showSupplierKey ? 'text' : 'password'}
+                        value={supplierForm.apiKey}
+                        onChange={(e) => setSupplierForm((p) => ({ ...p, apiKey: e.target.value }))}
+                        placeholder={
+                          supplierForm.id
+                            ? supplierForm.keyCount > 1
+                              ? '输入新密钥将追加到密钥池（管理已有密钥请点击表格「密钥池」）'
+                              : supplierForm.hasExistingKey
+                                ? '留空表示保持原有密钥不变'
+                                : '输入访问密钥'
+                            : '输入访问密钥'
+                        }
+                        className={`${ADMIN_INPUT_CLS} pr-9`}
+                      />
+                      <button
+                        type="button"
+                        aria-label={showSupplierKey ? '隐藏密钥' : '显示密钥'}
+                        onClick={() => setShowSupplierKey((v) => !v)}
+                        className="absolute top-1/2 right-2.5 -translate-y-1/2 text-zinc-500"
+                      >
+                        {showSupplierKey ? (
+                          <EyeOffIcon className="size-4" />
+                        ) : (
+                          <EyeIcon className="size-4" />
+                        )}
+                      </button>
+                    </div>
+                    {supplierForm.id && supplierForm.keyCount > 0 && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        title="清空全部已保存的 API 密钥"
+                        className={ADMIN_BTN_CLS}
+                        disabled={savingSupplier}
+                        onClick={handleClearSupplierKey}
+                      >
+                        <Trash2Icon className="size-3.5" />
+                      </Button>
+                    )}
+                  </div>
+                ) : (
+                  <div className="space-y-1.5">
+                    <Textarea
+                      rows={4}
+                      value={supplierForm.rawKeysText}
+                      onChange={(e) =>
+                        setSupplierForm((p) => ({ ...p, rawKeysText: e.target.value }))
+                      }
+                      placeholder={'每行一个密钥，自动去重；可选「备注|密钥」格式，例如：\n主力Key|sk-xxxx1\nsk-xxxx2'}
+                      className="rounded-none font-mono text-xs"
+                    />
+                    <div className="text-xs text-zinc-500">
+                      已识别 {countBatchLines(supplierForm.rawKeysText)} 行待导入密钥
+                    </div>
+                  </div>
+                )}
+              </AdminField>
+            )}
 
             <AdminField
               label={
@@ -1135,108 +1849,143 @@ export function AdminSuppliersTab({
         </DialogContent>
       </Dialog>
 
-      {/* 供应商多 Key 凭证池管理弹窗 */}
+      {/* 供应商多 Key / OAuth 订阅账号池管理弹窗 */}
       <Dialog
         open={Boolean(activePoolSupplier)}
         onOpenChange={(open) => {
-          if (!open) setKeyPoolSupplierId(null)
+          if (!open) {
+            setKeyPoolSupplierId(null)
+            resetOAuthDialogState()
+          }
         }}
       >
         <DialogContent
-          className={`max-h-[90dvh] w-[95vw] max-w-3xl overflow-y-auto sm:max-w-3xl ${ADMIN_DIALOG_CLS}`}
+          className={`max-h-[90dvh] w-[95vw] max-w-4xl overflow-y-auto sm:max-w-4xl ${ADMIN_DIALOG_CLS}`}
         >
-          <DialogHeader>
-            <DialogTitle className="flex flex-wrap items-center justify-between gap-2 pr-6 text-sm font-bold">
+          <DialogHeader className="pr-8">
+            <DialogTitle className="flex flex-wrap items-center gap-2 text-sm font-bold">
               <span>
-                「{activePoolSupplier?.name}」密钥池 ({activePoolSupplier?.keyCount ?? 0})
+                「{activePoolSupplier?.name}」
+                {activePoolSupplier?.authMode !== 'api_key' ? '订阅账号池' : '密钥池'} (
+                {activePoolSupplier?.keyCount ?? 0})
               </span>
-              <span className="font-mono text-xs font-normal text-zinc-500">
-                {activePoolSupplier?.baseUrl}
-              </span>
+              {activePoolSupplier && activePoolSupplier.authMode !== 'api_key' && (
+                <AdminBadge tone="info">
+                  {SUPPLIER_AUTH_MODE_META[activePoolSupplier.authMode]?.shortLabel}
+                </AdminBadge>
+              )}
             </DialogTitle>
+            {activePoolSupplier?.baseUrl && (
+              <div className="truncate font-mono text-xs text-zinc-500" title={activePoolSupplier.baseUrl}>
+                {activePoolSupplier.baseUrl}
+              </div>
+            )}
           </DialogHeader>
 
           {activePoolSupplier && (
-            <div className="space-y-4 pt-1 text-xs">
-              {/* 批量导入区 */}
-              <div className="space-y-2 border border-zinc-200 bg-zinc-50/70 p-3 dark:border-zinc-800 dark:bg-zinc-900/40">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span className="font-bold">批量添加 / 粘贴 API 密钥</span>
-                  <span className="text-zinc-500">
-                    支持每行 `sk-xxx` 或 `备注|sk-xxx`，自动去重
-                  </span>
-                </div>
-                <Textarea
-                  rows={3}
-                  value={batchImportText}
-                  onChange={(e) => setBatchImportText(e.target.value)}
-                  placeholder={'粘贴 1 个或多个密钥（每行一个），例如：\n主力额度|sk-proj-xxxx1\n备用额度|sk-proj-xxxx2'}
-                  className="rounded-none font-mono text-xs"
+            <div className="min-w-0 space-y-4 pt-1 text-xs">
+              {activePoolSupplier.authMode !== 'api_key' ? (
+                <OAuthAuthorizePanel
+                  key={`${activePoolSupplier.authMode}:${activePoolSupplier.id}:${oauthResetNonce}`}
+                  authMode={activePoolSupplier.authMode}
+                  supplierId={activePoolSupplier.id}
+                  onAuthorizedExisting={async (nextSuppliers) => {
+                    syncSuppliersState(nextSuppliers)
+                    await onRefreshBootstrap()
+                  }}
+                  onTestAll={() => void handleTestSupplier(activePoolSupplier)}
+                  testAllDisabled={!activePoolSupplier.hasApiKey}
+                  testAllBusy={testingSupplierId === activePoolSupplier.id}
                 />
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span className="font-mono text-zinc-500">
-                    待导入：{countBatchLines(batchImportText)} 个
-                  </span>
-                  <div className="flex items-center gap-2">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className={ADMIN_BTN_SM_CLS}
-                      disabled={
-                        !activePoolSupplier.hasApiKey || testingSupplierId === activePoolSupplier.id
-                      }
-                      onClick={() => void handleTestSupplier(activePoolSupplier)}
-                    >
-                      {testingSupplierId === activePoolSupplier.id ? (
-                        <LoaderCircleIcon className="size-3 animate-spin" />
-                      ) : (
-                        <WifiIcon className="size-3" />
-                      )}
-                      全部测活
-                    </Button>
-                    <Button
-                      size="sm"
-                      className={ADMIN_BTN_SM_CLS}
-                      disabled={importingKeys || !batchImportText.trim()}
-                      onClick={() => void handleBatchImportKeys()}
-                    >
-                      {importingKeys ? (
-                        <LoaderCircleIcon className="size-3 animate-spin" />
-                      ) : (
-                        <PlusIcon className="size-3" />
-                      )}
-                      批量导入密钥
-                    </Button>
+              ) : (
+                /* 静态 API Key 批量导入区 */
+                <div className="space-y-2 border border-zinc-200 bg-zinc-50/70 p-3 dark:border-zinc-800 dark:bg-zinc-900/40">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="font-bold">批量添加 / 粘贴 API 密钥</span>
+                    <span className="text-zinc-500">
+                      支持每行 `sk-xxx` 或 `备注|sk-xxx`，自动去重
+                    </span>
+                  </div>
+                  <Textarea
+                    rows={3}
+                    value={batchImportText}
+                    onChange={(e) => setBatchImportText(e.target.value)}
+                    placeholder={'粘贴 1 个或多个密钥（每行一个），例如：\n主力额度|sk-proj-xxxx1\n备用额度|sk-proj-xxxx2'}
+                    className="rounded-none font-mono text-xs"
+                  />
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="font-mono text-zinc-500">
+                      待导入：{countBatchLines(batchImportText)} 个
+                    </span>
+                    <div className="flex items-center gap-2">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className={ADMIN_BTN_SM_CLS}
+                        disabled={
+                          !activePoolSupplier.hasApiKey || testingSupplierId === activePoolSupplier.id
+                        }
+                        onClick={() => void handleTestSupplier(activePoolSupplier)}
+                      >
+                        {testingSupplierId === activePoolSupplier.id ? (
+                          <LoaderCircleIcon className="size-3 animate-spin" />
+                        ) : (
+                          <WifiIcon className="size-3" />
+                        )}
+                        全部测活
+                      </Button>
+                      <Button
+                        size="sm"
+                        className={ADMIN_BTN_SM_CLS}
+                        disabled={importingKeys || !batchImportText.trim()}
+                        onClick={() => void handleBatchImportKeys()}
+                      >
+                        {importingKeys ? (
+                          <LoaderCircleIcon className="size-3 animate-spin" />
+                        ) : (
+                          <PlusIcon className="size-3" />
+                        )}
+                        批量导入密钥
+                      </Button>
+                    </div>
                   </div>
                 </div>
-              </div>
+              )}
 
-              {/* 密钥池列表 */}
+              {/* 密钥 / 账号池列表 */}
               <div className="overflow-x-auto border border-zinc-200 dark:border-zinc-800">
                 <table className="w-full text-left text-xs">
                   <thead className="border-b border-zinc-200 bg-zinc-50 font-mono text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900">
                     <tr>
-                      <th className="px-3 py-2">备注名</th>
-                      <th className="px-3 py-2">脱敏密钥</th>
-                      <th className="px-3 py-2">健康状态</th>
-                      <th className="px-3 py-2">启用</th>
-                      <th className="px-3 py-2 text-right">操作</th>
+                      <th className="px-3 py-2 whitespace-nowrap">备注名</th>
+                      <th className="px-3 py-2 whitespace-nowrap">
+                        {activePoolSupplier.authMode !== 'api_key' ? '账号标识' : '脱敏密钥'}
+                      </th>
+                      <th className="px-3 py-2 whitespace-nowrap">健康状态</th>
+                      <th className="px-3 py-2 whitespace-nowrap">启用</th>
+                      <th className="px-3 py-2 text-right whitespace-nowrap">操作</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800">
                     {activePoolSupplier.keys.length === 0 ? (
                       <tr>
                         <td colSpan={5} className="px-3 py-8 text-center text-zinc-500">
-                          该供应商暂无密钥，请在上方粘贴并导入。
+                          {activePoolSupplier.authMode !== 'api_key'
+                            ? '尚未绑定 OAuth 订阅账号，请在上方通过设备码、PKCE 或导入 auth.json 添加。'
+                            : '该供应商暂无密钥，请在上方粘贴并导入。'}
                         </td>
                       </tr>
                     ) : (
                       activePoolSupplier.keys.map((k) => {
                         const isCooling = k.cooldownUntil > nowTs
                         const probe = keyTestResults[k.id]
+                        const isOAuthCred = k.credentialType === 'oauth_token'
+                        const expiryBadge = isOAuthCred
+                          ? formatTokenExpiryBadge(k.oauthExpiresAt, nowTs)
+                          : null
                         return (
                           <tr key={k.id} className="hover:bg-zinc-50/70 dark:hover:bg-zinc-900/50">
-                            <td className="px-3 py-2.5">
+                            <td className="max-w-[180px] px-3 py-2.5">
                               {editingKeyId === k.id ? (
                                 <div className="flex items-center gap-1">
                                   <Input
@@ -1259,21 +2008,36 @@ export function AdminSuppliersTab({
                                     setEditingKeyId(k.id)
                                     setEditingKeyLabel(k.label)
                                   }}
-                                  title="点击修改备注名"
-                                  className="inline-flex items-center gap-1 font-semibold hover:underline"
+                                  title={`${k.label || (isOAuthCred ? 'OAuth 账号' : '未命名密钥')}（点击修改备注名）`}
+                                  className="inline-flex max-w-full items-center gap-1 font-semibold hover:underline"
                                 >
-                                  <span>{k.label || '未命名密钥'}</span>
-                                  <PencilIcon className="size-2.5 text-zinc-400" />
+                                  <span className="truncate">
+                                    {k.label || (isOAuthCred ? 'OAuth 账号' : '未命名密钥')}
+                                  </span>
+                                  <PencilIcon className="size-2.5 shrink-0 text-zinc-400" />
                                 </button>
                               )}
                             </td>
-                            <td className="px-3 py-2.5 font-mono text-zinc-600 dark:text-zinc-400">
-                              {k.apiKeyHint || '—'}
+                            <td className="max-w-[190px] px-3 py-2.5 font-mono text-zinc-600 dark:text-zinc-400">
+                              <div className="truncate" title={k.apiKeyHint}>
+                                {k.apiKeyHint || '—'}
+                              </div>
+                              {k.oauthAccountId && (
+                                <div
+                                  className="truncate text-xs text-zinc-400"
+                                  title={k.oauthAccountId}
+                                >
+                                  ID: {k.oauthAccountId}
+                                </div>
+                              )}
                             </td>
-                            <td className="px-3 py-2.5">
+                            <td className="px-3 py-2.5 whitespace-nowrap">
                               <div className="space-y-1">
                                 {probe ? (
-                                  <AdminBadge tone={probe.ok ? 'success' : 'danger'}>
+                                  <AdminBadge
+                                    tone={probe.ok ? 'success' : 'danger'}
+                                    className="max-w-[220px] whitespace-normal text-left"
+                                  >
                                     {probe.message} ({probe.latencyMs}ms)
                                   </AdminBadge>
                                 ) : isCooling ? (
@@ -1291,27 +2055,46 @@ export function AdminSuppliersTab({
                                       重置
                                     </button>
                                   </div>
+                                ) : expiryBadge ? (
+                                  <AdminBadge tone={expiryBadge.tone}>{expiryBadge.text}</AdminBadge>
                                 ) : k.enabled ? (
                                   <AdminBadge tone="success">可用</AdminBadge>
                                 ) : (
                                   <AdminBadge tone="neutral">已停用</AdminBadge>
                                 )}
                                 {k.lastError && (
-                                  <div className="max-w-[240px] truncate font-mono text-xs text-red-600 dark:text-red-400" title={k.lastError}>
+                                  <div className="max-w-[220px] truncate font-mono text-xs text-red-600 dark:text-red-400" title={k.lastError}>
                                     {k.lastError}
                                   </div>
                                 )}
                               </div>
                             </td>
-                            <td className="px-3 py-2.5">
+                            <td className="px-3 py-2.5 whitespace-nowrap">
                               <Switch
                                 className="rounded-none"
                                 checked={k.enabled}
                                 onCheckedChange={() => void handleToggleSingleKey(activePoolSupplier, k)}
                               />
                             </td>
-                            <td className="px-3 py-2.5 text-right">
+                            <td className="px-3 py-2.5 text-right whitespace-nowrap">
                               <div className="inline-flex items-center gap-1">
+                                {isOAuthCred && (
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    className={ADMIN_BTN_SM_CLS}
+                                    disabled={refreshingKeyId === k.id}
+                                    title="立即用 refresh_token 换取最新 access_token"
+                                    onClick={() => void handleRefreshOAuthKey(activePoolSupplier, k)}
+                                  >
+                                    {refreshingKeyId === k.id ? (
+                                      <LoaderCircleIcon className="size-3 animate-spin" />
+                                    ) : (
+                                      <RefreshCwIcon className="size-3" />
+                                    )}
+                                    刷新
+                                  </Button>
+                                )}
                                 <Button
                                   size="sm"
                                   variant="outline"

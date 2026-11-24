@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Toaster as Sonner, useSonner, type ToasterProps } from 'sonner'
-import { CircleCheckIcon, InfoIcon, TriangleAlertIcon, OctagonXIcon } from 'lucide-react'
+import { CircleCheckIcon, InfoIcon, LoaderCircleIcon, TriangleAlertIcon, OctagonXIcon } from 'lucide-react'
 import { DEFAULT_TOAST_DURATION_MS, MAX_VISIBLE_TOASTS, adoptNotification, toast, type Notification } from '@/lib/notifications'
 import { useTheme } from '@/components/theme/ThemeProvider'
 
@@ -25,7 +25,7 @@ function Lifetime({ notice, paused }: { notice: Notification; paused: boolean })
 }
 
 export function Toaster(props: ToasterProps) {
-  const { theme } = useTheme()
+  const { resolvedTheme } = useTheme()
   const { toasts } = useSonner()
   const region = useRef<HTMLElement>(null)
   const events = useRef<HTMLDivElement>(null)
@@ -80,14 +80,28 @@ export function Toaster(props: ToasterProps) {
       }
       setReadable((current) => current.size === next.size && [...current].every((name) => next.has(name)) ? current : next)
     }
+    let rafId = 0
+    const scheduleMeasure = () => {
+      if (rafId) return
+      rafId = window.requestAnimationFrame(() => {
+        rafId = 0
+        measure()
+      })
+    }
     measure()
-    const observer = new MutationObserver(measure)
+    const observer = new MutationObserver(scheduleMeasure)
     observer.observe(root, { childList: true, subtree: true, attributes: true, attributeFilter: ['data-visible', 'data-mounted', 'data-expanded', 'data-removed', 'style', 'class'] })
-    const resize = new ResizeObserver(measure)
+    const resize = new ResizeObserver(scheduleMeasure)
     resize.observe(root)
-    window.addEventListener('resize', measure)
-    window.visualViewport?.addEventListener('resize', measure)
-    return () => { observer.disconnect(); resize.disconnect(); window.removeEventListener('resize', measure); window.visualViewport?.removeEventListener('resize', measure) }
+    window.addEventListener('resize', scheduleMeasure)
+    window.visualViewport?.addEventListener('resize', scheduleMeasure)
+    return () => {
+      if (rafId) window.cancelAnimationFrame(rafId)
+      observer.disconnect()
+      resize.disconnect()
+      window.removeEventListener('resize', scheduleMeasure)
+      window.visualViewport?.removeEventListener('resize', scheduleMeasure)
+    }
   }, [toasts])
 
   useEffect(() => {
@@ -126,14 +140,14 @@ export function Toaster(props: ToasterProps) {
         if (notice && notice.dismissible !== false && notice.type !== 'loading') toast.dismiss(notice.id)
         setExpanded(false)
       }}>
-      <Sonner {...props} ref={region} theme={theme} className="app-notifications" position="top-center"
+      <Sonner {...props} ref={region} theme={resolvedTheme} className="app-notifications" position="top-center"
         richColors={false} closeButton duration={Infinity} visibleToasts={visibleCount} expand={expanded || focused} gap={8}
         offset={{ top: 'calc(64px + env(safe-area-inset-top, 0px))', left: 12, right: 12 }}
         mobileOffset={{ top: 'calc(64px + env(safe-area-inset-top, 0px))', left: 12, right: 12 }}
         customAriaLabel="操作通知（Alt+T 聚焦，Esc 关闭）"
         hotkey={['altKey', 'KeyT']}
         toastOptions={{ ...props.toastOptions, closeButtonAriaLabel: '关闭此通知' }}
-        icons={{ success: <CircleCheckIcon size={18} />, info: <InfoIcon size={18} />, warning: <TriangleAlertIcon size={18} />, error: <OctagonXIcon size={18} /> }} />
+        icons={{ success: <CircleCheckIcon size={18} />, info: <InfoIcon size={18} />, warning: <TriangleAlertIcon size={18} />, error: <OctagonXIcon size={18} />, loading: <LoaderCircleIcon size={18} className="animate-spin" /> }} />
       {toasts.length > 1 && <button type="button" className="app-notification-toggle" style={{ top: toggleTop }}
         aria-expanded={expanded || focused} onClick={() => { setFocused(false); setExpanded((current) => !current) }}>
         {expanded || focused ? '收起通知' : '展开通知'}

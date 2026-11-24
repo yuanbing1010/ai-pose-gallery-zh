@@ -507,7 +507,7 @@ export function StyleOrbitCarousel({
         setHoveredKey(null)
       }}
       className={cn(
-        'relative h-[128px] w-full touch-pan-y overflow-hidden rounded-xl border border-black/15 bg-gradient-to-b from-[#1A1815] via-[#141210] to-[#0B0A09] shadow-[inset_0_1px_0_rgba(255,255,255,0.12)] select-none dark:border-white/15',
+        'relative isolate h-[128px] w-full touch-pan-y overflow-hidden rounded-xl border border-black/15 bg-gradient-to-b from-[#1A1815] via-[#141210] to-[#0B0A09] shadow-[inset_0_1px_0_rgba(255,255,255,0.12)] select-none dark:border-white/15',
         isDragging ? 'cursor-grabbing' : 'cursor-grab'
       )}
     >
@@ -544,7 +544,7 @@ export function StyleOrbitCarousel({
             aria-label="向左转动画风轮盘"
             onPointerDown={(e) => e.stopPropagation()}
             onClick={() => stepOrbit(-1)}
-            className="absolute top-[44%] left-1.5 z-40 flex size-6.5 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full border border-white/20 bg-black/70 text-white transition-colors hover:bg-white hover:text-black"
+            className="absolute top-[44%] left-1.5 z-20 flex size-7 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full border border-white/20 bg-black/70 text-white transition-[transform,background-color,color] duration-150 ease-[var(--ease-out)] before:absolute before:-inset-2 before:content-[''] hover:bg-white hover:text-black active:scale-90"
           >
             <ChevronLeftIcon className="size-3.5" />
           </button>
@@ -553,7 +553,7 @@ export function StyleOrbitCarousel({
             aria-label="向右转动画风轮盘"
             onPointerDown={(e) => e.stopPropagation()}
             onClick={() => stepOrbit(1)}
-            className="absolute top-[44%] right-1.5 z-40 flex size-6.5 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full border border-white/20 bg-black/70 text-white transition-colors hover:bg-white hover:text-black"
+            className="absolute top-[44%] right-1.5 z-20 flex size-7 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full border border-white/20 bg-black/70 text-white transition-[transform,background-color,color] duration-150 ease-[var(--ease-out)] before:absolute before:-inset-2 before:content-[''] hover:bg-white hover:text-black active:scale-90"
           >
             <ChevronRightIcon className="size-3.5" />
           </button>
@@ -590,13 +590,17 @@ export function StyleOrbitCarousel({
                 data-hovered={isHovered ? 'true' : 'false'}
                 aria-label={`${item.label}（${item.categoryLabel}）`}
                 aria-pressed={isSelected}
-                onMouseEnter={() => {
+                onPointerEnter={(e) => {
+                  if (e.pointerType !== 'mouse') return
                   if (suppressHoverUntilMoveRef.current || draggingRef.current || isSnappingRef.current) {
                     return
                   }
                   setHoveredKey(item.key)
                 }}
-                onMouseLeave={() => setHoveredKey((k) => (k === item.key ? null : k))}
+                onPointerLeave={(e) => {
+                  if (e.pointerType !== 'mouse') return
+                  setHoveredKey((k) => (k === item.key ? null : k))
+                }}
                 onFocus={() => setHoveredKey(item.key)}
                 onBlur={() => setHoveredKey((k) => (k === item.key ? null : k))}
                 onClick={() => {
@@ -623,7 +627,7 @@ export function StyleOrbitCarousel({
                 }}
                 style={{ backfaceVisibility: 'hidden' }}
                 className={cn(
-                  'group/ocard absolute top-[44%] left-1/2 -mt-[39px] -ml-[31px] h-[78px] w-[62px] cursor-pointer overflow-hidden rounded-xl border text-left will-change-transform focus-visible:outline-2 focus-visible:outline-ring',
+                  'group/ocard absolute top-[44%] left-1/2 -mt-[39px] -ml-[31px] h-[78px] w-[62px] cursor-pointer overflow-hidden rounded-xl border text-left focus-visible:outline-2 focus-visible:outline-ring',
                   isSelected
                     ? 'border-[#FF7A59] ring-2 ring-[#D9381E]/90 shadow-md'
                     : isHovered
@@ -636,7 +640,7 @@ export function StyleOrbitCarousel({
                     {!loadedPreviews[item.preview] && (
                       <span
                         aria-hidden="true"
-                        className="absolute inset-0 animate-pulse bg-gradient-to-br from-zinc-800 via-zinc-700/70 to-zinc-800"
+                        className="absolute inset-0 animate-pulse bg-gradient-to-br from-zinc-800 via-zinc-700/70 to-zinc-800 motion-reduce:animate-none"
                       />
                     )}
                     <img
@@ -710,7 +714,7 @@ export function StyleOrbitCarousel({
           onPointerDown={(e) => e.stopPropagation()}
           onClick={() => onSelect(focalItem.key)}
           title={`${focalItem.label} · ${focalItem.categoryLabel}${focalIsSelected ? '（当前已启用）' : '（点击选用风格）'}`}
-          className="absolute bottom-1.5 left-1/2 z-40 inline-flex h-6 max-w-[calc(100%-32px)] -translate-x-1/2 cursor-pointer items-center gap-1.5 rounded-full border border-white/20 bg-[#141210]/90 px-3 text-xs font-bold whitespace-nowrap text-white shadow-[0_6px_16px_rgba(0,0,0,0.58)] backdrop-blur-sm transition-colors hover:border-[#E5A918]/75 hover:bg-[#1E1A16]"
+          className="absolute bottom-1.5 left-1/2 z-20 inline-flex h-6 max-w-[calc(100%-32px)] -translate-x-1/2 cursor-pointer items-center gap-1.5 rounded-full border border-[#E5A918]/35 bg-[#141210] px-3 text-xs font-bold whitespace-nowrap text-white shadow-[0_6px_16px_rgba(0,0,0,0.62)] transition-colors hover:border-[#E5A918]/75 hover:bg-[#1E1A16]"
         >
           <span
             aria-hidden="true"
@@ -723,7 +727,7 @@ export function StyleOrbitCarousel({
           {focalIsSelected ? (
             <CheckIcon className="size-3 shrink-0 text-[#FF7A59]" />
           ) : (
-            <span className="text-xs font-medium text-white/65">点选</span>
+            <span className="text-xs font-medium text-[#D8D0C2]">点选</span>
           )}
         </button>
       )}

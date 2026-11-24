@@ -5,10 +5,6 @@ import {
   ChevronLeftIcon,
   ChevronRightIcon,
   FlameIcon,
-  RotateCcwIcon,
-  SearchIcon,
-  SlidersHorizontalIcon,
-  SparklesIcon,
   XIcon,
   ZoomInIcon,
 } from 'lucide-react'
@@ -18,6 +14,8 @@ import { PortraitCard } from '@/components/cards/PortraitCard'
 import { EmptyState } from '@/components/common/EmptyState'
 import { GalleryDensityControl } from '@/components/common/GalleryDensityControl'
 import { HorizontalFilterStrip } from '@/components/common/HorizontalFilterStrip'
+import { InfiniteScrollSentinel } from '@/components/common/InfiniteScrollSentinel'
+import { LibraryPageHeader } from '@/components/common/LibraryPageHeader'
 import { ShowcaseDialog, ShowcaseStageTabs } from '@/components/common/ShowcaseDialog'
 import { ScrollToTopButton } from '@/components/common/ScrollToTopButton'
 import { ZoomViewport } from '@/components/common/ZoomViewport'
@@ -28,7 +26,7 @@ import { getPortraitAccent } from '@/lib/cardAccents'
 import { galleryGridClassName, useGalleryDesktopCols } from '@/lib/galleryDensity'
 import { downloadFileName, referenceImageUrl } from '@/lib/recipeImages'
 import { cn } from '@/lib/utils'
-import { useStudio } from '@/store/studioStore'
+import { useStudioActions, useStudioShallow } from '@/store/studioStore'
 
 export interface PortraitsSearchParams {
   section?: '正脸参考' | '造型氛围'
@@ -77,7 +75,9 @@ const HAIRS = ['短发', '中发', '中长发', '长发'] as const
 
 function PortraitsPage() {
   const { data: portraits } = useSuspenseQuery(portraitsQuery)
-  const { recipe, togglePortrait } = useStudio()
+  const { recipePortrait } = useStudioShallow((s) => ({ recipePortrait: s.recipe.portrait }))
+  const { togglePortrait } = useStudioActions()
+  const recipe = { portrait: recipePortrait }
   const search = Route.useSearch()
   const navigate = Route.useNavigate()
 
@@ -218,7 +218,7 @@ function PortraitsPage() {
         target &&
         (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)
 
-      if ((e.key === '/' && !typing) || ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k')) {
+      if (e.key === '/' && !typing && !e.metaKey && !e.ctrlKey && !e.altKey) {
         e.preventDefault()
         searchInputRef.current?.focus()
         return
@@ -235,155 +235,64 @@ function PortraitsPage() {
 
   return (
     <div className="space-y-5">
-      {/* 与服装库、姿势库统一的 StyleKit 式顶栏 + 分区统计矩阵 */}
-      <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-end">
-        <div className="space-y-1.5">
-          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            <span className="inline-block h-px w-5 bg-foreground/40" aria-hidden="true" />
-            <span>人物面部与发型风格参考</span>
-          </div>
-          <h1 className="text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
-            人像颜值库
-          </h1>
-          <p className="text-xs text-muted-foreground sm:text-sm">
-            {allStyleCount} 款日系发型细分 · 当前匹配{' '}
-            <span className="font-mono font-medium text-foreground">{filtered.length.toLocaleString('zh-CN')}</span> 张
-          </p>
-        </div>
-
-        <div
-          role="tablist"
-          aria-label="人像画面分区"
-          className="grid grid-cols-2 divide-x divide-y divide-border overflow-hidden rounded-xl border border-border bg-card [&>*:first-child]:col-span-2 sm:grid-cols-3 sm:divide-y-0 sm:[&>*:first-child]:col-span-1"
-        >
-          {(
-            [
-              { id: '', label: '全部人像', count: portraits.length },
-              { id: '正脸参考', label: '正脸参考', count: sectionCounts.正脸参考 },
-              { id: '造型氛围', label: '造型氛围', count: sectionCounts.造型氛围 },
-            ] as const
-          ).map((tab) => {
-            const active = section === tab.id
-            return (
-              <button
-                key={tab.id || 'all'}
-                type="button"
-                role="tab"
-                aria-selected={active}
-                onClick={() => {
-                  setSection(tab.id)
-                  setStyleName('all')
-                  setShown(60)
-                  setViewerOpen(false)
-                }}
-                className={cn(
-                  'px-3.5 py-2.5 text-center transition-colors sm:px-5',
-                  active
-                    ? 'bg-primary text-primary-foreground'
-                    : 'text-foreground hover:bg-muted/60'
-                )}
-              >
-                <div className={cn('text-xs whitespace-nowrap', active ? 'opacity-80' : 'text-muted-foreground')}>
-                  {tab.label}
-                </div>
-                <div className="mt-0.5 font-mono text-sm font-semibold tabular-nums">
-                  {tab.count.toLocaleString('zh-CN')}
-                </div>
-              </button>
-            )
-          })}
-        </div>
-      </div>
-
-      {/* 与服装库、姿势库统一的控制栏：搜索 (/) + 筛选 (F) + Top 10 切换 + 单行横向发长/发型带 */}
-      <div className="space-y-3">
-        <div className="flex flex-wrap items-center gap-2.5">
-          <div className="relative flex h-10 min-w-[160px] flex-1 items-center rounded-xl border border-border bg-card px-3.5 transition-colors focus-within:border-foreground/40">
-            <SearchIcon className="mr-2.5 size-4 shrink-0 text-muted-foreground" />
-            <input
-              ref={searchInputRef}
-              type="search"
-              value={query}
-              onChange={(e) => {
-                setQuery(e.target.value)
-                setShown(60)
-              }}
-              placeholder="搜索发型款式、发色或 ID（如：波波头、狼尾、空气刘海、挑染、韩式）…"
-              className="w-full bg-transparent text-xs text-foreground placeholder:text-muted-foreground focus:outline-none"
-            />
-            {query ? (
-              <button
-                type="button"
-                aria-label="清空搜索"
-                onClick={() => {
-                  setQuery('')
-                  setShown(60)
-                }}
-                className="ml-2 flex size-5 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground hover:text-foreground"
-              >
-                <XIcon className="size-3" />
-              </button>
-            ) : (
-              <kbd className="ml-2 hidden shrink-0 rounded-md border border-border bg-muted px-1.5 py-0.5 font-mono text-xs text-muted-foreground sm:inline-block">
-                /
-              </kbd>
-            )}
-          </div>
-
-          <button
-            type="button"
-            onClick={() => setFilterOpen(true)}
-            className={cn(
-              'inline-flex h-10 shrink-0 items-center gap-2 rounded-xl border px-4 text-xs font-medium transition-colors active:scale-[0.98]',
-              activeFilterCount > 0
-                ? 'border-primary bg-primary text-primary-foreground hover:opacity-90'
-                : 'border-border bg-card text-foreground hover:bg-muted'
-            )}
-          >
-            <SlidersHorizontalIcon className="size-3.5" />
-            <span>筛选</span>
-            {activeFilterCount > 0 ? (
-              <span className="flex size-4 items-center justify-center rounded-full bg-background font-mono text-xs font-semibold text-foreground">
-                {activeFilterCount}
-              </span>
-            ) : (
-              <kbd className="hidden rounded-md border border-border bg-muted px-1.5 py-0.5 font-mono text-xs text-muted-foreground sm:inline-block">
-                F
-              </kbd>
-            )}
-          </button>
-
-          <button
-            type="button"
-            aria-pressed={onlyHot}
-            onClick={() => {
-              setOnlyHot((v) => !v)
-              setShown(60)
-            }}
-            className={cn(
-              'inline-flex h-10 shrink-0 items-center gap-1.5 rounded-xl border px-3.5 text-xs font-medium transition-colors active:scale-[0.98]',
-              onlyHot
-                ? 'border-[#E5A918] bg-[#E5A918] text-zinc-950'
-                : 'border-border bg-card text-foreground hover:bg-muted'
-            )}
-          >
-            <FlameIcon className="size-3.5" />
-            <span>Top 10 人气</span>
-          </button>
-
-          <GalleryDensityControl value={desktopCols} onChange={setDesktopCols} />
-
-          {hasActiveFilters && (
+      <LibraryPageHeader
+        title="人像颜值"
+        tabsLabel="人像画面分区"
+        tabs={(
+          [
+            { id: '', label: '全部', count: portraits.length },
+            { id: '正脸参考', label: '正脸参考', count: sectionCounts.正脸参考 },
+            { id: '造型氛围', label: '造型氛围', count: sectionCounts.造型氛围 },
+          ] as const
+        ).map((tab) => ({
+          id: tab.id || 'all',
+          label: tab.label,
+          count: tab.count,
+          active: section === tab.id,
+          onClick: () => {
+            setSection(tab.id)
+            setStyleName('all')
+            setShown(60)
+            setViewerOpen(false)
+          },
+        }))}
+        searchValue={query}
+        searchPlaceholder={`搜索 ${allStyleCount} 款发型与发色…`}
+        searchInputRef={searchInputRef}
+        onSearchChange={(val) => {
+          setQuery(val)
+          setShown(60)
+        }}
+        onOpenFilter={() => setFilterOpen(true)}
+        activeFilterCount={activeFilterCount}
+        hasActiveFilters={hasActiveFilters}
+        filteredCount={filtered.length}
+        onResetFilters={resetFilters}
+        extraControls={
+          <>
             <button
               type="button"
-              onClick={resetFilters}
-              className="inline-flex h-10 shrink-0 items-center gap-1.5 rounded-xl border border-border bg-card px-3.5 text-xs font-medium text-foreground transition-colors hover:bg-muted active:scale-[0.98]"
+              aria-pressed={onlyHot}
+              onClick={() => {
+                setOnlyHot((v) => !v)
+                setShown(60)
+              }}
+              className={cn(
+                'inline-flex h-10 shrink-0 cursor-pointer items-center gap-1.5 rounded-full border px-3.5 text-xs font-semibold transition-[transform,background-color,border-color,color] duration-150 ease-[var(--ease-out)] active:scale-[0.97]',
+                onlyHot
+                  ? 'border-[#E5A918] bg-[#E5A918] text-[#151412]'
+                  : 'border-white/15 bg-white/[0.08] text-white hover:border-[#E5A918]/55 hover:bg-white/[0.14]'
+              )}
             >
-              <RotateCcwIcon className="size-3.5" />
-              <span>重置</span>
+              <FlameIcon className="size-3.5" />
+              <span>人气</span>
             </button>
-          )}
-        </div>
+            <GalleryDensityControl value={desktopCols} onChange={setDesktopCols} />
+          </>
+        }
+      />
+
+      <div className="space-y-3">
 
         {/* 单行横向发长 + 细分发型胶囊带 */}
         <HorizontalFilterStrip>
@@ -446,7 +355,7 @@ function PortraitsPage() {
             <span aria-hidden="true" className="mx-1 h-4 w-px shrink-0 bg-border" />
           )}
 
-          {styleOptions.slice(0, 12).map((s) => {
+          {styleOptions.slice(0, 6).map((s) => {
             const isActive = styleName === s.label
             return (
               <button
@@ -468,12 +377,36 @@ function PortraitsPage() {
               </button>
             )
           })}
+
+          {styleOptions.length > 6 && (
+            <button
+              type="button"
+              onClick={() => setFilterOpen(true)}
+              className="shrink-0 cursor-pointer rounded-lg border border-dashed border-border bg-card px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:border-foreground/40 hover:bg-muted"
+            >
+              全部发型 (+{styleOptions.length - 6})
+            </button>
+          )}
         </HorizontalFilterStrip>
       </div>
 
       {/* 与服装库完全对齐的 4:5 架构画廊网格 */}
       {filtered.length === 0 ? (
-        <EmptyState title="没有找到匹配的人像参考" description="试试更换发型关键词或重置筛选" />
+        <EmptyState
+          title="没有找到匹配的人像参考"
+          description="试试更换发型关键词或重置筛选"
+          action={
+            hasActiveFilters ? (
+              <button
+                type="button"
+                onClick={resetFilters}
+                className="inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-full border border-border bg-card px-4 text-xs font-semibold text-foreground transition-[transform,background-color] duration-150 ease-[var(--ease-out)] hover:bg-muted active:scale-95"
+              >
+                <span>重置全部筛选</span>
+              </button>
+            ) : undefined
+          }
+        />
       ) : (
         <div className={galleryGridClassName(desktopCols)}>
           {filtered.slice(0, shown).map((item, idx) => (
@@ -482,6 +415,7 @@ function PortraitsPage() {
               item={item}
               index={idx % 60}
               picked={recipe.portrait?.id === item.id}
+              eager={idx < 6}
               onTogglePick={() => togglePortrait(item)}
               onOpenViewer={() => openViewer(idx)}
             />
@@ -489,18 +423,12 @@ function PortraitsPage() {
         </div>
       )}
 
-      {shown < filtered.length && (
-        <div className="flex justify-center pt-2">
-          <button
-            type="button"
-            onClick={() => setShown((s) => s + 60)}
-            className="inline-flex h-10 items-center gap-2 rounded-full border border-border bg-card px-6 text-xs font-medium text-foreground transition-colors hover:bg-muted active:scale-[0.98]"
-          >
-            <SparklesIcon className="size-3.5 text-muted-foreground" />
-            加载更多人像（剩余 {(filtered.length - shown).toLocaleString('zh-CN')} 张）
-          </button>
-        </div>
-      )}
+      <InfiniteScrollSentinel
+        shown={shown}
+        total={filtered.length}
+        unitLabel="张人像"
+        onLoadMore={() => setShown((s) => s + 60)}
+      />
 
       {/* 底部来源说明 */}
       <footer className="space-y-1 rounded-2xl border border-border bg-card px-4 py-3 text-xs text-muted-foreground">
@@ -593,7 +521,7 @@ function PortraitsPage() {
                         type="button"
                         aria-label="上一张人像"
                         onClick={() => setViewerNav({ index: (viewerIndex - 1 + filtered.length) % filtered.length, dir: -1 })}
-                        className="absolute top-1/2 left-4 z-20 flex size-9 -translate-y-1/2 items-center justify-center rounded-full border border-border bg-background/85 text-foreground backdrop-blur-md transition-all hover:bg-primary hover:text-primary-foreground active:scale-95"
+                        className="absolute top-1/2 left-4 z-20 flex size-9 -translate-y-1/2 items-center justify-center rounded-full border border-border bg-background/85 text-foreground backdrop-blur-md transition-[transform,background-color,color] duration-150 hover:bg-primary hover:text-primary-foreground active:scale-95"
                       >
                         <ChevronLeftIcon className="size-4" />
                       </button>
@@ -601,7 +529,7 @@ function PortraitsPage() {
                         type="button"
                         aria-label="下一张人像"
                         onClick={() => setViewerNav({ index: (viewerIndex + 1) % filtered.length, dir: 1 })}
-                        className="absolute top-1/2 right-4 z-20 flex size-9 -translate-y-1/2 items-center justify-center rounded-full border border-border bg-background/85 text-foreground backdrop-blur-md transition-all hover:bg-primary hover:text-primary-foreground active:scale-95"
+                        className="absolute top-1/2 right-4 z-20 flex size-9 -translate-y-1/2 items-center justify-center rounded-full border border-border bg-background/85 text-foreground backdrop-blur-md transition-[transform,background-color,color] duration-150 hover:bg-primary hover:text-primary-foreground active:scale-95"
                       >
                         <ChevronRightIcon className="size-4" />
                       </button>

@@ -1,3 +1,4 @@
+import { motion } from 'motion/react'
 import type { GalleryDesktopCols } from '@/lib/galleryDensity'
 import { cn } from '@/lib/utils'
 
@@ -17,7 +18,7 @@ export function GalleryDensityControl({
       role="group"
       aria-label="桌面端网格列数"
       className={cn(
-        'hidden h-10 shrink-0 items-center rounded-xl border border-border bg-card p-1 lg:inline-flex',
+        'hidden h-9 shrink-0 items-center rounded-full border border-border/70 bg-card/80 p-0.5 lg:inline-flex',
         className
       )}
     >
@@ -31,13 +32,20 @@ export function GalleryDensityControl({
             title={`切换为每行 ${cols} 列`}
             onClick={() => onChange(cols)}
             className={cn(
-              'h-full rounded-lg px-2.5 font-mono text-xs font-medium transition-colors',
+              'relative h-full cursor-pointer rounded-full px-2.5 font-mono text-xs font-medium transition-colors',
               active
-                ? 'bg-primary text-primary-foreground'
+                ? 'text-background'
                 : 'text-muted-foreground hover:text-foreground'
             )}
           >
-            {cols}列
+            {active && (
+              <motion.span
+                layoutId="gallery-density-pill"
+                transition={{ type: 'spring', stiffness: 520, damping: 36 }}
+                className="absolute inset-0 rounded-full bg-foreground"
+              />
+            )}
+            <span className="relative z-10">{cols}列</span>
           </button>
         )
       })}

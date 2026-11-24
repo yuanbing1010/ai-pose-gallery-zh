@@ -1,8 +1,8 @@
 import { isValidElement, type ReactNode } from 'react'
 import { toast as sonner, type ExternalToast, type ToastT, type ToastToDismiss } from 'sonner'
 
-export const DEFAULT_TOAST_DURATION_MS = 1600
-export const ALERT_TOAST_DURATION_MS = 3000
+export const DEFAULT_TOAST_DURATION_MS = 2600
+export const ALERT_TOAST_DURATION_MS = 4200
 export const MAX_VISIBLE_TOASTS = 2
 
 export type Notification = ToastT & {

@@ -350,6 +350,7 @@ export function AdminUsersTab({
   return (
     <div className="space-y-6">
       <AdminPageHeader
+        eyebrow="SECTION 01 // MEMBERS & LEDGER"
         title={`成员账号与积分账本 (${usersTotal})`}
         description="支持管理员新建成员账号、维护仅后台可见的内部备注、重置密码、手动调积分与审查流水。"
         actions={
@@ -674,7 +675,7 @@ export function AdminUsersTab({
           if (!open) onAutoOpenConsumed?.()
         }}
       >
-        <DialogContent className={`max-w-lg ${ADMIN_DIALOG_CLS}`}>
+        <DialogContent className={`w-[95vw] max-w-lg sm:max-w-lg ${ADMIN_DIALOG_CLS}`}>
           <DialogHeader>
             <DialogTitle className="text-sm font-bold">
               {createdCredential ? '成员账号创建成功' : '新建成员账号（后台直开）'}
@@ -908,7 +909,7 @@ export function AdminUsersTab({
 
       {/* 编辑成员备注 / 昵称 / 重置密码弹窗 */}
       <Dialog open={Boolean(editTarget)} onOpenChange={(o) => !o && setEditTarget(null)}>
-        <DialogContent className={`max-w-md ${ADMIN_DIALOG_CLS}`}>
+        <DialogContent className={`w-[95vw] max-w-md sm:max-w-md ${ADMIN_DIALOG_CLS}`}>
           <DialogHeader>
             <DialogTitle className="text-sm font-bold">
               编辑成员信息 · @{editTarget?.username}
@@ -1051,7 +1052,7 @@ export function AdminUsersTab({
 
       {/* 手动调积分弹窗 */}
       <Dialog open={Boolean(adjustTarget)} onOpenChange={(o) => !o && setAdjustTarget(null)}>
-        <DialogContent className={`max-w-sm ${ADMIN_DIALOG_CLS}`}>
+        <DialogContent className={`w-[95vw] max-w-sm sm:max-w-sm ${ADMIN_DIALOG_CLS}`}>
           <DialogHeader>
             <DialogTitle className="text-sm font-bold">
               调整积分 · @{adjustTarget?.username}

@@ -50,43 +50,38 @@ export function HorizontalFilterStrip({ children, className }: HorizontalFilterS
   }
 
   return (
-    <div className={cn('relative min-w-0', className)}>
+    <div className={cn('flex min-w-0 items-center gap-1.5', className)}>
+      {canLeft && (
+        <button
+          type="button"
+          aria-label="向左查看分类"
+          onClick={() => scrollByDir(-1)}
+          className="inline-flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-full border border-border bg-card text-foreground shadow-xs transition-[transform,background-color] duration-150 ease-[var(--ease-out)] hover:bg-muted active:scale-[0.95] sm:size-7"
+        >
+          <ChevronLeftIcon className="size-3.5" />
+        </button>
+      )}
+
       <div
         ref={scrollerRef}
         onScroll={syncOverflow}
         className={cn(
-          'no-scrollbar flex items-center gap-1.5 overflow-x-auto pb-0.5',
-          canLeft && 'pl-7',
-          canRight && 'pr-7'
+          'no-scrollbar flex min-w-0 flex-1 items-center gap-1.5 overscroll-x-contain overflow-x-auto pb-0.5',
+          canRight && 'ed-fade-mask-x'
         )}
       >
         {children}
       </div>
 
-      {canLeft && (
-        <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center bg-gradient-to-r from-background via-background/85 to-transparent pr-3 pb-0.5">
-          <button
-            type="button"
-            aria-label="向左查看分类"
-            onClick={() => scrollByDir(-1)}
-            className="pointer-events-auto inline-flex size-6 items-center justify-center rounded-full border border-border bg-card text-foreground shadow-xs transition-colors hover:bg-muted"
-          >
-            <ChevronLeftIcon className="size-3.5" />
-          </button>
-        </div>
-      )}
-
       {canRight && (
-        <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center bg-gradient-to-l from-background via-background/85 to-transparent pb-0.5 pl-3">
-          <button
-            type="button"
-            aria-label="向右查看更多分类"
-            onClick={() => scrollByDir(1)}
-            className="pointer-events-auto inline-flex size-6 items-center justify-center rounded-full border border-border bg-card text-foreground shadow-xs transition-colors hover:bg-muted"
-          >
-            <ChevronRightIcon className="size-3.5" />
-          </button>
-        </div>
+        <button
+          type="button"
+          aria-label="向右查看更多分类"
+          onClick={() => scrollByDir(1)}
+          className="inline-flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-full border border-border bg-card text-foreground shadow-xs transition-[transform,background-color] duration-150 ease-[var(--ease-out)] hover:bg-muted active:scale-[0.95] sm:size-7"
+        >
+          <ChevronRightIcon className="size-3.5" />
+        </button>
       )}
     </div>
   )

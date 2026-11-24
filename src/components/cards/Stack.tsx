@@ -662,8 +662,12 @@ export default function Stack({
       role="group"
       aria-label="Card stack"
       onKeyDown={onKeyDown}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
+      onPointerEnter={(e) => {
+        if (e.pointerType === 'mouse') setHovered(true);
+      }}
+      onPointerLeave={(e) => {
+        if (e.pointerType === 'mouse') setHovered(false);
+      }}
     >
       {items.map((card, index) => {
         const values = valuesFor(index);
@@ -675,7 +679,7 @@ export default function Stack({
               if (element) elementsRef.current.set(index, element);
               else elementsRef.current.delete(index);
             }}
-            className="absolute inset-0 will-change-transform select-none [-webkit-tap-highlight-color:transparent]"
+            className={`absolute inset-0 select-none [-webkit-tap-highlight-color:transparent] ${isTop && dragging ? 'will-change-transform' : ''}`}
             data-top={isTop ? '' : undefined}
             aria-hidden={isTop ? undefined : true}
             style={{
@@ -693,7 +697,7 @@ export default function Stack({
             onPointerDown={event => onDown(event, index)}
           >
             <motion.div
-              className={`absolute inset-0 overflow-hidden will-change-transform ${isTop ? 'group-focus-visible:outline group-focus-visible:outline-2 group-focus-visible:outline-offset-4 group-focus-visible:outline-current' : ''}`}
+              className={`absolute inset-0 overflow-hidden ${isTop ? 'group-focus-visible:outline group-focus-visible:outline-2 group-focus-visible:outline-offset-4 group-focus-visible:outline-current' : ''}`}
               style={{
                 rotateX: values.tiltX,
                 rotateY: values.tiltY,

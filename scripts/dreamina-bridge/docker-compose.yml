@@ -17,8 +17,9 @@ services:
       DREAMINA_CHROME_BIN: /usr/bin/chromium
       DREAMINA_PROFILE_DIR: /data/profile
       DREAMINA_DOWNLOAD_DIR: /data/downloads
-      DREAMINA_JOB_TIMEOUT_MS: "480000"
-      DREAMINA_IMAGE_TIMEOUT_MS: "420000"
+      DREAMINA_JOB_TIMEOUT_MS: "310000"
+      DREAMINA_IMAGE_TIMEOUT_MS: "280000"
+      DREAMINA_MAX_CONCURRENCY: "${DREAMINA_MAX_CONCURRENCY:-2}"
     volumes:
       # /data 里存的是已登录的浏览器 profile，等同于账号凭证，务必持久化并限制权限
       - dreamina-data:/data

@@ -10,8 +10,10 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as BlindboxRouteImport } from './routes/blindbox'
+import { Route as CanvasRouteImport } from './routes/canvas'
 import { Route as CostumesRouteImport } from './routes/costumes'
-import { Route as GuideRouteImport } from './routes/guide'
+import { Route as GalleryRouteImport } from './routes/gallery'
 import { Route as PortraitsRouteImport } from './routes/portraits'
 import { Route as PosesRouteImport } from './routes/poses'
 import { Route as SettingsRouteImport } from './routes/settings'
@@ -25,14 +27,24 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const BlindboxRoute = BlindboxRouteImport.update({
+  id: '/blindbox',
+  path: '/blindbox',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CanvasRoute = CanvasRouteImport.update({
+  id: '/canvas',
+  path: '/canvas',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const CostumesRoute = CostumesRouteImport.update({
   id: '/costumes',
   path: '/costumes',
   getParentRoute: () => rootRouteImport,
 } as any)
-const GuideRoute = GuideRouteImport.update({
-  id: '/guide',
-  path: '/guide',
+const GalleryRoute = GalleryRouteImport.update({
+  id: '/gallery',
+  path: '/gallery',
   getParentRoute: () => rootRouteImport,
 } as any)
 const PortraitsRoute = PortraitsRouteImport.update({
@@ -73,8 +85,10 @@ const AdminJobsJobIdRoute = AdminJobsJobIdRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/blindbox': typeof BlindboxRoute
+  '/canvas': typeof CanvasRoute
   '/costumes': typeof CostumesRoute
-  '/guide': typeof GuideRoute
+  '/gallery': typeof GalleryRoute
   '/portraits': typeof PortraitsRoute
   '/poses': typeof PosesRoute
   '/settings': typeof SettingsRoute
@@ -85,8 +99,10 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/blindbox': typeof BlindboxRoute
+  '/canvas': typeof CanvasRoute
   '/costumes': typeof CostumesRoute
-  '/guide': typeof GuideRoute
+  '/gallery': typeof GalleryRoute
   '/portraits': typeof PortraitsRoute
   '/poses': typeof PosesRoute
   '/settings': typeof SettingsRoute
@@ -98,8 +114,10 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/blindbox': typeof BlindboxRoute
+  '/canvas': typeof CanvasRoute
   '/costumes': typeof CostumesRoute
-  '/guide': typeof GuideRoute
+  '/gallery': typeof GalleryRoute
   '/portraits': typeof PortraitsRoute
   '/poses': typeof PosesRoute
   '/settings': typeof SettingsRoute
@@ -112,8 +130,10 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/blindbox'
+    | '/canvas'
     | '/costumes'
-    | '/guide'
+    | '/gallery'
     | '/portraits'
     | '/poses'
     | '/settings'
@@ -124,8 +144,10 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/blindbox'
+    | '/canvas'
     | '/costumes'
-    | '/guide'
+    | '/gallery'
     | '/portraits'
     | '/poses'
     | '/settings'
@@ -136,8 +158,10 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/'
+    | '/blindbox'
+    | '/canvas'
     | '/costumes'
-    | '/guide'
+    | '/gallery'
     | '/portraits'
     | '/poses'
     | '/settings'
@@ -149,8 +173,10 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  BlindboxRoute: typeof BlindboxRoute
+  CanvasRoute: typeof CanvasRoute
   CostumesRoute: typeof CostumesRoute
-  GuideRoute: typeof GuideRoute
+  GalleryRoute: typeof GalleryRoute
   PortraitsRoute: typeof PortraitsRoute
   PosesRoute: typeof PosesRoute
   SettingsRoute: typeof SettingsRoute
@@ -169,6 +195,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/blindbox': {
+      id: '/blindbox'
+      path: '/blindbox'
+      fullPath: '/blindbox'
+      preLoaderRoute: typeof BlindboxRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/canvas': {
+      id: '/canvas'
+      path: '/canvas'
+      fullPath: '/canvas'
+      preLoaderRoute: typeof CanvasRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/costumes': {
       id: '/costumes'
       path: '/costumes'
@@ -176,11 +216,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof CostumesRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/guide': {
-      id: '/guide'
-      path: '/guide'
-      fullPath: '/guide'
-      preLoaderRoute: typeof GuideRouteImport
+    '/gallery': {
+      id: '/gallery'
+      path: '/gallery'
+      fullPath: '/gallery'
+      preLoaderRoute: typeof GalleryRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/portraits': {
@@ -237,8 +277,10 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  BlindboxRoute: BlindboxRoute,
+  CanvasRoute: CanvasRoute,
   CostumesRoute: CostumesRoute,
-  GuideRoute: GuideRoute,
+  GalleryRoute: GalleryRoute,
   PortraitsRoute: PortraitsRoute,
   PosesRoute: PosesRoute,
   SettingsRoute: SettingsRoute,

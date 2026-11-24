@@ -76,9 +76,9 @@ node scripts/dreamina-bridge/net-capture.mjs <资源哈希>           # 记录�
 | POST | `/v1/images/generations` | 提交任务，立刻返回 `id` |
 | GET | `/v1/images/generations/{id}` | 轮询状态与图片 |
 | GET | `/v1/proxy?url=` | 代理即梦 CDN 图片（带 Referer，避免防盗链/过期问题） |
-| GET | `/v1/download?url=` | **取原图**：走页面「下载」动作拿全分辨率文件（预览图只有 480×640，原图 1776×2368） |
+| GET | `/v1/download?url=` | **取原图**：优先直取 CDP/页面网络抓包捕获的无损原图（`aigc_resize:0:0`，不占页面锁）；未命中时回退 UI 悬停「下载」 |
 
-> `/v1/download` 会把 Chrome 窗口拉到系统前台——因为「下载」按钮只在真实悬停时才渲染，窗口被压住时 CSS `:hover` 不生效。桥机器建议独占一块屏幕。
+> 若触发 UI 悬停下载兜底，`/v1/download` 会短暂把 Chrome 窗口拉到系统前台；常规生成后通过 CDP 抓包直取原图无需切前台、不抢标签锁。
 
 提交（文生图）：
 
@@ -160,7 +160,7 @@ docker compose up -d --build
 
 ## 已知边界
 
-- **单账号串行**：任务队列是全局串行的。并发跑同一账号容易触发风控，也不符合即梦网页端的行为。
+- **提交串行 + 出图多标签有限并发**：UI 写入提示词、粘贴参考图、点击提交使用短锁串行执行；点击提交后立即释放提交锁，允许最多 `DREAMINA_MAX_CONCURRENCY`（默认 `2`，上限 `4`）个标签页并行等待出图，避免单账号并发过高触发风控。
 - **依赖页面结构**：锚点 `[data-testid="dreamina.generator.submit"]` 与 `[aria-label="Prompt"][contenteditable="true"]` 是当前结构；即梦改版后跑一次 `probe.mjs` 就能定位新锚点。
 - **图生图**：参考图走「粘贴上传」（`ClipboardEvent` + `DataTransfer`），未登录时页面没有 file input，所以没有走 `DOM.setFileInputFiles`。
 - **合规**：这是个人会话的自动化，不是即梦官方 API。请勿把它作为面向公众的付费产能，详见 `docs/DREAMINA-INTEGRATION.md` 的风险一节。

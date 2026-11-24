@@ -593,6 +593,7 @@ export function AdminSanitizeTab({
   return (
     <div className="space-y-6">
       <AdminPageHeader
+        eyebrow="SECTION 08 // SANITIZATION RULES"
         title="姿势图名称敏感词屏蔽"
         description="配置调用云端生图模型时对姿势图名称、附加参考图名称进行脱敏清洗的敏感词库、替换规则与整类静默策略，防止仅因文本标签触发上游模型安全拦截。前台浏览与本地下载保留原名。"
         actions={

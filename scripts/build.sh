@@ -12,6 +12,8 @@ if [ ! -d "node_modules" ]; then
   fi
 fi
 
+node scripts/build-home-preview.mjs
+
 if command -v pnpm >/dev/null 2>&1; then
   pnpm build
 else

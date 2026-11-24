@@ -84,6 +84,7 @@ export function AdminJobsTab({ reloadTick, onLoadingChange }: AdminJobsTabProps)
   return (
     <div className="space-y-6">
       <AdminPageHeader
+        eyebrow="SECTION 11 // GENERATION AUDIT LOG"
         title="全站生图任务与全链路调度审计"
         description="监控提示词、供应商/渠道调度队列、重试与降级链路及成图结果；点击「全链路」或任意行进入独立审计页。"
         actions={
@@ -348,7 +349,7 @@ export function AdminJobsTab({ reloadTick, onLoadingChange }: AdminJobsTabProps)
                                   </span>
                                 )}
                                 {hasDowngrade && (
-                                  <span className="border border-purple-600/45 bg-purple-500/10 px-1.5 py-0.5 text-xs font-bold text-purple-800 dark:text-purple-300">
+                                  <span className="border border-amber-600/50 bg-amber-500/10 px-1.5 py-0.5 text-xs font-bold text-amber-900 dark:text-amber-300">
                                     降级重试
                                   </span>
                                 )}

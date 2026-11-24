@@ -629,6 +629,7 @@ export function AdminStylesTab({
   return (
     <div className="space-y-6">
       <AdminPageHeader
+        eyebrow="SECTION 05 // STYLE CATALOG"
         title="画风图鉴管理"
         description="动态管理「大类 → 小类 → 画风预设」层级结构，实时同步至工作台 3D 展台与画风图鉴。"
       />
@@ -1363,7 +1364,7 @@ export function AdminStylesTab({
                       className={ADMIN_INPUT_CLS}
                     />
                     <p className="text-xs text-zinc-500">
-                      上传后将持久化至云端存储，并在用户端「合成台」与「使用指南」画风轮盘实时展示。
+                      上传后将持久化至云端存储，并在用户端「合成台」画风选择器中实时展示。
                     </p>
                   </div>
                 </div>
@@ -1420,7 +1421,7 @@ export function AdminStylesTab({
       </Dialog>
 
       <Dialog open={categoryDialogOpen} onOpenChange={setCategoryDialogOpen}>
-        <DialogContent className={`w-[94vw] max-w-md ${ADMIN_DIALOG_CLS}`}>
+        <DialogContent className={`w-[94vw] max-w-md sm:max-w-md ${ADMIN_DIALOG_CLS}`}>
           <DialogHeader>
             <DialogTitle className="text-sm font-bold">
               {categoryForm?.isNew ? '新增画风大类' : '编辑画风大类'}
@@ -1482,7 +1483,7 @@ export function AdminStylesTab({
       </Dialog>
 
       <Dialog open={subcategoryDialogOpen} onOpenChange={setSubcategoryDialogOpen}>
-        <DialogContent className={`w-[94vw] max-w-md ${ADMIN_DIALOG_CLS}`}>
+        <DialogContent className={`w-[94vw] max-w-md sm:max-w-md ${ADMIN_DIALOG_CLS}`}>
           <DialogHeader>
             <DialogTitle className="text-sm font-bold">
               {subcategoryForm?.isNew ? '新增画风小类' : '编辑画风小类'}

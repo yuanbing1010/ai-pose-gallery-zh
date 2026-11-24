@@ -404,6 +404,7 @@ export function AdminPromptsTab({
   return (
     <div className="space-y-6">
       <AdminPageHeader
+        eyebrow="SECTION 07 // PROMPT TEMPLATES"
         title="提示词模板"
         description="统一管理全局前后置提示词、负面提示词、动态结构化模板（含跨画风面部自适应条款）与实时指令预览。"
       />

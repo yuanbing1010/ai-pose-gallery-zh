@@ -16,8 +16,8 @@
 
 ### 1. Cloudflare Worker 定时自动同步（线上生产环境）
 
-- `wrangler.jsonc` 已配置 Cron 触发器 `"30 12 * * *"`（UTC 12:30 = **北京时间每日 20:30**，紧随原站 20:00 CST 更新后执行）。
-- `worker.ts` 的 `scheduled` 处理器调用 `server/mioSync.ts`，拉取原站 `data.json` 并通过 `shared/mioArchive.ts` 转换为标准 `PoseItem` / `CostumeItem` 写入 R2 对象 `sync/mio-archive.json`。
+- `wrangler.jsonc` 已配置 Cron 触发器 `"0 13 * * *"`（UTC 13:00 = **北京时间每日 21:00**，紧随原站 `mio-design-archive` 与 `outfit-db-cn` 夜间定时更新之后执行）。
+- `worker.ts` 的 `scheduled` 处理器调用 `server/externalSync.ts`（`syncMioArchive` / `syncOutfitDbArchive`），拉取原站最新元数据写入 R2 对象 `sync/mio-archive.json` 与 `sync/outfit-db-archive.json`。
 - 公开接口 `GET /api/gallery/mio` 直接返回云端已同步数据；前端 `src/api/gallery.ts` 会自动比较云端与随包静态快照的 `generated` 日期及条目数，优先采用更新的版本，若纯静态部署或未同步过则无缝退回静态快照。
 
 ### 2. 管理端一键手动同步
@@ -36,4 +36,4 @@ pnpm sync:mio
 python scripts/import_mio.py
 ```
 
-- 仓库内附 `.github/workflows/sync-mio-archive.yml`，每日 **20:30 CST** 自动执行 `python scripts/import_mio.py --sync` 并在有新卷时自动提交静态快照更新（也支持 GitHub Actions 页面手动触发）。
+- 仓库内附 `.github/workflows/sync-mio-archive.yml`，每日 **21:00 CST** 自动执行 `python scripts/import_mio.py --sync` 与 `python scripts/import_outfit_db.py --sync`，在有更新时自动提交静态快照更新（也支持 GitHub Actions 页面手动触发）。

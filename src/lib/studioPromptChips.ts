@@ -75,6 +75,58 @@ export function toggleSceneNoteChip(current: string, chipText: string): { next: 
   }
 }
 
+export const INSPIRATION_SUBJECTS = [
+  { label: '银发机能少女', prompt: 'A poised young woman with silver bob hair wearing matte charcoal techwear coat and subtle gold jewelry' },
+  { label: '雨夜红伞旅人', prompt: 'A mysterious traveler holding a translucent vermilion umbrella on a rain-slicked Kyoto alley' },
+  { label: '暖阳胶片人像', prompt: 'An editorial fashion portrait of a graceful model in an ivory linen blazer with wind-swept hair' },
+  { label: '新中式墨金刺客', prompt: 'A refined neo-Chinese martial artist in flowing obsidian silk robes embroidered with kinpaku gold crane motifs' },
+  { label: '赛博天台乐手', prompt: 'A stylish street guitarist sitting on a misty Tokyo rooftop overlooking warm amber city lights' },
+  { label: '复古画室画师', prompt: 'A serene painter in a sun-drenched Parisian atelier surrounded by oil canvases and botanical shadows' },
+] as const
+
+export const INSPIRATION_LIGHTING = [
+  { label: '黄金时刻逆光', prompt: 'bathed in warm golden hour rim lighting, delicate dust motes in the air' },
+  { label: '暗房聚光影棚', prompt: 'sculpted by dramatic Leica studio key light against a deep obsidian backdrop' },
+  { label: '雨后霓虹倒影', prompt: 'illuminated by soft lantern reflections on wet stone pavement, atmospheric mist' },
+  { label: '柔窗和纸散射', prompt: 'soft diffused window light filtering through shoji paper, gentle warm skin tones' },
+  { label: '烛火金箔微光', prompt: 'warm candlelight catching metallic gold leaf accents and rich fabric folds' },
+] as const
+
+export const INSPIRATION_CAMERA = [
+  { label: '85mm 胶片特写', prompt: 'shot on medium format 85mm f/1.4, Kodak Portra 400 grain, shallow depth of field, magazine cover composition' },
+  { label: '35mm 电影宽银幕', prompt: 'cinematic 35mm anamorphic still, subtle halation, museum-grade color grading, ultra-detailed texture' },
+  { label: '高定杂志全身画报', prompt: 'full-body luxury lookbook editorial photograph, crisp architectural framing, refined contrast' },
+  { label: '新海诚清透插画', prompt: 'masterpiece Japanese anime key visual, luminous painted clouds, crisp linework, poetic atmosphere' },
+  { label: '厚涂油画肖像', prompt: 'expressive impasto oil painting brushwork, rich warm impasto highlights, gallery exhibition piece' },
+] as const
+
+/** 随机组合一条文生图灵感提示词（主体 × 光影 × 质感），避免与上一次完全重复 */
+export function rollAnalogInspirationPrompt(prevIndices?: [number, number, number]): {
+  prompt: string
+  summary: string
+  indices: [number, number, number]
+} {
+  const [a, b, c] = prevIndices ?? [-1, -1, -1]
+  const pick = (len: number, prev: number) =>
+    prev >= 0 && len > 1
+      ? (prev + 1 + Math.floor(Math.random() * (len - 1))) % len
+      : Math.floor(Math.random() * len)
+
+  const nextA = pick(INSPIRATION_SUBJECTS.length, a)
+  const nextB = pick(INSPIRATION_LIGHTING.length, b)
+  const nextC = pick(INSPIRATION_CAMERA.length, c)
+
+  const s = INSPIRATION_SUBJECTS[nextA]
+  const l = INSPIRATION_LIGHTING[nextB]
+  const cam = INSPIRATION_CAMERA[nextC]
+
+  return {
+    prompt: `${s.prompt}, ${l.prompt}, ${cam.prompt}`,
+    summary: `${s.label} · ${l.label} · ${cam.label}`,
+    indices: [nextA, nextB, nextC],
+  }
+}
+
 /** 格式化单次任务耗时（mm:ss） */
 export function formatJobDuration(
   startedAt: number | null | undefined,

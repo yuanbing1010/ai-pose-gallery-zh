@@ -105,7 +105,7 @@ export function PortraitFilterModal({
           <button
             type="button"
             onClick={() => onOpenChange(false)}
-            className="shrink-0 rounded-md border border-border bg-muted px-2 py-0.5 font-mono text-xs text-muted-foreground transition-colors hover:text-foreground"
+            className="shrink-0 rounded-md border border-border bg-muted px-2 py-0.5 font-mono text-xs text-muted-foreground transition-[transform,color] duration-150 ease-[var(--ease-out)] hover:text-foreground active:scale-[0.96]"
           >
             esc
           </button>
@@ -121,7 +121,7 @@ export function PortraitFilterModal({
                   type="button"
                   onClick={() => setActiveTab(item.id)}
                   className={cn(
-                    'relative flex shrink-0 items-center gap-2.5 rounded-[10px] px-3 py-2 text-left text-[13px] transition-colors',
+                    'relative flex shrink-0 items-center gap-2.5 rounded-[10px] px-3 py-2 text-left text-sm transition-colors',
                     active
                       ? 'font-medium text-foreground'
                       : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground'
@@ -141,7 +141,7 @@ export function PortraitFilterModal({
             })}
           </aside>
 
-          <div className="overflow-y-auto p-3.5 space-y-5">
+          <div className="overscroll-contain overflow-y-auto p-3.5 space-y-5">
             {showSection && (
               <section className="space-y-1.5">
                 <div className="px-2 text-xs font-medium tracking-wider text-muted-foreground uppercase">
@@ -154,7 +154,7 @@ export function PortraitFilterModal({
                       role="radio"
                       aria-checked={section === ''}
                       onClick={() => onSelectSection('')}
-                      className="flex w-full items-center justify-between rounded-[10px] px-2.5 py-2 text-[13px] transition-colors hover:bg-muted/70"
+                      className="flex w-full items-center justify-between rounded-[10px] px-2.5 py-2 text-sm transition-colors hover:bg-muted/70"
                     >
                       <span className="flex items-center gap-2.5">
                         <span
@@ -185,7 +185,7 @@ export function PortraitFilterModal({
                         role="radio"
                         aria-checked={checked}
                         onClick={() => onSelectSection(checked ? '' : sec)}
-                        className="flex w-full items-center justify-between rounded-[10px] px-2.5 py-2 text-[13px] transition-colors hover:bg-muted/70"
+                        className="flex w-full items-center justify-between rounded-[10px] px-2.5 py-2 text-sm transition-colors hover:bg-muted/70"
                       >
                         <span className="flex items-center gap-2.5">
                           <span
@@ -224,7 +224,7 @@ export function PortraitFilterModal({
                       role="radio"
                       aria-checked={hair === ''}
                       onClick={() => onSelectHair('')}
-                      className="flex w-full items-center justify-between rounded-[10px] px-2.5 py-2 text-[13px] transition-colors hover:bg-muted/70"
+                      className="flex w-full items-center justify-between rounded-[10px] px-2.5 py-2 text-sm transition-colors hover:bg-muted/70"
                     >
                       <span className="flex items-center gap-2.5">
                         <span
@@ -252,7 +252,7 @@ export function PortraitFilterModal({
                         role="radio"
                         aria-checked={checked}
                         onClick={() => onSelectHair(checked ? '' : h.label)}
-                        className="flex w-full items-center justify-between rounded-[10px] px-2.5 py-2 text-[13px] transition-colors hover:bg-muted/70"
+                        className="flex w-full items-center justify-between rounded-[10px] px-2.5 py-2 text-sm transition-colors hover:bg-muted/70"
                       >
                         <span className="flex items-center gap-2.5">
                           <span
@@ -289,7 +289,7 @@ export function PortraitFilterModal({
                   role="checkbox"
                   aria-checked={onlyHot}
                   onClick={() => onSetOnlyHot(!onlyHot)}
-                  className="flex w-full items-center justify-between rounded-[10px] px-2.5 py-2 text-[13px] transition-colors hover:bg-muted/70"
+                  className="flex w-full items-center justify-between rounded-[10px] px-2.5 py-2 text-sm transition-colors hover:bg-muted/70"
                 >
                   <span className="flex items-center gap-2.5">
                     <span
@@ -325,7 +325,7 @@ export function PortraitFilterModal({
                       role="radio"
                       aria-checked={styleName === 'all'}
                       onClick={() => onSelectStyleName('all')}
-                      className="flex w-full items-center justify-between rounded-[10px] px-2.5 py-2 text-[13px] transition-colors hover:bg-muted/70"
+                      className="flex w-full items-center justify-between rounded-[10px] px-2.5 py-2 text-sm transition-colors hover:bg-muted/70"
                     >
                       <span className="flex items-center gap-2.5">
                         <span
@@ -353,7 +353,7 @@ export function PortraitFilterModal({
                         role="radio"
                         aria-checked={checked}
                         onClick={() => onSelectStyleName(checked ? 'all' : s.label)}
-                        className="flex w-full items-center justify-between rounded-[10px] px-2.5 py-2 text-[13px] transition-colors hover:bg-muted/70"
+                        className="flex w-full items-center justify-between rounded-[10px] px-2.5 py-2 text-sm transition-colors hover:bg-muted/70"
                       >
                         <span className="flex items-center gap-2.5">
                           <span
@@ -392,14 +392,14 @@ export function PortraitFilterModal({
           <button
             type="button"
             onClick={onReset}
-            className="h-9 rounded-full border border-border bg-card px-4 text-xs font-medium text-foreground transition-colors hover:bg-muted active:scale-[0.97]"
+            className="h-9 rounded-full border border-border bg-card px-4 text-xs font-medium text-foreground transition-[transform,background-color] duration-150 ease-[var(--ease-out)] hover:bg-muted active:scale-[0.97]"
           >
             重置
           </button>
           <button
             type="button"
             onClick={() => onOpenChange(false)}
-            className="h-9 rounded-full bg-primary px-5 text-xs font-semibold text-primary-foreground transition-all hover:opacity-90 active:scale-[0.97]"
+            className="h-9 rounded-full bg-primary px-5 text-xs font-semibold text-primary-foreground transition-[transform,opacity] duration-150 hover:opacity-90 active:scale-[0.97]"
           >
             显示 {resultCount.toLocaleString('zh-CN')} 张
           </button>

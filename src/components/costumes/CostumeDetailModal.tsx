@@ -18,6 +18,7 @@ import { downloadFileName, referenceImageUrl } from '@/lib/recipeImages'
 import { cn } from '@/lib/utils'
 import type { CostumeItem } from '@/types/gallery'
 import { MIO_SOURCE_LABEL } from '../../../shared/mioArchive'
+import { OUTFIT_DB_SOURCE_LABEL } from '../../../shared/outfitDbArchive'
 
 export interface CostumeDetailModalProps {
   open: boolean
@@ -42,6 +43,7 @@ const SOURCE_DISPLAY: Record<string, string> = {
   charadb: 'たき AI · CharaDB',
   'gia-anime': 'ギア · 动漫服装',
   mio: MIO_SOURCE_LABEL,
+  'outfit-db': OUTFIT_DB_SOURCE_LABEL,
   gia: 'ギア（@giaaibusi）· 写实',
 }
 
@@ -86,7 +88,7 @@ export function CostumeDetailModal({
   const activeViewIdx = hasMultiViews
     ? Math.max(0, views.findIndex((v) => v.id === (selectedViewId || 'front')))
     : 0
-  const isHotlinkSource = ['charadb', 'gia-anime', 'mio'].includes(item.source || '')
+  const isHotlinkSource = ['charadb', 'gia-anime', 'mio', 'outfit-db'].includes(item.source || '')
   const accent = getCostumeAccent(item.分类, item.一级分类)
   const sourceLabel = SOURCE_DISPLAY[item.source || 'gia'] || SOURCE_DISPLAY.gia
 
@@ -206,7 +208,7 @@ export function CostumeDetailModal({
                   type="button"
                   aria-label="上一套服装"
                   onClick={onPrev}
-                  className="absolute top-1/2 left-4 z-20 flex size-9 -translate-y-1/2 items-center justify-center rounded-full border border-border bg-background/85 text-foreground backdrop-blur-md transition-all hover:bg-primary hover:text-primary-foreground active:scale-95"
+                  className="absolute top-1/2 left-4 z-20 flex size-9 -translate-y-1/2 items-center justify-center rounded-full border border-border bg-background/85 text-foreground backdrop-blur-md transition-[transform,background-color,color] duration-150 hover:bg-primary hover:text-primary-foreground active:scale-95"
                 >
                   <ChevronLeftIcon className="size-4" />
                 </button>
@@ -214,7 +216,7 @@ export function CostumeDetailModal({
                   type="button"
                   aria-label="下一套服装"
                   onClick={onNext}
-                  className="absolute top-1/2 right-4 z-20 flex size-9 -translate-y-1/2 items-center justify-center rounded-full border border-border bg-background/85 text-foreground backdrop-blur-md transition-all hover:bg-primary hover:text-primary-foreground active:scale-95"
+                  className="absolute top-1/2 right-4 z-20 flex size-9 -translate-y-1/2 items-center justify-center rounded-full border border-border bg-background/85 text-foreground backdrop-blur-md transition-[transform,background-color,color] duration-150 hover:bg-primary hover:text-primary-foreground active:scale-95"
                 >
                   <ChevronRightIcon className="size-4" />
                 </button>
@@ -264,7 +266,7 @@ export function CostumeDetailModal({
                       aria-pressed={active}
                       onClick={() => handleViewSwitch(entry.id)}
                       className={cn(
-                        'rounded-xl py-2 text-xs font-medium transition-all',
+                        'rounded-xl py-2 text-xs font-medium transition-colors duration-150',
                         active
                           ? 'bg-primary text-primary-foreground shadow-sm'
                           : 'border border-border bg-muted/40 text-muted-foreground hover:bg-muted hover:text-foreground'

@@ -1,4 +1,5 @@
 import type {
+  AdminGalleryStatsSummary,
   AdminJobsStatsSummary,
   AdminOverviewPayload,
   AdminProviderSlotDTO,
@@ -9,11 +10,20 @@ import type {
   AdminWechatConfigDTO,
   BootstrapPayload,
   CreditLedgerItem,
+  GalleryCommentDTO,
+  GalleryItemDTO,
+  GalleryItemSourceType,
+  GalleryItemStatus,
+  GalleryListResponse,
+  GallerySortOrder,
   GenerationHistoryItem,
+  GenerationAspectRatio,
   GenerationLiveStage,
   GenerationQueueInfo,
   ImageProviderId,
   MioSyncStatus,
+  OutfitDbSyncStatus,
+  ParsedXTweetPreview,
   PlatformConfig,
   ProfileResolutionOption,
   PublicUser,
@@ -22,11 +32,14 @@ import type {
   ReferenceDescriptionDTO,
   ReferenceDescriptionKind,
   StudioAspectRatio,
+  StudioGenerationMode,
   StudioResolution,
+  SupplierAuthMode,
   SupplierDTO,
   SupplierQueriedModel,
   UserRole,
   UserStatus,
+  XSyncSourceDTO,
 } from '@/types/gallery'
 
 export class ApiError extends Error {
@@ -228,13 +241,16 @@ export type StartGenerationStreamResult =
 export async function startGenerationStreamApi(
   payload: {
     idempotencyKey: string
+    generationMode?: StudioGenerationMode
+    userPrompt?: string
+    remixGalleryItemId?: string
     provider: ImageProviderId
     modelProfileId?: string
     resolution?: StudioResolution
     stylePreset: string
     allowFaceStyleShift?: boolean
     allowPoseStyleShift?: boolean
-    aspectRatio: StudioAspectRatio
+    aspectRatio: GenerationAspectRatio
     sceneNote?: string
     recipe: RecipeState
     stitchedR2Key?: string
@@ -451,9 +467,11 @@ export function fetchAdminSuppliersApi(): Promise<{ suppliers: SupplierDTO[] }> 
 
 export function createAdminSupplierApi(payload: {
   name: string
+  authMode?: SupplierAuthMode
   baseUrl: string
   apiKey?: string
   rawKeysText?: string
+  oauthSessionIds?: string[]
   models?: string[]
   enabled?: boolean
   note?: string
@@ -473,6 +491,7 @@ export function updateAdminSupplierApi(
   id: string,
   payload: {
     name?: string
+    authMode?: SupplierAuthMode
     baseUrl?: string
     apiKey?: string
     rawKeysText?: string
@@ -499,9 +518,11 @@ export interface SupplierModelsQueryResult {
 
 export function queryAdminSupplierModelsApi(payload: {
   supplierId?: string
+  authMode?: SupplierAuthMode
   baseUrl: string
   apiKey?: string
   rawKeysText?: string
+  oauthSessionIds?: string[]
 }): Promise<SupplierModelsQueryResult> {
   return requestJson('/api/admin/suppliers/query-models', {
     method: 'POST',
@@ -585,6 +606,114 @@ export function testAdminSupplierApi(
     method: 'POST',
     ...(keyId ? { body: JSON.stringify({ keyId }) } : {}),
   })
+}
+
+export interface DraftOAuthAccountSummary {
+  sessionId: string
+  label: string
+  accountHint: string
+  accountId: string
+  expiresAt: number
+}
+
+export interface SupplierOAuthDeviceStartResult {
+  sessionId: string
+  flowType: 'device_code'
+  userCode: string
+  verificationUri: string
+  verificationUriComplete?: string
+  intervalSec: number
+  expiresAt: number
+}
+
+export interface SupplierOAuthDevicePollResult {
+  status: 'pending' | 'completed' | 'expired' | 'failed'
+  intervalSec?: number
+  error?: string
+  keyId?: string
+  updatedExisting?: boolean
+  draftAccount?: DraftOAuthAccountSummary
+  suppliers?: SupplierDTO[]
+}
+
+export interface SupplierOAuthPkceStartResult {
+  sessionId: string
+  flowType: 'pkce'
+  authorizeUrl: string
+  redirectUri: string
+  expiresAt: number
+}
+
+export interface SupplierOAuthCompleteResult {
+  keyId?: string
+  updatedExisting?: boolean
+  draftAccount?: DraftOAuthAccountSummary
+  suppliers?: SupplierDTO[]
+}
+
+export function startAdminSupplierOAuthDeviceApi(payload: {
+  supplierId?: string
+  authMode?: SupplierAuthMode
+  label?: string
+}): Promise<SupplierOAuthDeviceStartResult> {
+  return requestJson('/api/admin/suppliers/oauth/device/start', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export function pollAdminSupplierOAuthDeviceApi(payload: {
+  supplierId?: string
+  sessionId: string
+}): Promise<SupplierOAuthDevicePollResult> {
+  return requestJson('/api/admin/suppliers/oauth/device/poll', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export function startAdminSupplierOAuthPkceApi(payload: {
+  supplierId?: string
+  authMode?: SupplierAuthMode
+  label?: string
+}): Promise<SupplierOAuthPkceStartResult> {
+  return requestJson('/api/admin/suppliers/oauth/pkce/start', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export function completeAdminSupplierOAuthPkceApi(payload: {
+  supplierId?: string
+  sessionId: string
+  callbackInput: string
+}): Promise<SupplierOAuthCompleteResult> {
+  return requestJson('/api/admin/suppliers/oauth/pkce/complete', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export function importAdminSupplierOAuthJsonApi(payload: {
+  supplierId?: string
+  authMode?: SupplierAuthMode
+  rawJson: string
+  label?: string
+}): Promise<SupplierOAuthCompleteResult> {
+  return requestJson('/api/admin/suppliers/oauth/import', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export function refreshAdminSupplierKeyTokenApi(
+  supplierId: string,
+  keyId: string
+): Promise<{ ok: boolean; expiresAt: number; message: string; suppliers: SupplierDTO[] }> {
+  return requestJson(
+    `/api/admin/suppliers/${encodeURIComponent(supplierId)}/keys/${encodeURIComponent(keyId)}/refresh`,
+    { method: 'POST' }
+  )
 }
 
 export function fetchAdminProvidersApi(): Promise<{
@@ -933,6 +1062,16 @@ export function runAdminMioSyncApi(): Promise<MioSyncStatus> {
   })
 }
 
+export function fetchAdminOutfitDbSyncStatusApi(): Promise<OutfitDbSyncStatus> {
+  return requestJson('/api/admin/sync/outfit-db')
+}
+
+export function runAdminOutfitDbSyncApi(): Promise<OutfitDbSyncStatus> {
+  return requestJson('/api/admin/sync/outfit-db', {
+    method: 'POST',
+  })
+}
+
 export function fetchAdminReferenceDescriptionsApi(params?: {
   kind?: 'all' | ReferenceDescriptionKind
   q?: string
@@ -993,6 +1132,271 @@ export function regenerateAdminReferenceDescriptionApi(
 
 export function deleteAdminReferenceDescriptionApi(id: string): Promise<{ ok: boolean }> {
   return requestJson(`/api/admin/reference-descriptions/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  })
+}
+
+// ---------------------------------------------------------------------------
+// 灵感画廊 API（公共画廊 / 个人画廊投稿 / 管理端审核与 X 推文导入）
+// ---------------------------------------------------------------------------
+
+export function fetchPublicGalleryItemsApi(params?: {
+  sort?: GallerySortOrder
+  source?: 'all' | GalleryItemSourceType
+  category?: string
+  aspectRatio?: string
+  q?: string
+  limit?: number
+  offset?: number
+}): Promise<GalleryListResponse> {
+  const sp = new URLSearchParams()
+  if (params?.sort) sp.set('sort', params.sort)
+  if (params?.source && params.source !== 'all') sp.set('source', params.source)
+  if (params?.category && params.category !== '全部') sp.set('category', params.category)
+  if (params?.aspectRatio && params.aspectRatio !== 'all') sp.set('aspectRatio', params.aspectRatio)
+  if (params?.q) sp.set('q', params.q)
+  if (params?.limit) sp.set('limit', String(params.limit))
+  if (params?.offset) sp.set('offset', String(params.offset))
+  const qs = sp.toString()
+  return requestJson(`/api/gallery/items${qs ? `?${qs}` : ''}`)
+}
+
+export function fetchGalleryItemDetailApi(id: string): Promise<{ item: GalleryItemDTO }> {
+  return requestJson(`/api/gallery/items/${encodeURIComponent(id)}`)
+}
+
+export function fetchMyGalleryItemsApi(limit = 60, offset = 0): Promise<GalleryListResponse> {
+  return requestJson(`/api/gallery/mine?limit=${limit}&offset=${offset}`)
+}
+
+export function publishToGalleryApi(payload: {
+  jobId: string
+  title?: string
+  category?: string
+  tags?: string[] | string
+  promptPublic?: boolean
+  promptZh?: string
+}): Promise<{ ok: boolean; item: GalleryItemDTO | null }> {
+  return requestJson('/api/gallery/publish', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export function withdrawMyGalleryItemApi(
+  id: string
+): Promise<{ ok: boolean; item: GalleryItemDTO | null }> {
+  return requestJson(`/api/gallery/mine/${encodeURIComponent(id)}/withdraw`, {
+    method: 'POST',
+  })
+}
+
+export function deleteMyGalleryItemApi(id: string): Promise<{ ok: boolean }> {
+  return requestJson(`/api/gallery/mine/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  })
+}
+
+export function fetchAdminGalleryApi(params?: {
+  status?: 'all' | GalleryItemStatus
+  source?: 'all' | GalleryItemSourceType
+  q?: string
+  limit?: number
+  offset?: number
+}): Promise<{
+  items: GalleryItemDTO[]
+  total: number
+  stats: AdminGalleryStatsSummary
+  ingestKeyConfigured: boolean
+}> {
+  const sp = new URLSearchParams()
+  if (params?.status && params.status !== 'all') sp.set('status', params.status)
+  if (params?.source && params.source !== 'all') sp.set('source', params.source)
+  if (params?.q) sp.set('q', params.q)
+  if (params?.limit) sp.set('limit', String(params.limit))
+  if (params?.offset) sp.set('offset', String(params.offset))
+  const qs = sp.toString()
+  return requestJson(`/api/admin/gallery${qs ? `?${qs}` : ''}`)
+}
+
+export function updateAdminGalleryItemApi(
+  id: string,
+  payload: {
+    status?: GalleryItemStatus
+    title?: string
+    promptText?: string
+    promptZh?: string
+    promptPublic?: boolean
+    category?: string
+    tags?: string[] | string
+    aspectRatio?: StudioAspectRatio
+    isFeatured?: boolean
+    reviewNote?: string
+  }
+): Promise<{ ok: boolean; item: GalleryItemDTO | null }> {
+  return requestJson(`/api/admin/gallery/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  })
+}
+
+export function deleteAdminGalleryItemApi(id: string): Promise<{ ok: boolean }> {
+  return requestJson(`/api/admin/gallery/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  })
+}
+
+export function parseAdminXTweetApi(url: string): Promise<{ preview: ParsedXTweetPreview }> {
+  return requestJson('/api/admin/gallery/parse-x', {
+    method: 'POST',
+    body: JSON.stringify({ url }),
+  })
+}
+
+export function importAdminXTweetApi(payload: {
+  tweetUrl?: string
+  tweetId?: string
+  authorHandle?: string
+  authorName?: string
+  authorAvatar?: string | null
+  title?: string
+  promptText: string
+  promptZh?: string
+  imageUrl: string
+  width?: number
+  height?: number
+  aspectRatio?: StudioAspectRatio
+  category?: string
+  tags?: string[] | string
+  publishNow?: boolean
+  isFeatured?: boolean
+}): Promise<{ ok: boolean; item: GalleryItemDTO | null }> {
+  return requestJson('/api/admin/gallery/import-x', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export function fetchAdminXSyncSourcesApi(): Promise<{ items: XSyncSourceDTO[] }> {
+  return requestJson('/api/admin/gallery/x-sources')
+}
+
+export function createAdminXSyncSourceApi(payload: {
+  handle: string
+  displayName?: string
+  autoPublish?: boolean
+  note?: string
+}): Promise<{ ok: boolean; source: XSyncSourceDTO | null }> {
+  return requestJson('/api/admin/gallery/x-sources', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export function updateAdminXSyncSourceApi(
+  id: string,
+  payload: {
+    displayName?: string
+    autoPublish?: boolean
+    enabled?: boolean
+    note?: string
+  }
+): Promise<{ ok: boolean; source: XSyncSourceDTO | null }> {
+  return requestJson(`/api/admin/gallery/x-sources/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  })
+}
+
+export function deleteAdminXSyncSourceApi(id: string): Promise<{ ok: boolean }> {
+  return requestJson(`/api/admin/gallery/x-sources/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  })
+}
+
+export function toggleGalleryLikeApi(
+  itemId: string
+): Promise<{ ok: boolean; liked: boolean; likeCount: number }> {
+  return requestJson(`/api/gallery/items/${encodeURIComponent(itemId)}/like`, {
+    method: 'POST',
+  })
+}
+
+export function toggleGalleryBookmarkApi(
+  itemId: string
+): Promise<{ ok: boolean; bookmarked: boolean; bookmarkCount: number }> {
+  return requestJson(`/api/gallery/items/${encodeURIComponent(itemId)}/bookmark`, {
+    method: 'POST',
+  })
+}
+
+export function fetchMyGalleryBookmarksApi(limit = 60, offset = 0): Promise<GalleryListResponse> {
+  return requestJson(`/api/gallery/bookmarks?limit=${limit}&offset=${offset}`)
+}
+
+export function fetchGalleryCommentsApi(
+  itemId: string
+): Promise<{ items: GalleryCommentDTO[] }> {
+  return requestJson(`/api/gallery/items/${encodeURIComponent(itemId)}/comments`)
+}
+
+export function createGalleryCommentApi(
+  itemId: string,
+  payload: { content: string; replyToId?: string | null }
+): Promise<{ ok: boolean; comment: GalleryCommentDTO; commentCount: number }> {
+  return requestJson(`/api/gallery/items/${encodeURIComponent(itemId)}/comments`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export function deleteGalleryCommentApi(
+  commentId: string
+): Promise<{ ok: boolean; commentCount: number }> {
+  return requestJson(`/api/gallery/comments/${encodeURIComponent(commentId)}`, {
+    method: 'DELETE',
+  })
+}
+
+export function fetchAdminGalleryCommentsApi(q = ''): Promise<{ items: GalleryCommentDTO[] }> {
+  const sp = new URLSearchParams()
+  if (q.trim()) sp.set('q', q.trim())
+  const qs = sp.toString()
+  return requestJson(`/api/admin/gallery/comments${qs ? `?${qs}` : ''}`)
+}
+
+export function deleteAdminGalleryCommentApi(id: string): Promise<{ ok: boolean }> {
+  return requestJson(`/api/admin/gallery/comments/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  })
+}
+
+export interface CanvasProjectPayload {
+  id: string
+  name: string
+  updatedAt: number
+  bgPattern: 'dots' | 'grid' | 'blank'
+  pan: { x: number; y: number }
+  zoom: number
+  nodes: unknown[]
+  edges: unknown[]
+}
+
+export function fetchCloudCanvasProjectsApi(): Promise<{ projects: CanvasProjectPayload[] }> {
+  return requestJson('/api/canvas/projects')
+}
+
+export function saveCloudCanvasProjectApi(
+  project: CanvasProjectPayload
+): Promise<{ ok: boolean; project: CanvasProjectPayload }> {
+  return requestJson(`/api/canvas/projects/${encodeURIComponent(project.id)}`, {
+    method: 'PUT',
+    body: JSON.stringify(project),
+  })
+}
+
+export function deleteCloudCanvasProjectApi(id: string): Promise<{ ok: boolean }> {
+  return requestJson(`/api/canvas/projects/${encodeURIComponent(id)}`, {
     method: 'DELETE',
   })
 }

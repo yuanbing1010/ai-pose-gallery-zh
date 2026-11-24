@@ -15,11 +15,12 @@ export function ReferenceComparisonDialog({ result, open, onOpenChange }: Props)
   const returnFocus = useRef<HTMLElement | null>(null)
   return <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
     <DialogPrimitive.Portal>
-      <DialogPrimitive.Overlay className="fixed inset-0 z-[100] bg-black/65 backdrop-blur-md" />
+      <DialogPrimitive.Overlay className="fixed inset-0 z-[100] bg-black/65 backdrop-blur-md duration-200 data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0" />
       <DialogPrimitive.Content
+        data-slot="dialog-content"
         onOpenAutoFocus={() => { returnFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null }}
         onCloseAutoFocus={(event) => { if (returnFocus.current?.isConnected) { event.preventDefault(); returnFocus.current.focus() } }}
-        className="fixed top-1/2 left-1/2 z-[101] flex h-[94dvh] w-[96vw] max-w-6xl -translate-x-1/2 -translate-y-1/2 flex-col gap-3 rounded-[24px] border border-border bg-background p-4 text-foreground shadow-2xl outline-none sm:p-5">
+        className="fixed top-1/2 left-1/2 z-[101] flex h-[94dvh] w-[96vw] max-w-6xl -translate-x-1/2 -translate-y-1/2 flex-col gap-3 rounded-[24px] border border-border bg-background p-4 text-foreground shadow-2xl outline-none duration-200 ease-[var(--ease-out)] data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95 sm:p-5">
         <div className="flex shrink-0 items-center gap-2">
           <DialogPrimitive.Title className="mr-auto text-lg font-semibold">对比参考</DialogPrimitive.Title>
           <DialogPrimitive.Close asChild><Button variant="ghost" className="min-h-11 min-w-11" aria-label="关闭参考对比"><XIcon className="size-4" /></Button></DialogPrimitive.Close>
@@ -36,6 +37,9 @@ function ComparisonContent({ result }: { result: GenerationHistoryItem }) {
   const [selected, setSelected] = useState(refs[0]?.id || '')
   const [mode, setMode] = useState<'side' | 'slider'>('side')
   const [split, setSplit] = useState(50)
+  const clipLayerRef = useRef<HTMLDivElement | null>(null)
+  const dividerTrackRef = useRef<HTMLDivElement | null>(null)
+  const liveSplitRef = useRef(50)
   const [requestedView, setView] = useState<View>(initialView)
   const [natural, setNatural] = useState<Record<string, Dimensions>>({})
   const [panes, setPanes] = useState<Record<string, Dimensions>>({})
@@ -73,13 +77,26 @@ function ComparisonContent({ result }: { result: GenerationHistoryItem }) {
     <Button variant="outline" className="min-h-11" onClick={() => update(initialView)}><RotateCcwIcon className="size-4" />复位</Button>
   </div>
   const gestureProps = { view, update, zoomAt }
-  const updateSplitFromPointer = (el: HTMLElement, clientX: number) => {
-    const parent = el.parentElement
-    if (!parent) return
-    const rect = parent.getBoundingClientRect()
+  const applyVisualSplit = (pct: number, commitState = false) => {
+    const clamped = Math.round(Math.max(0, Math.min(100, pct)))
+    liveSplitRef.current = clamped
+    if (clipLayerRef.current) {
+      clipLayerRef.current.style.clipPath = `inset(0 ${100 - clamped}% 0 0)`
+    }
+    if (dividerTrackRef.current) {
+      dividerTrackRef.current.style.transform = `translate3d(${clamped}%, 0, 0)`
+    }
+    if (commitState) {
+      setSplit(clamped)
+    }
+  }
+  const updateSplitFromPointer = (el: HTMLElement, clientX: number, commitState = false) => {
+    const surface = el.closest('[role="region"]') ?? el.parentElement
+    if (!surface) return
+    const rect = surface.getBoundingClientRect()
     if (rect.width <= 0) return
     const pct = ((clientX - rect.left) / rect.width) * 100
-    setSplit(Math.round(Math.max(0, Math.min(100, pct))))
+    applyVisualSplit(pct, commitState)
   }
   return <>
     {reference ? <div className="flex shrink-0 flex-wrap items-center gap-2">
@@ -102,52 +119,61 @@ function ComparisonContent({ result }: { result: GenerationHistoryItem }) {
     {controls}
     {reference && mode === 'slider' ? <ComparisonSurface {...gestureProps} onSize={(size) => paneSize('slider', size)} label="滑杆对比" className="min-h-0 flex-1">
       <ComparisonImage key={`result:${result.imageUrl}`} url={result.imageUrl} label="生成结果" transform={transform} onSize={(size) => imageSize(result.imageUrl, size)} />
-      <div className="absolute inset-0 bg-muted" style={{ clipPath: `inset(0 ${100 - split}% 0 0)` }}>
+      <div ref={clipLayerRef} className="absolute inset-0 bg-muted" style={{ clipPath: `inset(0 ${100 - split}% 0 0)` }}>
         <ComparisonImage key={reference.url} url={reference.url} label={reference.label} transform={transform} onSize={(size) => imageSize(reference.url, size)} />
       </div>
       <div
-        role="slider"
-        tabIndex={0}
-        aria-label="左右拖动调整参考对比位置"
-        aria-valuemin={0}
-        aria-valuemax={100}
-        aria-valuenow={split}
-        onPointerDown={(e) => {
-          if (e.button !== 0) return
-          e.stopPropagation()
-          e.currentTarget.focus()
-          e.currentTarget.setPointerCapture(e.pointerId)
-          updateSplitFromPointer(e.currentTarget, e.clientX)
-        }}
-        onPointerMove={(e) => {
-          if (!e.currentTarget.hasPointerCapture(e.pointerId)) return
-          updateSplitFromPointer(e.currentTarget, e.clientX)
-        }}
-        onKeyDown={(e) => {
-          if (e.key === 'ArrowLeft') {
-            e.preventDefault()
-            e.stopPropagation()
-            setSplit((v) => Math.max(0, v - 5))
-          } else if (e.key === 'ArrowRight') {
-            e.preventDefault()
-            e.stopPropagation()
-            setSplit((v) => Math.min(100, v + 5))
-          }
-        }}
-        style={{ left: `${split}%`, transform: 'translateX(-50%)' }}
-        className="pointer-events-auto absolute inset-y-0 z-10 flex w-8 cursor-ew-resize touch-none items-center justify-center focus-visible:outline-none"
+        ref={dividerTrackRef}
+        style={{ transform: `translate3d(${split}%, 0, 0)` }}
+        className="pointer-events-none absolute inset-0 z-10"
       >
-        <div className="h-full w-0.5 bg-primary shadow" />
-        <span className="absolute flex size-7 items-center justify-center rounded-full border border-border bg-background/95 text-foreground shadow-md ring-1 ring-black/10 dark:ring-white/15">
-          <MoveHorizontalIcon className="size-3.5" />
-        </span>
+        <div
+          role="slider"
+          tabIndex={0}
+          aria-label="左右拖动调整参考对比位置"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={split}
+          onPointerDown={(e) => {
+            if (e.button !== 0 && e.pointerType === 'mouse') return
+            if (e.currentTarget.hasPointerCapture(e.pointerId)) return
+            e.stopPropagation()
+            e.currentTarget.focus()
+            e.currentTarget.setPointerCapture(e.pointerId)
+            updateSplitFromPointer(e.currentTarget, e.clientX, false)
+          }}
+          onPointerMove={(e) => {
+            if (!e.currentTarget.hasPointerCapture(e.pointerId)) return
+            updateSplitFromPointer(e.currentTarget, e.clientX, false)
+          }}
+          onPointerUp={() => setSplit(liveSplitRef.current)}
+          onPointerCancel={() => setSplit(liveSplitRef.current)}
+          onLostPointerCapture={() => setSplit(liveSplitRef.current)}
+          onKeyDown={(e) => {
+            if (e.key === 'ArrowLeft') {
+              e.preventDefault()
+              e.stopPropagation()
+              applyVisualSplit(liveSplitRef.current - 5, true)
+            } else if (e.key === 'ArrowRight') {
+              e.preventDefault()
+              e.stopPropagation()
+              applyVisualSplit(liveSplitRef.current + 5, true)
+            }
+          }}
+          className="pointer-events-auto relative flex h-full w-8 -translate-x-1/2 cursor-ew-resize touch-none items-center justify-center focus-visible:outline-none"
+        >
+          <div className="h-full w-0.5 bg-primary shadow" />
+          <span className="absolute flex size-7 items-center justify-center rounded-full border border-border bg-background/95 text-foreground shadow-md ring-1 ring-black/10 dark:ring-white/15">
+            <MoveHorizontalIcon className="size-3.5" />
+          </span>
+        </div>
       </div>
       <div className="pointer-events-none absolute inset-x-2 top-2 flex justify-between text-xs"><span className="rounded bg-background/90 px-2 py-1">参考图</span><span className="rounded bg-background/90 px-2 py-1">生成结果</span></div>
     </ComparisonSurface> : <div className={`grid min-h-0 flex-1 gap-2 ${reference ? 'grid-rows-2 md:grid-cols-2 md:grid-rows-1' : 'grid-cols-1'}`}>
       {reference && <ComparisonSurface {...gestureProps} onSize={(size) => paneSize('reference', size)} label={reference.label}><ComparisonImage key={reference.url} url={reference.url} label={reference.label} transform={transform} onSize={(size) => imageSize(reference.url, size)} /><PaneLabel label={reference.label} /></ComparisonSurface>}
       <ComparisonSurface {...gestureProps} onSize={(size) => paneSize('result', size)} label="生成结果"><ComparisonImage key={result.imageUrl} url={result.imageUrl} label="生成结果" transform={transform} onSize={(size) => imageSize(result.imageUrl, size)} /><PaneLabel label="生成结果" /></ComparisonSurface>
     </div>}
-    {reference && mode === 'slider' && <label className="flex shrink-0 items-center gap-3 text-sm">参考占比<input type="range" min={0} max={100} value={split} aria-label="参考图显示比例" aria-valuetext={`${split}% 参考图`} onChange={(e) => setSplit(Number(e.target.value))} className="h-11 min-w-0 flex-1 accent-primary" /><span className="w-10 tabular-nums">{split}%</span></label>}
+    {reference && mode === 'slider' && <label className="flex shrink-0 items-center gap-3 text-sm">参考占比<input type="range" min={0} max={100} value={split} aria-label="参考图显示比例" aria-valuetext={`${split}% 参考图`} onChange={(e) => applyVisualSplit(Number(e.target.value), true)} className="h-11 min-w-0 flex-1 accent-primary" /><span className="w-10 tabular-nums">{split}%</span></label>}
     <p className="shrink-0 text-center text-xs text-muted-foreground">滚轮或双指共同缩放 · 放大后拖动 · 加减键缩放、方向键移动、0 键复位</p>
   </>
 }

@@ -1,16 +1,19 @@
 import { Hono, type Context } from 'hono'
 import { getCookie } from 'hono/cookie'
+import { adminGalleryRoutes } from './adminGallery'
 import {
   DEFAULT_PROVIDER_PARAMS,
   PROVIDER_META,
   PROVIDER_ORDER,
   PROVIDER_SUPPORTED_RESOLUTIONS,
+  SUPPLIER_AUTH_MODE_META,
   getEffectiveProfileCreditCost,
   mergeGenerationQueueConfig,
   mergePoseSanitizeConfig,
   mergePromptTemplate,
   mergeVisionFallbackConfig,
   normalizeProfileResolutions,
+  normalizeSupplierAuthMode,
   normalizeSupplierModelIds,
   resolveProfileDefaultResolution,
   validatePoseSanitizeInput,
@@ -24,6 +27,7 @@ import {
   type ReferenceDescriptionKind,
   type StudioResolution,
   type StylePresetItem,
+  type SupplierAuthMode,
   type SupplierQueriedModel,
 } from '../../shared/studio'
 import {
@@ -31,6 +35,7 @@ import {
   encryptSecret,
   hashPassword,
   maskApiKey,
+  timingSafeEqualText,
   verifyPassword,
 } from '../crypto'
 import {
@@ -60,6 +65,7 @@ import {
   parseProfileRow,
   reapStaleProcessingJobs,
   resolveProfileForGeneration,
+  resolveSupplierKeyRuntimeCredential,
   resolveSupplierSecret,
   resolveVisionFallbackTargets,
   sanitizeStyleCategoriesInput,
@@ -91,8 +97,14 @@ import {
   requireAdmin,
   setAdminSessionCookie,
 } from '../middleware'
-import { getMioSyncStatus, syncMioArchive } from '../mioSync'
 import {
+  getMioSyncStatus,
+  getOutfitDbSyncStatus,
+  syncMioArchive,
+  syncOutfitDbArchive,
+} from '../externalSync'
+import {
+  buildGeminiNativeEndpoint,
   buildSourceFromPreviewPath,
   devProxyAwareFetch,
   regenerateReferenceDescriptionFromPreview,
@@ -105,10 +117,25 @@ import {
   forceCancelProcessingJobViaCoordinator,
   reconcileQueueViaCoordinator,
 } from '../generationQueue'
+import {
+  buildCodexRequestHeaders,
+  buildXaiOAuthRequestHeaders,
+  claimDraftOAuthSessionsForSupplier,
+  completeSupplierOAuthPkceFlow,
+  importSupplierOAuthJson,
+  isOAuthAuthMode,
+  pollSupplierOAuthDeviceFlow,
+  resolveDraftOAuthSessionCredential,
+  resolveValidSupplierOAuthKey,
+  startSupplierOAuthDeviceFlow,
+  startSupplierOAuthPkceFlow,
+  type OAuthProviderMode,
+} from '../supplierOAuth'
 import type { AppEnv, Env } from '../types'
 import {
   isPrivateOrLocalHostname,
   parseIntSafe,
+  readResponseTextWithLimit,
   sanitizeCallbackBaseUrl,
   validateEmail,
   validatePassword,
@@ -222,15 +249,6 @@ function isLocalBootstrapRequest(c: Context<AppEnv>): boolean {
   } catch {
     return false
   }
-}
-
-function timingSafeTextEqual(a: string, b: string): boolean {
-  if (a.length !== b.length) return false
-  let diff = 0
-  for (let i = 0; i < a.length; i++) {
-    diff |= a.charCodeAt(i) ^ b.charCodeAt(i)
-  }
-  return diff === 0
 }
 
 function extractStyleAssetKey(url: string | undefined): string | null {
@@ -416,7 +434,7 @@ adminRoutes.post('/bootstrap', async (c) => {
   const envToken = (c.env.BOOTSTRAP_SETUP_TOKEN || '').trim()
   if (envToken) {
     const providedToken = typeof body.setupToken === 'string' ? body.setupToken.trim() : ''
-    if (!providedToken || !timingSafeTextEqual(providedToken, envToken)) {
+    if (!providedToken || !(await timingSafeEqualText(providedToken, envToken))) {
       return c.json({ error: { message: '初始化安全口令不正确' } }, 403)
     }
   } else if (!isLocalBootstrapRequest(c)) {
@@ -456,6 +474,8 @@ adminRoutes.post('/bootstrap', async (c) => {
 })
 
 adminRoutes.use('*', requireAdmin)
+
+adminRoutes.route('/gallery', adminGalleryRoutes)
 
 adminRoutes.get('/overview', async (c) => {
   await reapStaleProcessingJobs(c.env.DB)
@@ -701,21 +721,205 @@ async function insertSupplierKeysDedup(
   return { addedCount, skippedCount }
 }
 
+function isGoogleVertexHostname(host: string): boolean {
+  const lower = host.toLowerCase()
+  return lower === 'aiplatform.googleapis.com' || lower.endsWith('-aiplatform.googleapis.com')
+}
+
+function buildVertexCountTokensUrl(baseUrl: string, model: string): string {
+  const { endpointUrl } = buildGeminiNativeEndpoint(baseUrl, model)
+  return endpointUrl.replace(/:(?:stream)?generateContent(?=\?|$)/i, ':countTokens')
+}
+
+async function readUpstreamErrorDetail(
+  resp: Response
+): Promise<{ detail: string; isInvalidKey: boolean }> {
+  try {
+    const text = await readResponseTextWithLimit(resp, 256 * 1024)
+    const lower = text.toLowerCase()
+    const isInvalidKey =
+      lower.includes('api_key_invalid') ||
+      lower.includes('api key not valid') ||
+      lower.includes('api key expired') ||
+      lower.includes('invalid api key')
+    try {
+      const parsed = JSON.parse(text) as { error?: { message?: unknown }; message?: unknown }
+      const rawMsg = parsed?.error?.message ?? parsed?.message
+      if (typeof rawMsg === 'string' && rawMsg.trim()) {
+        return { detail: rawMsg.trim().slice(0, 160), isInvalidKey }
+      }
+    } catch {
+      // ignore non-json error body
+    }
+    return { detail: text.trim().slice(0, 160), isInvalidKey }
+  } catch {
+    return { detail: '', isInvalidKey: false }
+  }
+}
+
+type ProbeSupplierResult = {
+  ok: boolean
+  status: number | null
+  latencyMs: number
+  message: string
+  isAuthError?: boolean
+}
+
+function formatProbeFailureMessage(
+  status: number,
+  detail: string,
+  isInvalidKey: boolean
+): { message: string; isAuthError: boolean } {
+  if (status === 401 || status === 403 || isInvalidKey) {
+    return {
+      isAuthError: true,
+      message: detail
+        ? `鉴权失败：密钥无效或无权限 (HTTP ${status}：${detail})`
+        : `鉴权失败：密钥无效或无权限 (HTTP ${status})`,
+    }
+  }
+  return {
+    isAuthError: false,
+    message: detail ? `上游返回状态 HTTP ${status}：${detail}` : `上游返回状态 HTTP ${status}`,
+  }
+}
+
+async function probeVertexSupplierApiKey(
+  baseUrl: string,
+  apiKey: string,
+  env: Env,
+  probeModels?: string[]
+): Promise<ProbeSupplierResult> {
+  // Vertex AI Express Mode (AQ.A...) 禁用 /models 列表接口且拒绝 Bearer，改用零费用的 :countTokens 探测；
+  // 新建 GCP 项目可能已下线 2.5 系列模型，因此优先使用供应商绑定/常用新模型，遇到 404 自动顺延尝试
+  const candidates = Array.from(
+    new Set(
+      [
+        ...(probeModels || []),
+        'gemini-4-hydrogen',
+        'gemini-3.1-flash-image',
+        'gemini-3-pro-image',
+        'gemini-3.1-flash-lite-image',
+        'gemini-nano-banana-2.1',
+        'gemini-3.5-flash',
+        'gemini-3-flash',
+        'gemini-3-flash-preview',
+        'gemini-2.5-flash',
+        'gemini-2.5-pro',
+      ]
+        .map((m) => m.trim())
+        .filter(Boolean)
+    )
+  ).slice(0, 12)
+
+  const headers: Record<string, string> = {
+    Accept: 'application/json',
+    'Content-Type': 'application/json',
+  }
+  if (/^ya29\./i.test(apiKey)) {
+    headers.Authorization = `Bearer ${apiKey}`
+  } else {
+    headers['x-goog-api-key'] = apiKey
+  }
+  const probeBody = JSON.stringify({
+    contents: [{ role: 'user', parts: [{ text: 'ping' }] }],
+  })
+
+  for (let i = 0; i < candidates.length; i += 1) {
+    const model = candidates[i]
+    const hasFallback = i < candidates.length - 1
+    const probeUrl = buildVertexCountTokensUrl(baseUrl, model)
+    const started = Date.now()
+    try {
+      const resp = await devProxyAwareFetch(
+        probeUrl,
+        {
+          method: 'POST',
+          headers,
+          body: probeBody,
+          signal: AbortSignal.timeout(10_000),
+        },
+        env,
+        10_000
+      )
+      const latencyMs = Date.now() - started
+      if (resp.ok) {
+        return {
+          ok: true,
+          status: resp.status,
+          latencyMs,
+          message: `连接成功 (HTTP ${resp.status})`,
+        }
+      }
+
+      const { detail, isInvalidKey } = await readUpstreamErrorDetail(resp)
+      if (!isInvalidKey && (resp.status === 404 || resp.status === 400) && hasFallback) {
+        continue
+      }
+
+      const formatted = formatProbeFailureMessage(resp.status, detail, isInvalidKey)
+      return {
+        ok: false,
+        status: resp.status,
+        latencyMs,
+        message: formatted.message,
+        isAuthError: formatted.isAuthError,
+      }
+    } catch (err) {
+      const latencyMs = Date.now() - started
+      const message =
+        err instanceof Error && err.name === 'TimeoutError'
+          ? '连接超时（>10s）'
+          : err instanceof Error
+            ? `网络不可达：${err.message}`
+            : '连通测试失败'
+      return { ok: false, status: null, latencyMs, message }
+    }
+  }
+
+  return { ok: false, status: null, latencyMs: 0, message: '连通测试失败' }
+}
+
 async function probeSupplierApiKey(
   baseUrl: string,
   parsedUrl: URL,
   apiKey: string,
-  env: Env
-): Promise<{ ok: boolean; status: number | null; latencyMs: number; message: string }> {
+  env: Env,
+  options?: { authMode?: SupplierAuthMode; accountId?: string; probeModels?: string[] }
+): Promise<ProbeSupplierResult> {
   const cleanBase = baseUrl.trim().replace(/\/+$/, '')
   const host = parsedUrl.hostname.toLowerCase()
-  const headers: Record<string, string> = { Accept: 'application/json' }
+  const authMode = options?.authMode || 'api_key'
+
+  if (authMode === 'api_key' && isGoogleVertexHostname(host)) {
+    return probeVertexSupplierApiKey(cleanBase, apiKey, env, options?.probeModels)
+  }
+
+  let headers: Record<string, string> = { Accept: 'application/json' }
   let probeUrl: string
-  if (host.includes('generativelanguage.googleapis.com')) {
-    probeUrl = /\/v1(beta|alpha)?$/i.test(cleanBase)
+  if (authMode === 'oauth_openai_codex' || /chatgpt\.com\/backend-api\/codex/i.test(cleanBase)) {
+    probeUrl = /\/models$/i.test(cleanBase)
+      ? `${cleanBase}?client_version=0.162.1`
+      : `${cleanBase}/models?client_version=0.162.1`
+    headers = buildCodexRequestHeaders(apiKey, options?.accountId, { accept: 'application/json' })
+  } else if (authMode === 'oauth_xai' || host.includes('cli-chat-proxy.grok.com')) {
+    probeUrl = /\/v\d+(beta\d*)?$/i.test(cleanBase)
       ? `${cleanBase}/models`
-      : `${cleanBase}/v1beta/models`
-    headers['x-goog-api-key'] = apiKey
+      : `${cleanBase}/v1/models`
+    headers = buildXaiOAuthRequestHeaders(apiKey)
+  } else if (host.includes('generativelanguage.googleapis.com')) {
+    if (/\/models$/i.test(cleanBase)) {
+      probeUrl = cleanBase
+    } else if (/\/v1(beta|alpha)?$/i.test(cleanBase)) {
+      probeUrl = `${cleanBase}/models`
+    } else {
+      probeUrl = `${cleanBase}/v1beta/models`
+    }
+    if (/^ya29\./i.test(apiKey)) {
+      headers.Authorization = `Bearer ${apiKey}`
+    } else {
+      headers['x-goog-api-key'] = apiKey
+    }
   } else if (host.includes('wavespeed.ai')) {
     probeUrl = `${parsedUrl.origin}/api/v3/balance`
     headers.Authorization = `Bearer ${apiKey}`
@@ -747,25 +951,20 @@ async function probeSupplierApiKey(
         message: `连接成功 (HTTP ${resp.status})`,
       }
     }
-    if (resp.status === 401 || resp.status === 403) {
-      return {
-        ok: false,
-        status: resp.status,
-        latencyMs,
-        message: `鉴权失败：密钥无效或无权限 (HTTP ${resp.status})`,
-      }
-    }
+    const { detail, isInvalidKey } = await readUpstreamErrorDetail(resp)
+    const formatted = formatProbeFailureMessage(resp.status, detail, isInvalidKey)
     return {
       ok: false,
       status: resp.status,
       latencyMs,
-      message: `上游返回状态 HTTP ${resp.status}`,
+      message: formatted.message,
+      isAuthError: formatted.isAuthError,
     }
   } catch (err) {
     const latencyMs = Date.now() - started
     const message =
       err instanceof Error && err.name === 'TimeoutError'
-        ? '连接超时（>8s）'
+        ? '连接超时（>12s）'
         : err instanceof Error
           ? `网络不可达：${err.message}`
           : '连通测试失败'
@@ -774,25 +973,55 @@ async function probeSupplierApiKey(
 }
 
 function buildModelsQueryCandidates(
-  parsedUrl: URL
-): Array<{ url: string; style: 'gemini' | 'openai' }> {
+  parsedUrl: URL,
+  authMode: SupplierAuthMode = 'api_key'
+): Array<{ url: string; style: 'gemini' | 'openai' | 'codex' | 'xai_oauth' }> {
   const pathname = parsedUrl.pathname.replace(/\/+$/, '')
   const baseNoQuery = `${parsedUrl.origin}${pathname}`
   const search = parsedUrl.search || ''
   const host = parsedUrl.hostname.toLowerCase()
 
-  if (host.includes('generativelanguage.googleapis.com')) {
-    const url = /\/v\d+(beta\d*|alpha)?$/i.test(pathname)
+  if (authMode === 'oauth_openai_codex' || /chatgpt\.com$/i.test(host)) {
+    const modelsPath = /\/models$/i.test(pathname) ? baseNoQuery : `${baseNoQuery}/models`
+    const qs = search ? `${search}&client_version=0.162.1` : '?client_version=0.162.1'
+    return [{ url: `${modelsPath}${qs}`, style: 'codex' }]
+  }
+
+  if (authMode === 'oauth_xai' || host.includes('cli-chat-proxy.grok.com')) {
+    const url = /\/v\d+(beta\d*)?$/i.test(pathname)
       ? `${baseNoQuery}/models${search}`
-      : `${baseNoQuery}/v1beta/models${search}`
+      : `${baseNoQuery}/v1/models${search}`
+    return [{ url, style: 'xai_oauth' }]
+  }
+
+  if (host.includes('generativelanguage.googleapis.com')) {
+    const url = /\/models$/i.test(pathname)
+      ? `${baseNoQuery}${search}`
+      : /\/v\d+(beta\d*|alpha)?$/i.test(pathname)
+        ? `${baseNoQuery}/models${search}`
+        : `${baseNoQuery}/v1beta/models${search}`
     return [{ url, style: 'gemini' }]
+  }
+
+  if (isGoogleVertexHostname(host)) {
+    let url: string
+    if (/\/models$/i.test(pathname)) {
+      url = `${baseNoQuery}${search}`
+    } else if (/\/publishers\/[^/]+$/i.test(pathname)) {
+      url = `${baseNoQuery}/models${search}`
+    } else if (/^\/(v1|v1beta1|v1beta|v1alpha)(?:\/.*)?$/i.test(pathname)) {
+      url = `${baseNoQuery}/publishers/google/models${search}`
+    } else {
+      url = `${baseNoQuery}/v1/publishers/google/models${search}`
+    }
+    return [{ url, style: 'openai' }]
   }
 
   if (/\/models$/i.test(pathname)) {
     return [{ url: `${baseNoQuery}${search}`, style: 'openai' }]
   }
 
-  const candidates: Array<{ url: string; style: 'gemini' | 'openai' }> = [
+  const candidates: Array<{ url: string; style: 'gemini' | 'openai' | 'codex' | 'xai_oauth' }> = [
     { url: `${baseNoQuery}/models${search}`, style: 'openai' },
   ]
   if (!/\/v\d+(beta\d*|alpha)?$/i.test(pathname)) {
@@ -813,6 +1042,8 @@ function extractQueriedModelItems(items: unknown[]): SupplierQueriedModel[] {
       const obj = item as Record<string, unknown>
       if (typeof obj.id === 'string') {
         rawId = obj.id
+      } else if (typeof obj.slug === 'string') {
+        rawId = obj.slug
       } else if (typeof obj.name === 'string') {
         rawId = obj.name.replace(/^models\//i, '')
       }
@@ -848,7 +1079,8 @@ function parseQueriedModelsPayload(payload: unknown): SupplierQueriedModel[] | n
 async function querySupplierModelsEndpoint(
   parsedUrl: URL,
   apiKey: string,
-  env: Env
+  env: Env,
+  options?: { authMode?: SupplierAuthMode; accountId?: string }
 ): Promise<{
   ok: boolean
   status: number | null
@@ -857,7 +1089,19 @@ async function querySupplierModelsEndpoint(
   models: SupplierQueriedModel[]
   message: string
 }> {
-  const candidates = buildModelsQueryCandidates(parsedUrl)
+  if (isGoogleVertexHostname(parsedUrl.hostname) && !/^ya29\./i.test(apiKey)) {
+    return {
+      ok: false,
+      status: null,
+      latencyMs: 0,
+      endpointUrl: parsedUrl.toString(),
+      models: [],
+      message:
+        'Google Vertex AI Express 接口暂不支持通过 API Key 拉取全量模型目录，请直接使用下方「常用模型」或手动输入添加',
+    }
+  }
+
+  const candidates = buildModelsQueryCandidates(parsedUrl, options?.authMode || 'api_key')
   let lastFailure: {
     status: number | null
     latencyMs: number
@@ -868,9 +1112,15 @@ async function querySupplierModelsEndpoint(
   for (let i = 0; i < candidates.length; i += 1) {
     const candidate = candidates[i]
     const hasFallback = i < candidates.length - 1
-    const headers: Record<string, string> = { Accept: 'application/json' }
+    let headers: Record<string, string> = { Accept: 'application/json' }
     if (apiKey) {
-      if (candidate.style === 'gemini') {
+      if (candidate.style === 'codex') {
+        headers = buildCodexRequestHeaders(apiKey, options?.accountId, {
+          accept: 'application/json',
+        })
+      } else if (candidate.style === 'xai_oauth') {
+        headers = buildXaiOAuthRequestHeaders(apiKey)
+      } else if (candidate.style === 'gemini' && !/^ya29\./i.test(apiKey)) {
         headers['x-goog-api-key'] = apiKey
       } else {
         headers.Authorization = `Bearer ${apiKey}`
@@ -907,7 +1157,7 @@ async function querySupplierModelsEndpoint(
       if (!resp.ok) {
         let upstreamDetail = ''
         try {
-          const errText = await resp.text()
+          const errText = await readResponseTextWithLimit(resp, 256 * 1024)
           const errJson = JSON.parse(errText) as { error?: { message?: unknown }; message?: unknown }
           const rawMsg = errJson?.error?.message ?? errJson?.message
           if (typeof rawMsg === 'string' && rawMsg.trim()) {
@@ -926,7 +1176,7 @@ async function querySupplierModelsEndpoint(
         return { ...lastFailure, ok: false, models: [] }
       }
 
-      const rawText = await resp.text()
+      const rawText = await readResponseTextWithLimit(resp, 2 * 1024 * 1024)
       let parsedJson: unknown
       try {
         parsedJson = JSON.parse(rawText)
@@ -951,6 +1201,20 @@ async function querySupplierModelsEndpoint(
         }
         if (hasFallback) continue
         return { ...lastFailure, ok: false, models: [] }
+      }
+
+      if (candidate.style === 'xai_oauth') {
+        const seen = new Set(models.map((m) => m.id))
+        for (const imgModel of [
+          'grok-imagine-image-2.0',
+          'grok-imagine-image-quality',
+          'grok-imagine-image',
+        ]) {
+          if (!seen.has(imgModel)) {
+            models.push({ id: imgModel, ownedBy: 'xAI (生图)' })
+          }
+        }
+        models.sort((a, b) => a.id.localeCompare(b.id))
       }
 
       return {
@@ -999,19 +1263,26 @@ adminRoutes.post('/suppliers/query-models', async (c) => {
 
   const supplierId = typeof body.supplierId === 'string' ? body.supplierId.trim() : ''
   const existingSupplier = supplierId
-    ? await c.env.DB.prepare(`SELECT id, base_url, api_key_encrypted FROM suppliers WHERE id = ?`)
+    ? await c.env.DB.prepare(
+        `SELECT id, auth_mode, base_url, api_key_encrypted FROM suppliers WHERE id = ?`
+      )
         .bind(supplierId)
-        .first<{ id: string; base_url: string; api_key_encrypted: string }>()
+        .first<{ id: string; auth_mode?: string; base_url: string; api_key_encrypted: string }>()
     : null
 
   if (supplierId && !existingSupplier) {
     return c.json({ error: { message: '供应商不存在' } }, 404)
   }
 
+  const authMode = normalizeSupplierAuthMode(
+    body.authMode !== undefined ? body.authMode : existingSupplier?.auth_mode
+  )
+
   const rawBaseUrl =
     typeof body.baseUrl === 'string' && body.baseUrl.trim()
       ? body.baseUrl.trim().replace(/\/+$/, '')
-      : existingSupplier?.base_url?.trim().replace(/\/+$/, '') || ''
+      : existingSupplier?.base_url?.trim().replace(/\/+$/, '') ||
+        SUPPLIER_AUTH_MODE_META[authMode].defaultBaseUrl
 
   if (!/^https:\/\//i.test(rawBaseUrl)) {
     return c.json({ error: { message: '接口基础地址必须以 https:// 开头' } }, 400)
@@ -1028,28 +1299,58 @@ adminRoutes.post('/suppliers/query-models', async (c) => {
   }
 
   let apiKey = parseBatchApiKeysInput(body)[0]?.apiKey || ''
+  let accountId: string | undefined
   if (!apiKey && existingSupplier) {
     const keyRows = await c.env.DB.prepare(
-      `SELECT api_key_encrypted FROM supplier_keys
+      `SELECT id, credential_type, api_key_encrypted, oauth_account_id FROM supplier_keys
        WHERE supplier_id = ?
        ORDER BY enabled DESC, created_at ASC
        LIMIT 3`
     )
       .bind(existingSupplier.id)
-      .all<{ api_key_encrypted: string }>()
+      .all<{
+        id: string
+        credential_type?: string
+        api_key_encrypted: string
+        oauth_account_id?: string
+      }>()
     for (const row of keyRows.results || []) {
-      const plain = await resolveSupplierSecret(row.api_key_encrypted, c.env)
-      if (plain) {
-        apiKey = plain
+      const cred = await resolveSupplierKeyRuntimeCredential(c.env, {
+        id: row.id,
+        credentialType: row.credential_type,
+        apiKeyEncrypted: row.api_key_encrypted,
+        oauthAccountId: row.oauth_account_id,
+      })
+      if (cred) {
+        apiKey = cred.apiKey
+        accountId = cred.oauthAccountId
         break
       }
     }
     if (!apiKey && existingSupplier.api_key_encrypted) {
-      apiKey = await resolveSupplierSecret(existingSupplier.api_key_encrypted, c.env)
+      const cred = await resolveSupplierKeyRuntimeCredential(c.env, {
+        apiKeyEncrypted: existingSupplier.api_key_encrypted,
+      })
+      if (cred) {
+        apiKey = cred.apiKey
+        accountId = cred.oauthAccountId
+      }
     }
   }
 
-  const res = await querySupplierModelsEndpoint(parsedUrl, apiKey, c.env)
+  if (!apiKey && Array.isArray(body.oauthSessionIds)) {
+    for (const rawSid of body.oauthSessionIds) {
+      if (typeof rawSid !== 'string' || !rawSid.trim()) continue
+      const draftCred = await resolveDraftOAuthSessionCredential(c.env, rawSid.trim())
+      if (draftCred) {
+        apiKey = draftCred.apiKey
+        accountId = draftCred.accountId
+        break
+      }
+    }
+  }
+
+  const res = await querySupplierModelsEndpoint(parsedUrl, apiKey, c.env, { authMode, accountId })
   c.header('Cache-Control', 'no-store')
   return c.json(res)
 })
@@ -1069,16 +1370,26 @@ adminRoutes.post('/suppliers', async (c) => {
   }
 
   const name = typeof body.name === 'string' ? body.name.trim().slice(0, 60) : ''
-  const baseUrl = typeof body.baseUrl === 'string' ? body.baseUrl.trim().replace(/\/+$/, '') : ''
+  const authMode = normalizeSupplierAuthMode(body.authMode)
+  const rawBaseUrl = typeof body.baseUrl === 'string' ? body.baseUrl.trim().replace(/\/+$/, '') : ''
+  const baseUrl =
+    rawBaseUrl && rawBaseUrl !== 'https:' && rawBaseUrl !== 'https://'
+      ? rawBaseUrl
+      : SUPPLIER_AUTH_MODE_META[authMode].defaultBaseUrl
   const enabled = typeof body.enabled === 'boolean' ? (body.enabled ? 1 : 0) : 1
   const note = typeof body.note === 'string' ? body.note.trim().slice(0, 200) : ''
-  const modelsJson = JSON.stringify(normalizeSupplierModelIds(body.models))
-  const parsedKeys = parseBatchApiKeysInput(body)
+  const normalizedModels = normalizeSupplierModelIds(body.models)
+  const effectiveModels =
+    normalizedModels.length > 0
+      ? normalizedModels
+      : [...SUPPLIER_AUTH_MODE_META[authMode].defaultModels]
+  const modelsJson = JSON.stringify(effectiveModels)
+  const parsedKeys = authMode === 'api_key' ? parseBatchApiKeysInput(body) : []
 
   if (!name) {
     return c.json({ error: { message: '请填写供应商名称' } }, 400)
   }
-  if (!/^https:\/\//i.test(baseUrl)) {
+  if (!/^https:\/\/.+/i.test(baseUrl)) {
     return c.json({ error: { message: '接口基础地址必须以 https:// 开头' } }, 400)
   }
 
@@ -1092,10 +1403,10 @@ adminRoutes.post('/suppliers', async (c) => {
 
   await c.env.DB.prepare(
     `INSERT INTO suppliers (
-      id, name, base_url, api_key_encrypted, api_key_hint, models_json, enabled, note, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      id, name, auth_mode, base_url, api_key_encrypted, api_key_hint, models_json, enabled, note, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   )
-    .bind(supplierId, name, baseUrl, encrypted, hint, modelsJson, enabled, note, now, now)
+    .bind(supplierId, name, authMode, baseUrl, encrypted, hint, modelsJson, enabled, note, now, now)
     .run()
 
   let addedCount = 0
@@ -1104,6 +1415,18 @@ adminRoutes.post('/suppliers', async (c) => {
     const res = await insertSupplierKeysDedup(c.env, supplierId, parsedKeys)
     addedCount = res.addedCount
     skippedCount = res.skippedCount
+  }
+  if (isOAuthAuthMode(authMode) && Array.isArray(body.oauthSessionIds)) {
+    const sidList = body.oauthSessionIds.filter((s): s is string => typeof s === 'string')
+    if (sidList.length > 0) {
+      const claimed = await claimDraftOAuthSessionsForSupplier(
+        c.env,
+        supplierId,
+        authMode,
+        sidList
+      )
+      addedCount += claimed.claimedCount
+    }
   }
 
   const suppliers = await getSuppliers(c.env)
@@ -1131,6 +1454,10 @@ adminRoutes.put('/suppliers/:id', async (c) => {
     typeof body.name === 'string' && body.name.trim()
       ? body.name.trim().slice(0, 60)
       : existing.name
+  const authMode =
+    body.authMode !== undefined
+      ? normalizeSupplierAuthMode(body.authMode)
+      : normalizeSupplierAuthMode(existing.auth_mode)
   const baseUrl =
     typeof body.baseUrl === 'string' && body.baseUrl.trim()
       ? body.baseUrl.trim().replace(/\/+$/, '')
@@ -1148,10 +1475,10 @@ adminRoutes.put('/suppliers/:id', async (c) => {
 
   await c.env.DB.prepare(
     `UPDATE suppliers
-     SET name = ?, base_url = ?, models_json = ?, enabled = ?, note = ?, updated_at = ?
+     SET name = ?, auth_mode = ?, base_url = ?, models_json = ?, enabled = ?, note = ?, updated_at = ?
      WHERE id = ?`
   )
-    .bind(name, baseUrl, modelsJson, enabled, note, Date.now(), id)
+    .bind(name, authMode, baseUrl, modelsJson, enabled, note, Date.now(), id)
     .run()
 
   if (body.clearApiKey === true) {
@@ -1376,25 +1703,98 @@ adminRoutes.post('/suppliers/:id/test', async (c) => {
 
   const keyRows = keyRowsRes.results || []
 
+  const authMode = normalizeSupplierAuthMode(row.auth_mode)
+
+  let probeModels: string[] | undefined
+  if (authMode === 'api_key' && isGoogleVertexHostname(parsedUrl.hostname)) {
+    const presetModels = (() => {
+      try {
+        return normalizeSupplierModelIds(JSON.parse(row.models_json || '[]'))
+      } catch {
+        return []
+      }
+    })()
+    let linkedModels: string[] = []
+    let fallbackGeminiModels: string[] = []
+    try {
+      const linkedRes = await c.env.DB.prepare(
+        `SELECT CASE WHEN model = 'custom' AND custom_model != '' THEN custom_model ELSE model END AS effective_model
+         FROM provider_channels
+         WHERE supplier_id = ?
+         ORDER BY enabled DESC, priority DESC, created_at ASC
+         LIMIT 10`
+      )
+        .bind(id)
+        .all<{ effective_model: string }>()
+      linkedModels = (linkedRes.results || [])
+        .map((r) => (r.effective_model || '').trim())
+        .filter((m) => Boolean(m) && m !== 'custom')
+
+      if (linkedModels.length === 0 && presetModels.length === 0) {
+        const [platformCfg, globalGeminiRes] = await Promise.all([
+          getPlatformConfig(c.env.DB).catch(() => null),
+          c.env.DB.prepare(
+            `SELECT CASE WHEN model = 'custom' AND custom_model != '' THEN custom_model ELSE model END AS effective_model
+             FROM provider_channels
+             WHERE provider_id = 'gemini' AND enabled = 1
+             ORDER BY priority DESC, created_at ASC
+             LIMIT 8`
+          )
+            .all<{ effective_model: string }>()
+            .catch(() => ({ results: [] as { effective_model: string }[] })),
+        ])
+        const visionModel = platformCfg?.visionFallback?.model?.trim()
+        fallbackGeminiModels = [
+          ...(visionModel ? [visionModel] : []),
+          ...(globalGeminiRes.results || [])
+            .map((r) => (r.effective_model || '').trim())
+            .filter((m) => Boolean(m) && m !== 'custom'),
+        ]
+      }
+    } catch {
+      linkedModels = []
+      fallbackGeminiModels = []
+    }
+    probeModels = Array.from(new Set([...linkedModels, ...presetModels, ...fallbackGeminiModels]))
+  }
+
   if (keyRows.length === 0) {
     if (requestedKeyId) {
       return c.json({ error: { message: '指定的供应商密钥不存在' } }, 404)
     }
-    const legacyKey = row.api_key_encrypted
-      ? await resolveSupplierSecret(row.api_key_encrypted, c.env)
-      : ''
-    if (!legacyKey) {
-      return c.json({ error: { message: '该供应商尚未配置可用的 API 密钥' } }, 400)
+    const legacyCred = row.api_key_encrypted
+      ? await resolveSupplierKeyRuntimeCredential(c.env, { apiKeyEncrypted: row.api_key_encrypted })
+      : null
+    if (!legacyCred) {
+      return c.json(
+        {
+          error: {
+            message: isOAuthAuthMode(authMode)
+              ? '该供应商尚未完成 OAuth 订阅账号授权'
+              : '该供应商尚未配置可用的 API 密钥',
+          },
+        },
+        400
+      )
     }
-    const res = await probeSupplierApiKey(row.base_url, parsedUrl, legacyKey, c.env)
+    const res = await probeSupplierApiKey(row.base_url, parsedUrl, legacyCred.apiKey, c.env, {
+      authMode,
+      accountId: legacyCred.oauthAccountId,
+      probeModels,
+    })
     return c.json(res)
   }
 
   const probeTargets = keyRows.slice(0, 20)
   const results = await Promise.all(
     probeTargets.map(async (keyRow) => {
-      const plain = await resolveSupplierSecret(keyRow.api_key_encrypted, c.env)
-      if (!plain) {
+      const cred = await resolveSupplierKeyRuntimeCredential(c.env, {
+        id: keyRow.id,
+        credentialType: keyRow.credential_type,
+        apiKeyEncrypted: keyRow.api_key_encrypted,
+        oauthAccountId: keyRow.oauth_account_id,
+      })
+      if (!cred) {
         return {
           keyId: keyRow.id,
           label: keyRow.label || keyRow.api_key_hint,
@@ -1402,13 +1802,26 @@ adminRoutes.post('/suppliers/:id/test', async (c) => {
           ok: false,
           status: null as number | null,
           latencyMs: 0,
-          message: '密钥解密失败',
+          message:
+            keyRow.credential_type === 'oauth_token'
+              ? 'OAuth Token 解析或续期失败，请重新授权'
+              : '密钥解密失败',
         }
       }
-      const probe = await probeSupplierApiKey(row.base_url, parsedUrl, plain, c.env)
+      const probe = await probeSupplierApiKey(row.base_url, parsedUrl, cred.apiKey, c.env, {
+        authMode,
+        accountId: cred.oauthAccountId,
+        probeModels,
+      })
       if (probe.ok) {
         await markSupplierKeySuccess(c.env.DB, keyRow.id).catch(() => {})
-      } else if (probe.status === 401 || probe.status === 402 || probe.status === 403 || probe.status === 429) {
+      } else if (
+        probe.isAuthError ||
+        probe.status === 401 ||
+        probe.status === 402 ||
+        probe.status === 403 ||
+        probe.status === 429
+      ) {
         const cooldownMs = probe.status === 429 ? 60_000 : 10 * 60_000
         await markSupplierKeyCooldown(c.env.DB, keyRow.id, cooldownMs, probe.message).catch(() => {})
       }
@@ -1440,9 +1853,241 @@ adminRoutes.post('/suppliers/:id/test', async (c) => {
     ok: passCount > 0,
     status: results.find((r) => r.ok)?.status ?? results[0]?.status ?? null,
     latencyMs: avgLatency,
-    message: `批量测活完成：${passCount}/${results.length} 个密钥连通正常`,
+    message: `批量测活完成：${passCount}/${results.length} 个凭证连通正常`,
     results,
   })
+})
+
+async function resolveOAuthRouteTarget(
+  c: Context<AppEnv>,
+  supplierIdParam: string | null,
+  body: Record<string, unknown>
+): Promise<{ supplierId: string | null; authMode: OAuthProviderMode } | Response> {
+  const supplierId =
+    supplierIdParam ||
+    (typeof body.supplierId === 'string' && body.supplierId.trim() ? body.supplierId.trim() : null)
+
+  if (supplierId) {
+    const sup = await c.env.DB.prepare(`SELECT id, auth_mode FROM suppliers WHERE id = ? LIMIT 1`)
+      .bind(supplierId)
+      .first<{ id: string; auth_mode?: string }>()
+    if (!sup) {
+      return c.json({ error: { message: '供应商不存在' } }, 404)
+    }
+    const authMode = normalizeSupplierAuthMode(sup.auth_mode)
+    if (!isOAuthAuthMode(authMode)) {
+      return c.json({ error: { message: '当前供应商认证方式不是 OAuth 模式' } }, 400)
+    }
+    return { supplierId: sup.id, authMode }
+  }
+
+  const authMode = normalizeSupplierAuthMode(body.authMode)
+  if (!isOAuthAuthMode(authMode)) {
+    return c.json({ error: { message: '请先选择有效的 OAuth 认证方式' } }, 400)
+  }
+  return { supplierId: null, authMode }
+}
+
+async function handleOAuthDeviceStart(c: Context<AppEnv>, supplierIdParam: string | null) {
+  let body: Record<string, unknown> = {}
+  try {
+    body = (await c.req.json()) as Record<string, unknown>
+  } catch {
+    body = {}
+  }
+  const target = await resolveOAuthRouteTarget(c, supplierIdParam, body)
+  if (target instanceof Response) return target
+  const label = typeof body.label === 'string' ? body.label.trim() : ''
+
+  try {
+    const session = await startSupplierOAuthDeviceFlow(
+      c.env,
+      target.supplierId,
+      target.authMode,
+      label
+    )
+    c.header('Cache-Control', 'no-store')
+    return c.json(session)
+  } catch (err) {
+    return c.json(
+      { error: { message: err instanceof Error ? err.message : '发起设备码授权失败' } },
+      502
+    )
+  }
+}
+
+async function handleOAuthDevicePoll(c: Context<AppEnv>, supplierIdParam: string | null) {
+  let body: Record<string, unknown>
+  try {
+    body = (await c.req.json()) as Record<string, unknown>
+  } catch {
+    return c.json({ error: { message: '请求体格式错误' } }, 400)
+  }
+  const sessionId = typeof body.sessionId === 'string' ? body.sessionId.trim() : ''
+  if (!sessionId) {
+    return c.json({ error: { message: '缺少 sessionId 参数' } }, 400)
+  }
+  const supplierId =
+    supplierIdParam ||
+    (typeof body.supplierId === 'string' && body.supplierId.trim() ? body.supplierId.trim() : null)
+
+  try {
+    const outcome = await pollSupplierOAuthDeviceFlow(c.env, supplierId, sessionId)
+    if (outcome.status === 'completed' && supplierId) {
+      const suppliers = await getSuppliers(c.env)
+      c.header('Cache-Control', 'no-store')
+      return c.json({ ...outcome, suppliers })
+    }
+    c.header('Cache-Control', 'no-store')
+    return c.json(outcome)
+  } catch (err) {
+    return c.json(
+      { error: { message: err instanceof Error ? err.message : '轮询设备码授权状态失败' } },
+      400
+    )
+  }
+}
+
+async function handleOAuthPkceStart(c: Context<AppEnv>, supplierIdParam: string | null) {
+  let body: Record<string, unknown> = {}
+  try {
+    body = (await c.req.json()) as Record<string, unknown>
+  } catch {
+    body = {}
+  }
+  const target = await resolveOAuthRouteTarget(c, supplierIdParam, body)
+  if (target instanceof Response) return target
+  const label = typeof body.label === 'string' ? body.label.trim() : ''
+
+  const session = await startSupplierOAuthPkceFlow(c.env, target.supplierId, target.authMode, label)
+  c.header('Cache-Control', 'no-store')
+  return c.json(session)
+}
+
+async function handleOAuthPkceComplete(c: Context<AppEnv>, supplierIdParam: string | null) {
+  let body: Record<string, unknown>
+  try {
+    body = (await c.req.json()) as Record<string, unknown>
+  } catch {
+    return c.json({ error: { message: '请求体格式错误' } }, 400)
+  }
+  const sessionId = typeof body.sessionId === 'string' ? body.sessionId.trim() : ''
+  const callbackInput = typeof body.callbackInput === 'string' ? body.callbackInput.trim() : ''
+  if (!sessionId || !callbackInput) {
+    return c.json({ error: { message: '请提供 sessionId 与回调 URL / 授权码' } }, 400)
+  }
+  const supplierId =
+    supplierIdParam ||
+    (typeof body.supplierId === 'string' && body.supplierId.trim() ? body.supplierId.trim() : null)
+
+  try {
+    const saved = await completeSupplierOAuthPkceFlow(c.env, supplierId, sessionId, callbackInput)
+    if (supplierId) {
+      const suppliers = await getSuppliers(c.env)
+      c.header('Cache-Control', 'no-store')
+      return c.json({ ...saved, suppliers })
+    }
+    c.header('Cache-Control', 'no-store')
+    return c.json(saved)
+  } catch (err) {
+    return c.json(
+      { error: { message: err instanceof Error ? err.message : 'PKCE 授权兑换失败' } },
+      400
+    )
+  }
+}
+
+async function handleOAuthImport(c: Context<AppEnv>, supplierIdParam: string | null) {
+  let body: Record<string, unknown>
+  try {
+    body = (await c.req.json()) as Record<string, unknown>
+  } catch {
+    return c.json({ error: { message: '请求体格式错误' } }, 400)
+  }
+  const target = await resolveOAuthRouteTarget(c, supplierIdParam, body)
+  if (target instanceof Response) return target
+  const rawJson = typeof body.rawJson === 'string' ? body.rawJson : ''
+  const label = typeof body.label === 'string' ? body.label.trim() : ''
+  if (!rawJson.trim()) {
+    return c.json({ error: { message: '请粘贴 auth.json 内容' } }, 400)
+  }
+
+  try {
+    const saved = await importSupplierOAuthJson(
+      c.env,
+      target.supplierId,
+      target.authMode,
+      rawJson,
+      label
+    )
+    if (target.supplierId) {
+      const suppliers = await getSuppliers(c.env)
+      c.header('Cache-Control', 'no-store')
+      return c.json({ ...saved, suppliers }, 201)
+    }
+    c.header('Cache-Control', 'no-store')
+    return c.json(saved, 201)
+  } catch (err) {
+    return c.json(
+      { error: { message: err instanceof Error ? err.message : '导入 OAuth 凭证失败' } },
+      400
+    )
+  }
+}
+
+adminRoutes.post('/suppliers/oauth/device/start', (c) => handleOAuthDeviceStart(c, null))
+adminRoutes.post('/suppliers/oauth/device/poll', (c) => handleOAuthDevicePoll(c, null))
+adminRoutes.post('/suppliers/oauth/pkce/start', (c) => handleOAuthPkceStart(c, null))
+adminRoutes.post('/suppliers/oauth/pkce/complete', (c) => handleOAuthPkceComplete(c, null))
+adminRoutes.post('/suppliers/oauth/import', (c) => handleOAuthImport(c, null))
+
+adminRoutes.post('/suppliers/:id/oauth/device/start', (c) =>
+  handleOAuthDeviceStart(c, c.req.param('id'))
+)
+adminRoutes.post('/suppliers/:id/oauth/device/poll', (c) =>
+  handleOAuthDevicePoll(c, c.req.param('id'))
+)
+adminRoutes.post('/suppliers/:id/oauth/pkce/start', (c) =>
+  handleOAuthPkceStart(c, c.req.param('id'))
+)
+adminRoutes.post('/suppliers/:id/oauth/pkce/complete', (c) =>
+  handleOAuthPkceComplete(c, c.req.param('id'))
+)
+adminRoutes.post('/suppliers/:id/oauth/import', (c) =>
+  handleOAuthImport(c, c.req.param('id'))
+)
+
+adminRoutes.post('/suppliers/:id/keys/:keyId/refresh', async (c) => {
+  const supplierId = c.req.param('id')
+  const keyId = c.req.param('keyId')
+  const row = await c.env.DB.prepare(
+    `SELECT id, credential_type FROM supplier_keys WHERE id = ? AND supplier_id = ? LIMIT 1`
+  )
+    .bind(keyId, supplierId)
+    .first<{ id: string; credential_type?: string }>()
+  if (!row) {
+    return c.json({ error: { message: '凭证记录不存在' } }, 404)
+  }
+  if (row.credential_type !== 'oauth_token') {
+    return c.json({ error: { message: '仅 OAuth 订阅账号支持刷新 Token' } }, 400)
+  }
+
+  try {
+    const resolved = await resolveValidSupplierOAuthKey(c.env, keyId, true)
+    const suppliers = await getSuppliers(c.env)
+    c.header('Cache-Control', 'no-store')
+    return c.json({
+      ok: true,
+      expiresAt: resolved.expiresAt,
+      message: 'Token 已刷新并同步入库',
+      suppliers,
+    })
+  } catch (err) {
+    return c.json(
+      { error: { message: err instanceof Error ? err.message : 'Token 刷新失败' } },
+      400
+    )
+  }
 })
 
 // ---------------------------------------------------------------------------
@@ -2135,6 +2780,10 @@ adminRoutes.delete('/channels/:channelId', async (c) => {
 // ---------------------------------------------------------------------------
 
 adminRoutes.post('/style-preview', async (c) => {
+  const contentLength = Number(c.req.header('content-length') || 0)
+  if (Number.isFinite(contentLength) && contentLength > 5 * 1024 * 1024 + 256 * 1024) {
+    return c.json({ error: { message: '示意图大小超出 5MB 上限' } }, 413)
+  }
   let form: FormData
   try {
     form = await c.req.formData()
@@ -3209,6 +3858,23 @@ adminRoutes.post('/sync/mio', async (c) => {
     return c.json(status)
   } catch (err) {
     const message = err instanceof Error ? err.message : '同步上游档案失败'
+    return c.json({ error: { message } }, 502)
+  }
+})
+
+adminRoutes.get('/sync/outfit-db', async (c) => {
+  const status = await getOutfitDbSyncStatus(c.env.BUCKET)
+  c.header('Cache-Control', 'no-store')
+  return c.json(status)
+})
+
+adminRoutes.post('/sync/outfit-db', async (c) => {
+  try {
+    const status = await syncOutfitDbArchive(c.env, { throwOnError: true })
+    c.header('Cache-Control', 'no-store')
+    return c.json(status)
+  } catch (err) {
+    const message = err instanceof Error ? err.message : '同步上游服装档案失败'
     return c.json({ error: { message } }, 502)
   }
 })

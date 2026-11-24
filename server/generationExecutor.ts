@@ -1,5 +1,7 @@
 import {
+  JOB_HEARTBEAT_INTERVAL_MS,
   buildRecipePrompt,
+  buildTextToImagePrompt,
   formatUserFacingGenerationError,
   isChannelStitchedSingleMode,
   isNativeArtistChannel,
@@ -7,10 +9,12 @@ import {
   mergeNegativePrompts,
   mergeVisionFallbackConfig,
   normalizeStudioResolution,
+  resolveEffectiveProcessingTimeoutSec,
   resolveStyleInfo,
   type GenerationAttemptTrace,
   type GenerationAttemptTriggerType,
   type GenerationAuditTrace,
+  type GenerationAspectRatio,
   type GenerationHistoryItem,
   type GenerationLiveStage,
   type GenerationLiveState,
@@ -18,7 +22,7 @@ import {
   type ImageProviderId,
   type PlatformConfig,
   type RecipeState,
-  type StudioAspectRatio,
+  type StudioGenerationMode,
   type StudioResolution,
 } from '../shared/studio'
 import {
@@ -53,6 +57,9 @@ export interface QueuedJobPayload {
   requestOrigin: string
   stitchedR2Key?: string
   textFallbackOnly?: boolean
+  generationMode?: StudioGenerationMode
+  userPrompt?: string
+  remixGalleryItemId?: string
 }
 
 export interface PlannedGenerationStep {
@@ -230,10 +237,12 @@ export interface ExecuteGenerationJobParams {
   channels: RunnableChannel[]
   executionPlan: PlannedGenerationStep[]
   textFallbackOnly: boolean
+  generationMode?: StudioGenerationMode
+  remixGalleryItemId?: string
   recipe: RecipeState
   extractedSources: { refs: ResolvedSource[]; stitched?: ResolvedSource }
   stylePreset: string
-  aspectRatio: StudioAspectRatio
+  aspectRatio: GenerationAspectRatio
   stitchedR2Key?: string
   requestOrigin: string
   platform: PlatformConfig
@@ -264,6 +273,8 @@ export async function executeGenerationJob(
     channels,
     executionPlan,
     textFallbackOnly,
+    generationMode = 'recipe',
+    remixGalleryItemId,
     recipe,
     extractedSources,
     stylePreset,
@@ -281,8 +292,22 @@ export async function executeGenerationJob(
 
   const visionCfg = mergeVisionFallbackConfig(platform.visionFallback)
   const queueCfg = mergeGenerationQueueConfig(platform.queueConfig)
-  const retryCutoffMs = Math.max(30_000, queueCfg.processingTimeoutSec * 1000 - 50_000)
   const primaryChannel = channels[0]
+  let primaryEndpointMode: string | null = null
+  try {
+    const parsedParams = JSON.parse(primaryChannel.paramsJson) as { endpointMode?: unknown }
+    if (typeof parsedParams?.endpointMode === 'string' && parsedParams.endpointMode.trim()) {
+      primaryEndpointMode = parsedParams.endpointMode.trim()
+    }
+  } catch {
+    primaryEndpointMode = null
+  }
+  const effectiveTimeoutSec = resolveEffectiveProcessingTimeoutSec(
+    queueCfg,
+    provider,
+    primaryEndpointMode
+  )
+  const retryCutoffMs = Math.max(30_000, effectiveTimeoutSec * 1000 - 50_000)
   auditTrace.startedAt = startedAt
   let lastAttemptedChannel: RunnableChannel = primaryChannel
   const totalPlanned = executionPlan.length
@@ -298,6 +323,20 @@ export async function executeGenerationJob(
     }
   }
 
+  let jobFinished = false
+  let heartbeatInFlight = false
+  const heartbeatTimer = setInterval(() => {
+    if (jobFinished || heartbeatInFlight || !auditTrace.liveState) return
+    heartbeatInFlight = true
+    auditTrace.liveState = {
+      ...auditTrace.liveState,
+      heartbeatAt: Date.now(),
+    }
+    void updateJobTrace(env.DB, jobId, JSON.stringify(auditTrace)).finally(() => {
+      heartbeatInFlight = false
+    })
+  }, JOB_HEARTBEAT_INTERVAL_MS)
+
   const publishProgress = async (
     stage: GenerationLiveStage,
     message: string,
@@ -309,13 +348,15 @@ export async function executeGenerationJob(
       persist?: boolean
     }
   ) => {
+    const now = Date.now()
     const nextLive: GenerationLiveState = {
       stage,
       message,
       attempt: opts?.attempt ?? auditTrace.liveState?.attempt ?? 1,
       totalAttempts: opts?.totalAttempts ?? totalPlanned,
       startedAt,
-      stageStartedAt: Date.now(),
+      stageStartedAt: now,
+      heartbeatAt: now,
       percent,
     }
     auditTrace.liveState = nextLive
@@ -381,7 +422,7 @@ export async function executeGenerationJob(
       return `第 ${idx} 次请求失败，延迟 ${(step.delayMs / 1000).toFixed(1)}s 后进行第 ${idx + 1} 次自动重试`
     }
 
-    const recordStepFailure = async (err: unknown, targetChannel: RunnableChannel, idx: number) => {
+    const recordStepFailure = async (err: unknown, targetChannel: RunnableChannel) => {
       const msg = err instanceof Error ? err.message : '未知错误'
       const { isKeyError, cooldownMs } = classifyKeyLevelError(err)
       if (isKeyError && targetChannel.supplierKeyId) {
@@ -399,16 +440,10 @@ export async function executeGenerationJob(
         return { shouldBreak: distinctChannelCount === 1 }
       }
       if (err instanceof UpstreamError && !err.retryable) {
-        const keepSecondTryForNativeSafety =
-          isNativeArtistChannel(targetChannel) &&
-          distinctChannelCount === 1 &&
-          idx === 0 &&
-          err.status !== 402 &&
-          err.status !== 403
-        if (!keepSecondTryForNativeSafety) {
-          channelConfigFailed.add(targetChannel.channelId)
-          return { shouldBreak: distinctChannelCount === 1 }
-        }
+        // 明确不可重试错误（含安全审核拦截 moderation_blocked / 4xx 参数或权限错误）直接跳过当前渠道，
+        // 避免同渠道换 Key 重复撞墙白耗 25~60 秒；若配置了其他备用供应商渠道仍会自动故障转移。
+        channelConfigFailed.add(targetChannel.channelId)
+        return { shouldBreak: distinctChannelCount === 1 }
       }
       if (distinctChannelCount > 1) {
         // 多不同供应商渠道存在时，站点级 5xx/超时 直接跳至下一家供应商，避免连撞同一站点其余密钥
@@ -699,7 +734,7 @@ export async function executeGenerationJob(
             }
             await updateJobTrace(env.DB, jobId, JSON.stringify(auditTrace))
 
-            const { shouldBreak } = await recordStepFailure(fallbackErr, targetChannel, idx)
+            const { shouldBreak } = await recordStepFailure(fallbackErr, targetChannel)
             if (shouldBreak) break
           }
         }
@@ -744,14 +779,20 @@ export async function executeGenerationJob(
         const triggerReason = describeFailoverReason(idx, step, targetChannel)
 
         try {
+          const allowZeroImages =
+            generationMode === 'prompt' && extractedSources.refs.length === 0
           if (idx === 0) {
-            await publishProgress('resolving_refs', '正在准备参考素材…', 24, { attempt: 1 })
+            await publishProgress(
+              'resolving_refs',
+              allowZeroImages ? '正在准备提示词与画布…' : '正在准备参考素材…',
+              24,
+              { attempt: 1 }
+            )
           }
 
-          const targetUsesStitchedSingle = isChannelStitchedSingleMode(
-            targetChannel,
-            extractedSources.refs.length
-          )
+          const targetUsesStitchedSingle =
+            !allowZeroImages &&
+            isChannelStitchedSingleMode(targetChannel, extractedSources.refs.length)
           const attemptPrompt = targetUsesStitchedSingle ? stitchedSinglePrompt : multiPrompt
 
           if (targetChannel.supplierKeyId) {
@@ -769,8 +810,11 @@ export async function executeGenerationJob(
             imagePassMode: platform.imagePassMode,
             requestOrigin,
             stitchedR2Key:
-              platform.sendStitchedSheet || targetUsesStitchedSingle ? stitchedR2Key : undefined,
-            includeStitchedWithMulti: platform.sendStitchedSheet,
+              !allowZeroImages && (platform.sendStitchedSheet || targetUsesStitchedSingle)
+                ? stitchedR2Key
+                : undefined,
+            includeStitchedWithMulti: !allowZeroImages && platform.sendStitchedSheet,
+            allowZeroImages,
             traceContext: {
               nextAttemptIndex: () => auditTrace.attempts.length + 1,
               triggerType: step.triggerType,
@@ -815,7 +859,7 @@ export async function executeGenerationJob(
           )
           await updateJobTrace(env.DB, jobId, JSON.stringify(auditTrace))
 
-          const { shouldBreak } = await recordStepFailure(err, targetChannel, idx)
+          const { shouldBreak } = await recordStepFailure(err, targetChannel)
           if (shouldBreak) break
         }
       }
@@ -846,6 +890,8 @@ export async function executeGenerationJob(
     })
 
     const finishedAt = Date.now()
+    const winningAttempt = auditTrace.attempts[auditTrace.attempts.length - 1]
+    const winningModel = winningAttempt?.model || winningChannel.model
     auditTrace.finishedAt = finishedAt
     auditTrace.totalDurationMs = Math.max(0, finishedAt - startedAt)
     auditTrace.finalError = null
@@ -854,13 +900,13 @@ export async function executeGenerationJob(
       r2Key,
       mime: output.mime,
       bytes: output.bytes.byteLength,
-      winningAttemptIndex: auditTrace.attempts[auditTrace.attempts.length - 1]?.attemptIndex ?? 1,
+      winningAttemptIndex: winningAttempt?.attemptIndex ?? 1,
       winningChannelId: winningChannel.channelId,
       winningChannelName: winningChannel.channelName,
       winningSupplierName: winningChannel.supplierName,
       ...(winningChannel.supplierKeyHint ? { winningSupplierKeyHint: winningChannel.supplierKeyHint } : {}),
       ...(winningChannel.supplierKeyLabel ? { winningSupplierKeyLabel: winningChannel.supplierKeyLabel } : {}),
-      winningModel: winningChannel.model,
+      winningModel,
     }
 
     const updatedRow = await markJobSucceeded(env.DB, {
@@ -868,7 +914,7 @@ export async function executeGenerationJob(
       resultR2Key: r2Key,
       resultMime: output.mime,
       resultBytes: output.bytes.byteLength,
-      model: winningChannel.model,
+      model: winningModel,
       channelId: winningChannel.channelId,
       channelName: winningChannel.channelName,
       supplierId: winningChannel.supplierId,
@@ -879,6 +925,15 @@ export async function executeGenerationJob(
     if (!updatedRow) {
       await env.BUCKET.delete(r2Key).catch(() => {})
       throw new Error('任务超时或已被取消，系统已自动退还积分，请重新发起生成')
+    }
+
+    if (remixGalleryItemId) {
+      await env.DB.prepare(
+        `UPDATE gallery_items SET remix_count = remix_count + 1, updated_at = ? WHERE id = ? AND status = 'published'`
+      )
+        .bind(Date.now(), remixGalleryItemId)
+        .run()
+        .catch(() => {})
     }
 
     const mapped = mapJobRow(updatedRow)
@@ -914,6 +969,9 @@ export async function executeGenerationJob(
       jobId,
     })
     return { status: 'failed', errorMessage: rawMessage }
+  } finally {
+    jobFinished = true
+    clearInterval(heartbeatTimer)
   }
 }
 
@@ -969,6 +1027,13 @@ export async function executeQueuedJobById(env: Env, jobId: string): Promise<voi
     return
   }
 
+  const generationMode: StudioGenerationMode =
+    queuePayload.generationMode === 'prompt' || snapshot.generationMode === 'prompt'
+      ? 'prompt'
+      : 'recipe'
+  const userPrompt = (queuePayload.userPrompt ?? snapshot.userPrompt ?? '').trim()
+  const remixGalleryItemId = queuePayload.remixGalleryItemId ?? snapshot.remixGalleryItemId
+
   let extractedSources: { refs: ResolvedSource[]; stitched?: ResolvedSource }
   try {
     extractedSources = extractRecipeSources(
@@ -976,8 +1041,11 @@ export async function executeQueuedJobById(env: Env, jobId: string): Promise<voi
       job.user_id,
       queuePayload.stitchedR2Key
     )
-    if (extractedSources.refs.length === 0) {
+    if (generationMode === 'recipe' && extractedSources.refs.length === 0) {
       throw new Error('缺少参考图')
+    }
+    if (generationMode === 'prompt' && !userPrompt) {
+      throw new Error('缺少文生图提示词')
     }
   } catch (err) {
     await refundFailedJob(
@@ -988,7 +1056,9 @@ export async function executeQueuedJobById(env: Env, jobId: string): Promise<voi
     return
   }
 
-  const textFallbackOnly = queuePayload.textFallbackOnly === true || snapshot.textFallbackOnly === true
+  const textFallbackOnly =
+    generationMode === 'recipe' &&
+    (queuePayload.textFallbackOnly === true || snapshot.textFallbackOnly === true)
   let effectiveChannels = channels
   if (textFallbackOnly) {
     const visionCfg = mergeVisionFallbackConfig(platform.visionFallback)
@@ -1018,18 +1088,45 @@ export async function executeQueuedJobById(env: Env, jobId: string): Promise<voi
       : resolvedStyleInfo.poseMode === 'adaptive'
   const sceneNote = snapshot.sceneNote || ''
 
-  const { promptBuildOptions, multiPrompt, stitchedSinglePrompt } =
-    buildGenerationPromptVariants({
-      platform,
-      recipe: snapshot.recipe,
-      stylePreset: job.style_preset,
-      sceneNote,
-      allowFaceStyleShift,
-      allowPoseStyleShift,
-      primaryUsesStitchedSingle,
-      hasStitchedSheet: Boolean(extractedSources.stitched),
-      refCount: extractedSources.refs.length,
-    })
+  const promptVariants =
+    generationMode === 'prompt'
+      ? (() => {
+          const t2iPrompt = buildTextToImagePrompt(userPrompt, job.style_preset, {
+            stylePresets: platform.stylePresets,
+            styleCategories: platform.styleCategories,
+            styleSubcategories: platform.styleSubcategories,
+            hasReferenceImages: extractedSources.refs.length > 0,
+          })
+          return {
+            promptBuildOptions: {
+              prefix: '',
+              suffix: '',
+              negativePrompt: '',
+              promptTemplate: platform.promptTemplate,
+              poseSanitize: platform.poseSanitize,
+              sceneNote: '',
+              allowFaceStyleShift: false,
+              allowPoseStyleShift: false,
+              stylePresets: platform.stylePresets,
+              styleCategories: platform.styleCategories,
+              styleSubcategories: platform.styleSubcategories,
+            },
+            multiPrompt: t2iPrompt,
+            stitchedSinglePrompt: t2iPrompt,
+          }
+        })()
+      : buildGenerationPromptVariants({
+          platform,
+          recipe: snapshot.recipe,
+          stylePreset: job.style_preset,
+          sceneNote,
+          allowFaceStyleShift,
+          allowPoseStyleShift,
+          primaryUsesStitchedSingle,
+          hasStitchedSheet: Boolean(extractedSources.stitched),
+          refCount: extractedSources.refs.length,
+        })
+  const { promptBuildOptions, multiPrompt, stitchedSinglePrompt } = promptVariants
 
   const startedAt = job.started_at ?? Date.now()
   let auditTrace: GenerationAuditTrace | null = null
@@ -1108,10 +1205,12 @@ export async function executeQueuedJobById(env: Env, jobId: string): Promise<voi
     channels: effectiveChannels,
     executionPlan,
     textFallbackOnly,
+    generationMode,
+    remixGalleryItemId,
     recipe: snapshot.recipe,
     extractedSources,
     stylePreset: job.style_preset,
-    aspectRatio: (job.aspect_ratio as StudioAspectRatio) || '3:4',
+    aspectRatio: (job.aspect_ratio as GenerationAspectRatio) || (generationMode === 'prompt' ? 'auto' : '3:4'),
     stitchedR2Key: queuePayload.stitchedR2Key,
     requestOrigin: queuePayload.requestOrigin || '',
     platform,

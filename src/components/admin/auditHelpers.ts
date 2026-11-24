@@ -11,6 +11,7 @@ export type AdminTab =
   | 'overview'
   | 'users'
   | 'redeem'
+  | 'gallery'
   | 'suppliers'
   | 'api'
   | 'jobs'
@@ -25,6 +26,7 @@ export const ADMIN_TABS: readonly AdminTab[] = [
   'overview',
   'users',
   'redeem',
+  'gallery',
   'suppliers',
   'api',
   'jobs',
@@ -62,22 +64,24 @@ export const ADMIN_TEXT_INPUT_CLS = 'h-8 rounded-none text-xs'
 export const ADMIN_SELECT_CLS = 'h-8 rounded-none text-xs'
 export const ADMIN_BTN_CLS = 'h-8 rounded-none text-xs'
 export const ADMIN_BTN_SM_CLS = 'h-7 rounded-none text-xs'
-export const ADMIN_DIALOG_CLS = 'rounded-none border-zinc-950 dark:border-zinc-200'
+export const ADMIN_DIALOG_CLS =
+  'grid-cols-[minmax(0,1fr)] rounded-none border-zinc-950 dark:border-zinc-200'
 
 export function getAdminNavItems(): AdminNavItemMeta[] {
   return [
     { id: 'overview', code: '00', label: '系统总览', group: 'operations' },
     { id: 'users', code: '01', label: '成员与积分', group: 'operations' },
     { id: 'redeem', code: '02', label: '兑换码卡密', group: 'operations' },
-    { id: 'suppliers', code: '03', label: '供应商凭证', group: 'models' },
-    { id: 'api', code: '04', label: '画笔档位与路由', group: 'models' },
-    { id: 'styles', code: '05', label: '画风图鉴管理', group: 'policy' },
-    { id: 'access', code: '06', label: '准入与全局配置', group: 'policy' },
-    { id: 'prompts', code: '07', label: '提示词模板', group: 'policy' },
-    { id: 'sanitize', code: '08', label: '姿势敏感词屏蔽', group: 'policy' },
-    { id: 'descriptions', code: '09', label: '图转文描述库', group: 'policy' },
-    { id: 'jobs', code: '10', label: '生成记录审计', group: 'audit' },
-    { id: 'queue', code: '11', label: '任务队列与并发', group: 'audit' },
+    { id: 'gallery', code: '03', label: '画廊审核与导入', group: 'operations' },
+    { id: 'suppliers', code: '04', label: '供应商凭证', group: 'models' },
+    { id: 'api', code: '05', label: '画笔档位与路由', group: 'models' },
+    { id: 'styles', code: '06', label: '画风图鉴管理', group: 'policy' },
+    { id: 'access', code: '07', label: '准入与全局配置', group: 'policy' },
+    { id: 'prompts', code: '08', label: '提示词模板', group: 'policy' },
+    { id: 'sanitize', code: '09', label: '姿势敏感词屏蔽', group: 'policy' },
+    { id: 'descriptions', code: '10', label: '图转文描述库', group: 'policy' },
+    { id: 'jobs', code: '11', label: '生成记录审计', group: 'audit' },
+    { id: 'queue', code: '12', label: '任务队列与并发', group: 'audit' },
   ]
 }
 

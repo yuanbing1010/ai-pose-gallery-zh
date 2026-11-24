@@ -35,6 +35,8 @@ ssh -i C:\Users\xinxin\.ssh\oci_vps -o ConnectTimeout=8 oci-vps-2026@34.84.121.1
 
 ## 2. 已部署服务与域名信息
 
+### 2.1 `muse2api`（Muse 生图网关）
+
 | 项目 | 说明 |
 | --- | --- |
 | 服务名称 | `muse2api`（基于 `czg86389-hub/muse2api`） |
@@ -46,6 +48,25 @@ ssh -i C:\Users\xinxin\.ssh\oci_vps -o ConnectTimeout=8 oci-vps-2026@34.84.121.1
 | DNS 解析 | Cloudflare `A` 记录：`muse.geminirun.com` → `34.84.121.143`（`proxied: false`，灰度仅 DNS 直连） |
 | 反向代理与证书 | `/etc/nginx/sites-available/muse.geminirun.com`（软链至 `sites-enabled`）+ Let's Encrypt Certbot HTTPS |
 | 管理面板 | `https://muse.geminirun.com/admin`（使用 `muse2api` 访问密钥登录，查看账号 Cookie 保活状态与队列任务） |
+
+### 2.2 `colab-gpu-studio`（Colab GPU ComfyUI 控制台）
+
+| 项目 | 说明 |
+| --- | --- |
+| 服务名称 | `colab-gpu-studio`（基于 `TizenryA/colab-gpu-studio` `v0.3.1`） |
+| 部署目录 | `/opt/colab-gpu-studio`（`docker-compose.yml` + `.env`） |
+| 持久化数据卷 | Docker 命名卷 `colab-gpu-studio_studio-data`（挂载到容器 `/data`，含 SQLite `studio.db`，**切勿执行 `docker compose down -v`**） |
+| Docker 容器 | `colab-gpu-studio-api-1`（监听 `127.0.0.1:8788->8788/tcp`）、`colab-gpu-studio-worker-1`、`colab-gpu-studio-watchdog-1` |
+| 预定域名 | `https://colab.geminirun.com`（Cloudflare `A` 记录 `proxied: false`，Nginx 反代 `/etc/nginx/sites-available/colab.geminirun.com` + Let's Encrypt Certbot HTTPS 已启用） |
+| 登录与密钥来源 | 登录密码（`STUDIO_PASSWORD`）与加密密钥（`ENCRYPTION_KEY`、`SESSION_SECRET`）保存在 VPS `/opt/colab-gpu-studio/.env`；已配置 `GPU_REAL_ENABLED=1`、`GPU_STORAGE=drive` 与预算保护配额（见 `.env`） |
+
+### 2.3 `dreamina-bridge`（即梦桥接）
+
+| 项目 | 说明 |
+| --- | --- |
+| 部署目录 | `/opt/dreamina-bridge` |
+| Docker 容器 | `dreamina-bridge`（监听 `127.0.0.1:8790->8790/tcp`） |
+| 反向代理与域名 | `/etc/nginx/sites-available/dreamina.geminirun.com`（`https://dreamina.geminirun.com`） |
 
 ### 与本站 (`ai-pose-gallery-zh`) 的对接位置
 
@@ -86,4 +107,11 @@ sudo certbot certificates
 cd /opt/muse2api
 git pull
 sudo docker compose up -d --build
+
+# 6. colab-gpu-studio 常用运维（日志 / 重启 / 更新，切勿带 -v 删除数据卷）
+cd /opt/colab-gpu-studio
+sudo docker compose ps
+sudo docker compose logs --tail=100 -f api worker watchdog
+sudo docker compose restart
+curl -fsS http://127.0.0.1:8788/api/health
 ```

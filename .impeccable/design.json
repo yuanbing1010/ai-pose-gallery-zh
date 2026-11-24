@@ -1,0 +1,157 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-24T08:21:00Z",
+  "title": "Design System: CASTDECK",
+  "extensions": {
+    "colorMeta": {
+      "vermilion-seal": {
+        "role": "primary",
+        "displayName": "Vermilion Seal（朱砂印章红）",
+        "canonical": "oklch(0.54 0.19 34)",
+        "tonalRamp": ["#450c04", "#6e160a", "#992111", "#c42f16", "#d9381e", "#ef5a40", "#ff8a75", "#ffd6ce"]
+      },
+      "vermilion-aa": {
+        "role": "primary",
+        "displayName": "Vermilion AA Lacquer（深朱砂漆面）",
+        "canonical": "#c42f16",
+        "tonalRamp": ["#3f0a03", "#671408", "#8f1e0e", "#aa2510", "#c42f16", "#d94b33", "#f08572", "#fbd6cf"]
+      },
+      "kinpaku-gold": {
+        "role": "secondary",
+        "displayName": "Kinpaku Gold（金箔琥珀）",
+        "canonical": "oklch(0.83 0.17 82)",
+        "tonalRamp": ["#3d2800", "#614100", "#855b00", "#b27d08", "#e5a918", "#f5c443", "#fae08c", "#fdf4d5"]
+      },
+      "patina-jade": {
+        "role": "tertiary",
+        "displayName": "Patina Jade（青铜松石）",
+        "canonical": "oklch(0.50 0.11 188)",
+        "tonalRamp": ["#072926", "#0d443f", "#13635c", "#19857b", "#2ba398", "#4dc4b8", "#8fe0d7", "#d9f5f2"]
+      },
+      "paper-canvas": {
+        "role": "neutral",
+        "displayName": "Paper Canvas（和纸画布）",
+        "canonical": "#f7f6f2",
+        "tonalRamp": ["#121110", "#292622", "#52525b", "#8a857c", "#cfc9bc", "#eae7df", "#efece5", "#f7f6f2"]
+      },
+      "obsidian-canvas": {
+        "role": "neutral",
+        "displayName": "Obsidian Studio（暖黑暗房）",
+        "canonical": "#121110",
+        "tonalRamp": ["#0a0a09", "#121110", "#161513", "#1d1c19", "#2a2824", "#545049", "#a6a199", "#fafafa"]
+      }
+    },
+    "typographyMeta": {
+      "display-hero": { "displayName": "Display Hero", "purpose": "首页首屏 48px 主视觉大标（1.08 紧行高，-0.03em 紧字距，严禁中文伪斜体）。" },
+      "display": { "displayName": "Display", "purpose": "页面首屏双色调分裂展示标题（-0.03em 紧字距，严禁中文伪斜体）。" },
+      "headline": { "displayName": "Headline", "purpose": "区块标题与工作台主面板标头。" },
+      "title": { "displayName": "Title", "purpose": "图库卡片单行基线标题与弹窗标题。" },
+      "body": { "displayName": "Body", "purpose": "正文说明与表单内容（触屏输入域强制 ≥ 16px）。" },
+      "label": { "displayName": "Editorial Mono Label", "purpose": "档案眉标、筛选计数、画幅与积分等宽数字（不低于 12px，tabular-nums）。" },
+      "editorial-watermark": { "displayName": "Archival Serif Watermark", "purpose": "仅用于非交互大号期号水印与印章正体装饰字（禁 italic）。" }
+    },
+    "shadows": [
+      { "name": "ks-obsidian-stage", "value": "inset 0 1px 0 rgba(255, 244, 220, 0.1), 0 18px 46px rgba(15, 13, 10, 0.22)", "purpose": "嵌入式黑曜石暗房舞台与光学取景器。" },
+      { "name": "skin-accent-btn", "value": "inset 0 1px 0 rgba(255, 232, 210, 0.32), inset 0 -1px 0 rgba(68, 10, 4, 0.38), 0 6px 16px rgba(15, 12, 8, 0.22)", "purpose": "单页唯一朱砂印章漆面主行动按钮。" },
+      { "name": "ed-mat", "value": "inset 0 1px 0 rgba(255, 255, 255, 0.7), 0 4px 14px rgba(20, 18, 14, 0.05)", "purpose": "博物馆和纸装裱画垫。" },
+      { "name": "ks-paper-keycap", "value": "inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 1px 2px rgba(20, 20, 18, 0.1), 0 3px 6px rgba(20, 20, 18, 0.05)", "purpose": "实体键帽微拟物控件。" },
+      { "name": "md-glass", "value": "0 16px 42px rgba(10, 10, 10, 0.12), inset 0 0 0 1px rgba(10, 10, 10, 0.08)", "purpose": "悬浮磨砂配方坞与卡片操作浮层。" }
+    ],
+    "motion": [
+      { "name": "ease-out", "value": "cubic-bezier(0.23, 1, 0.32, 1)", "purpose": "全站标准 UI 入场、按键微缩与弹层缓动（时长 125–250ms）。" },
+      { "name": "ease-in-out", "value": "cubic-bezier(0.77, 0, 0.175, 1)", "purpose": "屏内元素位移与形态平滑过渡。" },
+      { "name": "ease-drawer", "value": "cubic-bezier(0.32, 0.72, 0, 1)", "purpose": "抽屉、底部工作表与拉帘平滑曲线。" }
+    ],
+    "breakpoints": [
+      { "name": "sm", "value": "640px" },
+      { "name": "md", "value": "768px" },
+      { "name": "lg", "value": "1024px" },
+      { "name": "xl", "value": "1280px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Vermilion Primary CTA",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "单页唯一朱砂印章漆面主行动胶囊，内嵌圆形箭头徽章，按下 150ms 微缩。",
+      "html": "<button class=\"ds-btn-vermilion\"><span>立即生成角色图 · 消耗 1 积分</span><span class=\"ds-btn-arrow\"><svg width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M5 12h14\"/><path d=\"m12 5 7 7-7 7\"/></svg></span></button>",
+      "css": ".ds-btn-vermilion { display: inline-flex; align-items: center; gap: 10px; height: 42px; padding: 0 8px 0 18px; border: 0; border-radius: 9999px; background: linear-gradient(180deg, #d1351b 0%, #c42f16 52%, #aa2510 100%); color: #ffffff; font-size: 14px; font-weight: 600; cursor: pointer; box-shadow: inset 0 1px 0 rgba(255,232,210,0.32), inset 0 -1px 0 rgba(68,10,4,0.38), 0 6px 16px rgba(15,12,8,0.22); transition: transform 150ms cubic-bezier(0.23,1,0.32,1), background-color 150ms ease; } .ds-btn-vermilion:active { transform: scale(0.97); } .ds-btn-vermilion:focus-visible { outline: 2px solid rgba(10,10,10,0.35); outline-offset: 2px; } .ds-btn-arrow { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 9999px; background: rgba(255,255,255,0.18); transition: transform 180ms cubic-bezier(0.23,1,0.32,1); } @media (hover: hover) and (pointer: fine) { .ds-btn-vermilion:hover .ds-btn-arrow { transform: translateX(2px); } }"
+    },
+    {
+      "name": "Ink Button",
+      "kind": "button",
+      "refersTo": "button-ink",
+      "description": "标准深墨黑次级操作按钮，12px 圆角与平滑按压缩放。",
+      "html": "<button class=\"ds-btn-ink\">应用筛选</button>",
+      "css": ".ds-btn-ink { display: inline-flex; align-items: center; justify-content: center; height: 34px; padding: 0 14px; border: 0; border-radius: 10px; background: #0a0a0a; color: #ffffff; font-size: 13px; font-weight: 500; cursor: pointer; transition: transform 150ms cubic-bezier(0.23,1,0.32,1), opacity 150ms ease; } .ds-btn-ink:active { transform: scale(0.97); } .ds-btn-ink:focus-visible { outline: 2px solid rgba(10,10,10,0.35); outline-offset: 2px; } @media (hover: hover) and (pointer: fine) { .ds-btn-ink:hover { opacity: 0.85; } }"
+    },
+    {
+      "name": "Editorial Filter Chip",
+      "kind": "chip",
+      "refersTo": "button-secondary",
+      "description": "横向渐隐筛选条内联等宽计数胶囊，选中态配朱砂微点。",
+      "html": "<button class=\"ds-chip ds-chip-active\"><span class=\"ds-chip-dot\"></span><span>全部姿势</span><span class=\"ds-chip-count\">1,439</span></button>",
+      "css": ".ds-chip { display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 12px; border-radius: 9999px; border: 1px solid rgba(20,18,14,0.12); background: #ffffff; color: #0a0a0a; font-size: 13px; font-weight: 500; cursor: pointer; transition: transform 150ms cubic-bezier(0.23,1,0.32,1), border-color 150ms ease; } .ds-chip:active { transform: scale(0.97); } .ds-chip-dot { width: 6px; height: 6px; border-radius: 9999px; background: #d9381e; } .ds-chip-count { font-family: var(--font-mono, monospace); font-size: 12px; font-variant-numeric: tabular-nums; color: #52525b; }"
+    },
+    {
+      "name": "Museum Mat Card",
+      "kind": "card",
+      "refersTo": "card-mat",
+      "description": "博物馆和纸装裱画框卡片，静息态仅保留单行基线标题与单维数据。",
+      "html": "<article class=\"ds-mat-card\"><div class=\"ds-mat-frame\"></div><div class=\"ds-mat-meta\"><span class=\"ds-mat-title\">单膝跪地持剑</span><span class=\"ds-mat-code\">POSE · 042</span></div></article>",
+      "css": ".ds-mat-card { width: 220px; padding: 10px; border-radius: 16px; background: linear-gradient(180deg, #f3f0e8 0%, #eae5da 100%); border: 1px solid rgba(20,18,14,0.11); box-shadow: inset 0 1px 0 rgba(255,255,255,0.7), 0 4px 14px rgba(20,18,14,0.05); } .ds-mat-frame { aspect-ratio: 3 / 4; border-radius: 10px; background: #ffffff; border: 1px solid rgba(10,10,10,0.08); } .ds-mat-meta { display: flex; align-items: center; justify-content: space-between; margin-top: 8px; padding: 0 2px; } .ds-mat-title { font-size: 13px; font-weight: 600; color: #0a0a0a; } .ds-mat-code { font-family: var(--font-mono, monospace); font-size: 12px; font-variant-numeric: tabular-nums; color: #52525b; }"
+    },
+    {
+      "name": "Obsidian Darkroom Stage",
+      "kind": "custom",
+      "refersTo": "stage-obsidian",
+      "description": "嵌入式黑曜石阳极氧化精密暗房模块，用于取景器与档案头。",
+      "html": "<section class=\"ds-obsidian\"><div class=\"ds-obsidian-top\"><span class=\"ds-eyebrow\">VIEWFINDER · 暗房光学监视器</span><span class=\"ds-status\">STANDBY</span></div><div class=\"ds-hairline\"></div></section>",
+      "css": ".ds-obsidian { padding: 16px; border-radius: 20px; background: linear-gradient(180deg, #1b1916 0%, #131210 58%, #0e0d0c 100%); border: 1px solid rgba(229,169,24,0.22); box-shadow: inset 0 1px 0 rgba(255,244,220,0.1), 0 18px 46px rgba(15,13,10,0.22); color: #fafafa; } .ds-obsidian-top { display: flex; align-items: center; justify-content: space-between; font-family: var(--font-mono, monospace); font-size: 12px; font-variant-numeric: tabular-nums; } .ds-eyebrow { color: #f5c443; } .ds-status { color: #a6a199; } .ds-hairline { height: 1px; margin-top: 12px; background: linear-gradient(90deg, transparent 0%, rgba(229,169,24,0.48) 28%, rgba(217,56,30,0.42) 52%, rgba(229,169,24,0.42) 76%, transparent 100%); }"
+    },
+    {
+      "name": "Search Input Field",
+      "kind": "input",
+      "refersTo": "input-field",
+      "description": "简洁细框检索输入框，右侧可配快捷键提示，移动端自动 16px 防缩放。",
+      "html": "<div class=\"ds-input-wrap\"><input class=\"ds-input\" placeholder=\"检索姿势、角度或编号…\" /><kbd class=\"ds-kbd\">/</kbd></div>",
+      "css": ".ds-input-wrap { display: flex; align-items: center; gap: 8px; height: 38px; padding: 0 10px 0 12px; border-radius: 12px; border: 1px solid rgba(20,18,14,0.14); background: #ffffff; } .ds-input { flex: 1; min-width: 0; border: 0; outline: none; background: transparent; font-size: 14px; color: #0a0a0a; } .ds-input::placeholder { color: #52525b; } .ds-input-wrap:focus-within { border-color: rgba(10,10,10,0.4); box-shadow: 0 0 0 3px rgba(10,10,10,0.1); } .ds-kbd { font-family: var(--font-mono, monospace); font-size: 12px; padding: 1px 6px; border-radius: 6px; border: 1px solid rgba(20,18,14,0.12); background: #efece5; color: #52525b; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "Kinpaku Editorial & Tactile Studio Instrument（金箔编辑部画册 × 精密实体暗房仪器）",
+    "overview": "CASTDECK 将日本角色设定画册的温润和纸装裱质感（Stripe Press、Minimal Gallery、Landing Love）、编辑部双色调排印克制（FinalLap、HUMAN.md、Curated Design），与 Leica / Teenage Engineering 式精密光学暗房硬件触感融为一体。面向创作者的全部前台界面遵循本「和纸箔金 × 精密暗房」语言；独立后台 /admin 与 /admin/login 保持 Swiss Minimalist Gallery（瑞士极简画廊风）。",
+    "keyCharacteristics": [
+      "暖纸画册底 × 黑曜石暗房舞台：和纸底（#F7F6F2）搭配嵌入式黑曜石硬件模块（.ks-obsidian-stage）与 1px 金箔细线。",
+      "单基线克制与渐进披露：图库卡片静息态只让画面呼吸，最多保留一行基线信息；交互收纳进悬停磨砂层。",
+      "克制的实体微拟物与工坊器物感：高阻尼弹簧、实体键帽按压微缩与可选物理拟音，色彩收敛在金箔/朱砂/松石/暖金属内。"
+    ],
+    "rules": [
+      { "name": "The Surgical Vermilion Rule", "body": "朱砂红是印章而非墙漆——单屏内只允许出现一个朱砂红主行动按钮，绝不把朱砂红铺涂到次级徽章或筛选标签。", "section": "colors" },
+      { "name": "The Dual-Ramp Contrast Rule", "body": "任何浅底上的功能文字与白字实底按钮必须达到 WCAG AA（≥ 4.5:1）：浅底朱砂字/白字主按钮用 #C42F16 阶，浅底金箔字用 #855B00 阶。", "section": "colors" },
+      { "name": "The 12px Legibility Floor Rule", "body": "全站所有功能文字、眉标、徽章、时间戳与辅助说明不得小于 12px（text-xs）。", "section": "typography" },
+      { "name": "The No Faux-Italic CJK Rule", "body": "严禁对 .font-editorial-serif（宋体）或任何中文标题施加 italic 样式。", "section": "typography" },
+      { "name": "The Header Polarity Rule", "body": "整站组件与分区头部保持统一排布：左上方放置标题与操作按钮，右上方放置当前所选名称、状态或说明文字。", "section": "typography" },
+      { "name": "The Eyebrow Restraint Rule", "body": "等宽档案编号保持裸字距排印，不使用 [ ... ] 代码终端方括号装饰；高频控件分组使用简洁中文标题。", "section": "typography" },
+      { "name": "The Semantic Workspace Heading Rule", "body": "含全屏工作台在内的每条路由（如 /studio、/blindbox、/canvas）必须包含唯一语义 h1（可见或 sr-only）。", "section": "typography" },
+      { "name": "The Zero Nested Card Clutter Rule", "body": "严禁把带边框的 bg-card 卡片再套进另一个带边框的 bg-card 容器里，内部以底垫色差或无边框内陷凹槽分区。", "section": "elevation" },
+      { "name": "The Zero One-Sided Stripe Rule", "body": "严禁在圆角卡片单侧粘贴竖向装饰色条；需要区分轨道语义时改用全边细框、前置色标徽章或圆点指示器。", "section": "elevation" },
+      { "name": "The Reduced Transparency & High Contrast Rule", "body": "所有磨砂层与全屏遮罩（blur 8px）必须提供 prefers-reduced-transparency 实色回退与高对比度边界强化。", "section": "elevation" },
+      { "name": "The Warm Darkroom Keycap Rule", "body": "暖黑主题（.dark）下凹槽内激活键帽采用阳极氧化枪灰（#2A2722–#34302A）配金箔细边或温润米金键帽，避免纯白眩光。", "section": "elevation" }
+    ],
+    "dos": [
+      "Do 用 1px 建筑细线与留白分层，让参考图成为绝对主角；卡片预留 aspect-ratio 并提供破图 onError 兜底。",
+      "Do 统一复用 --ease-out / --ease-in-out / --ease-drawer 缓动变量，按键按下给出 150ms scale(0.97) 物理微缩，命令面板与键盘导航保持 0ms 零延迟。",
+      "Do 为所有仅图标按钮、表单控件和关键状态开关提供 aria-label 与聚焦可见说明，并在移动端保障 44×44px 点击区与安全区留白。",
+      "Do 在涉及扣积分或不可逆删除的高风险操作前给出清晰费用提示、二次确认或长按确认，并保持失败自动退积分的明确反馈。"
+    ],
+    "donts": [
+      "Don't 使用廉价 AI 蓝紫霓虹渐变、彩虹糖果渐变或彩色外发光（dark-glow）。",
+      "Don't 制造「盒中套盒」或在同一视口放置两个互相竞争的朱砂红主按钮/双提示词输入框。",
+      "Don't 使用小于 12px 的功能文字、对中文宋体施加伪斜体 italic，或将装饰性金箔 #E5A918 直接用作浅底文字。",
+      "Don't 使用 transition: all、ease-in、scale(0)、在 active:scale-* 上搭配 transition-colors、对 width / height 做逐帧弹簧动画，或在 prefers-reduced-motion: reduce 下仍播放位移/滤镜动画。",
+      "Don't 在任何用户端界面暴露画师代号与内部编译提示词，或在用户无感知的情况下静默扣积分/批量删除云端数据。"
+    ]
+  }
+}

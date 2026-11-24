@@ -79,7 +79,15 @@ function ZoomSurface({ imageUrl, alt = '图片预览', children, contentWidth = 
     </div>
     <div ref={viewport} tabIndex={0} role="region" aria-label={`${alt}；加减键缩放，方向键移动，0 键复位`}
       className="relative min-h-0 flex-1 overflow-hidden rounded-lg bg-muted/60 outline-offset-2 focus-visible:outline-2 focus-visible:outline-ring"
-      style={{ touchAction: 'none', cursor: view.zoom > 1 ? 'grab' : 'default' }}
+      style={{ touchAction: 'none', cursor: view.zoom > 1 ? 'grab' : 'zoom-in' }}
+      onDoubleClick={(e) => {
+        const rect = e.currentTarget.getBoundingClientRect()
+        if (current.current.zoom > 1.05) {
+          reset()
+        } else {
+          zoomAt(2.2, e.clientX - rect.left - rect.width / 2, e.clientY - rect.top - rect.height / 2)
+        }
+      }}
       onKeyDown={(e) => {
         if (e.target !== e.currentTarget) return
         if (e.key === '+' || e.key === '=') { e.preventDefault(); zoomAt(current.current.zoom * 1.25) }
@@ -89,7 +97,7 @@ function ZoomSurface({ imageUrl, alt = '图片预览', children, contentWidth = 
         if (delta[e.key] && current.current.zoom > 1) { e.preventDefault(); e.stopPropagation(); const [x, y] = delta[e.key]; update(clamp(current.current.zoom, current.current.x + x, current.current.y + y)) }
       }}
       onPointerDown={(e) => {
-        if (e.button !== 0) return
+        if (e.pointerType === 'mouse' && e.button !== 0) return
         e.currentTarget.focus(); e.currentTarget.setPointerCapture(e.pointerId)
         pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY }); previous.current = gesture()
       }}
@@ -99,15 +107,26 @@ function ZoomSurface({ imageUrl, alt = '图片预览', children, contentWidth = 
         const next = gesture(), old = previous.current
         if (next && old) {
           const rect = e.currentTarget.getBoundingClientRect()
-          if (next.distance > 0 && old.distance > 0) zoomAt(current.current.zoom * next.distance / old.distance, old.x - rect.left - rect.width / 2, old.y - rect.top - rect.height / 2)
-          update(clamp(current.current.zoom, current.current.x + next.x - old.x, current.current.y + next.y - old.y))
+          const cur = current.current
+          let nextZoom = cur.zoom
+          let nextX = cur.x
+          let nextY = cur.y
+          if (next.distance > 0 && old.distance > 0) {
+            nextZoom = Math.max(1, Math.min(8, cur.zoom * (next.distance / old.distance)))
+            const ratio = nextZoom / cur.zoom
+            const ox = old.x - rect.left - rect.width / 2
+            const oy = old.y - rect.top - rect.height / 2
+            nextX = ox - (ox - cur.x) * ratio
+            nextY = oy - (oy - cur.y) * ratio
+          }
+          update(clamp(nextZoom, nextX + next.x - old.x, nextY + next.y - old.y))
         }
         previous.current = next
       }}
       onPointerUp={(e) => { pointers.current.delete(e.pointerId); previous.current = gesture() }}
       onPointerCancel={(e) => { pointers.current.delete(e.pointerId); previous.current = gesture() }}
       onLostPointerCapture={(e) => { pointers.current.delete(e.pointerId); previous.current = gesture() }}>
-      <div className="pointer-events-none absolute top-1/2 left-1/2 origin-center select-none" style={{ width: natural.width, height: natural.height, transform: `translate(-50%, -50%) translate(${view.x}px, ${view.y}px) scale(${fit * view.zoom})` }}>
+      <div className="pointer-events-none absolute top-1/2 left-1/2 origin-center select-none" style={{ width: natural.width, height: natural.height, transform: `translate(-50%, -50%) translate3d(${view.x}px, ${view.y}px, 0) scale(${fit * view.zoom})` }}>
         {children ?? (imageUrl && !imageFailed && <img src={imageUrl} alt={alt} draggable={false} className="h-full w-full object-contain" onError={() => setImageFailed(true)} onLoad={(e) => { setNatural({ width: e.currentTarget.naturalWidth, height: e.currentTarget.naturalHeight }); reset() }} />)}
       </div>
       {!children && imageFailed && <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-background/90 p-4 text-center" onPointerDown={(e) => e.stopPropagation()}>

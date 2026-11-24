@@ -188,6 +188,7 @@ export function AdminAccessTab({
   return (
     <div className="space-y-6">
       <AdminPageHeader
+        eyebrow="SECTION 06 // ACCESS & GLOBAL POLICY"
         title="准入与全局配置"
         description="管理访客自助注册开关、新成员默认赠送积分及可选第三方微信开放平台扫码登录。（全局默认画风已归属「05. 画风图鉴管理」，参考图传输协议已归属「04. 画笔档位与路由」）"
       />

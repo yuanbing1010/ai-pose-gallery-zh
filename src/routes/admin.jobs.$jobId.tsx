@@ -32,7 +32,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { fetchAdminGenerationByIdApi, fetchAdminMeApi } from '@/lib/apiClient'
 import { useStudio } from '@/store/studioStore'
 import type { PublicUser } from '@/types/gallery'
-import { PROVIDER_META, getStudioArtist, resolveStyleInfo } from '../../shared/studio'
+import { PROVIDER_META, formatAspectRatioLabel, getStudioArtist, resolveStyleInfo } from '../../shared/studio'
 
 export const Route = createFileRoute('/admin/jobs/$jobId')({
   staticData: { title: '全链路生图审计' },
@@ -122,7 +122,7 @@ function AdminJobDetailPage() {
         loading={loading}
         onRefresh={() => void detailQuery.refetch()}
       >
-        <div className="flex min-h-[50vh] items-center justify-center border border-zinc-200 text-xs text-zinc-500 dark:border-zinc-800">
+        <div className="flex min-h-[50dvh] items-center justify-center border border-zinc-200 text-xs text-zinc-500 dark:border-zinc-800">
           <LoaderCircleIcon className="mr-2 size-4 animate-spin" />
           正在加载全链路审计详情…
         </div>
@@ -319,7 +319,7 @@ function AdminJobDetailPage() {
               {formatTimeMs(trace?.finishedAt ?? job.finishedAt)}
             </div>
             <div className="mt-1 text-xs text-zinc-500">
-              {job.aspectRatio} · {styleLabel}
+              {formatAspectRatioLabel(job.aspectRatio)} · {styleLabel}
               {job.startedAt && job.startedAt - job.createdAt > 1000
                 ? ` · 排队等待 ${formatTraceShortDuration(job.startedAt - job.createdAt)}`
                 : ''}
@@ -403,7 +403,7 @@ function AdminJobDetailPage() {
                 <div className="min-w-0 p-3.5">
                   <div className="text-xs text-zinc-500">画幅与分辨率</div>
                   <div className="mt-1 font-mono text-xs font-bold">
-                    {job.aspectRatio}
+                    {formatAspectRatioLabel(job.aspectRatio)}
                     {job.resolution ? ` · ${job.resolution}` : ''}
                   </div>
                 </div>
@@ -717,7 +717,7 @@ function AdminJobDetailPage() {
                   <div className="grid gap-2 border-t border-zinc-200 pt-3 text-xs sm:grid-cols-3 dark:border-zinc-800">
                     <div>厂商：{job.snapshot.provider}</div>
                     <div>模型：{job.snapshot.model}</div>
-                    <div>画幅：{job.snapshot.aspectRatio}</div>
+                    <div>画幅：{formatAspectRatioLabel(job.snapshot.aspectRatio)}</div>
                   </div>
                 )}
               </div>

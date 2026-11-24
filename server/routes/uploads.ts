@@ -10,6 +10,10 @@ export const uploadRoutes = new Hono<AppEnv>()
 
 uploadRoutes.post('/uploads', requireAuth, async (c) => {
   const user = c.get('user')!
+  const contentLength = Number(c.req.header('content-length') || 0)
+  if (Number.isFinite(contentLength) && contentLength > MAX_UPLOAD_BYTES + 256 * 1024) {
+    return c.json({ error: { message: '图片大小超出 10MB 上限' } }, 413)
+  }
   let form: FormData
   try {
     form = await c.req.formData()

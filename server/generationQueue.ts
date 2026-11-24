@@ -13,7 +13,7 @@ import {
   type GenerationQueueInfo,
   type GenerationStatus,
   type ImageProviderId,
-  type StudioAspectRatio,
+  type GenerationAspectRatio,
   type StudioResolution,
 } from '../shared/studio'
 import {
@@ -31,6 +31,8 @@ import {
   type JobRow,
 } from './db'
 import { executeQueuedJobById } from './generationExecutor'
+import { logError } from './logger'
+import { refreshSupplierOAuthKeyDirect } from './supplierOAuth'
 import type { Env } from './types'
 
 const RUNNER_POOL_SIZE = 16
@@ -53,7 +55,7 @@ export interface AdmitJobInput {
   creditsCost: number
   prompt: string
   recipeSummary: string
-  aspectRatio: StudioAspectRatio
+  aspectRatio: GenerationAspectRatio
   stylePreset: string
   snapshotJson: string
   traceJson: string
@@ -277,7 +279,7 @@ async function performAdmitOrEnqueue(
       traceJson: input.traceJson,
       initialStatus: canRunNow ? 'processing' : 'queued',
       startedAt: canRunNow ? Date.now() : null,
-      queuePayloadJson: canRunNow ? null : input.queuePayloadJson,
+      queuePayloadJson: input.queuePayloadJson,
     })
   } catch {
     const freshUser = await db
@@ -365,10 +367,8 @@ async function performAdmitOrEnqueue(
         profileId: input.profileId,
         profileName: input.profileName,
         resolution: input.resolution,
-        model: input.profileName
-          ? `${getStudioArtist(input.provider).name} · ${input.profileName}`
-          : getStudioArtist(input.provider).name,
-        prompt: input.prompt,
+        model: input.profileName || '默认画笔',
+        prompt: '',
         aspectRatio: input.aspectRatio,
         stylePreset: input.stylePreset,
         imageUrl: '',
@@ -559,19 +559,17 @@ export class GenerationQueueCoordinator extends DurableObject<Env> {
       } else {
         await this.ctx.storage.deleteAlarm()
       }
-    } catch {
-      // ignore storage alarm errors
+        } catch (err) {
+      logError('do.queue.update_alarm_failed', { hasAnyActive }, err)
     }
   }
 
-  private async dispatchRunnerJobs(jobIds: string[]) {
+  private async dispatchRunnerJobs(jobIds: string[], depth = 0) {
     for (const jobId of jobIds) {
       try {
         if (this.env.GENERATION_RUNNER) {
           const idx = hashToRunnerIndex(jobId)
-          const stub = this.env.GENERATION_RUNNER.get(
-            this.env.GENERATION_RUNNER.idFromName(`runner-${idx}`)
-          )
+          const stub = this.env.GENERATION_RUNNER.getByName(`runner-${idx}`)
           const res = await stub.fetch('https://runner.internal/execute', {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
@@ -584,15 +582,18 @@ export class GenerationQueueCoordinator extends DurableObject<Env> {
           await executeQueuedJobById(this.env, jobId)
           await notifyJobFinished(this.env, jobId)
         }
-      } catch {
+      } catch (err) {
+        logError('do.queue.dispatch_runner_failed', { jobId, depth }, err)
         await refundFailedJob(this.env.DB, jobId, '后台排队任务派发失败，系统已自动退还积分')
-        this.ctx.waitUntil(
-          this.runSerialized(async () => {
-            const promoted = await promoteEligibleQueuedJobs(this.env.DB)
-            await this.updateAlarmLocked(promoted.hasAnyActive)
-            return promoted.promotedIds
-          }).then((more) => this.dispatchRunnerJobs(more))
-        )
+        if (depth < 3) {
+          this.ctx.waitUntil(
+            this.runSerialized(async () => {
+              const promoted = await promoteEligibleQueuedJobs(this.env.DB)
+              await this.updateAlarmLocked(promoted.hasAnyActive)
+              return promoted.promotedIds
+            }).then((more) => this.dispatchRunnerJobs(more, depth + 1))
+          )
+        }
       }
     }
   }
@@ -611,132 +612,186 @@ export class GenerationQueueCoordinator extends DurableObject<Env> {
 
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url)
-
-    if (request.method === 'POST' && url.pathname === '/admit') {
-      const input = (await request.json()) as AdmitJobInput
-      const res = await this.runSerialized(async () => {
-        await this.sweepIfNeededLocked(false)
-        const admitRes = await performAdmitOrEnqueue(this.env.DB, input)
-        await this.updateAlarmLocked(admitRes.hasAnyActive)
-        return admitRes
-      })
-      if (res.promotedIds.length > 0) {
-        this.ctx.waitUntil(this.dispatchRunnerJobs(res.promotedIds))
+    try {
+      if (request.method === 'POST' && url.pathname === '/admit') {
+        const input = (await request.json()) as AdmitJobInput
+        const res = await this.runSerialized(async () => {
+          await this.sweepIfNeededLocked(false)
+          const admitRes = await performAdmitOrEnqueue(this.env.DB, input)
+          await this.updateAlarmLocked(admitRes.hasAnyActive)
+          return admitRes
+        })
+        if (res.promotedIds.length > 0) {
+          this.ctx.waitUntil(this.dispatchRunnerJobs(res.promotedIds))
+        }
+        return Response.json(res.outcome)
       }
-      return Response.json(res.outcome)
-    }
 
-    if (request.method === 'POST' && url.pathname === '/finish') {
-      const { promotedIds } = await this.runSerialized(async () => {
-        await this.sweepIfNeededLocked(false)
-        const promoted = await promoteEligibleQueuedJobs(this.env.DB)
-        await this.updateAlarmLocked(promoted.hasAnyActive)
-        return promoted
-      })
-      if (promotedIds.length > 0) {
-        this.ctx.waitUntil(this.dispatchRunnerJobs(promotedIds))
+      if (request.method === 'POST' && url.pathname === '/finish') {
+        const { promotedIds } = await this.runSerialized(async () => {
+          await this.sweepIfNeededLocked(false)
+          const promoted = await promoteEligibleQueuedJobs(this.env.DB)
+          await this.updateAlarmLocked(promoted.hasAnyActive)
+          return promoted
+        })
+        if (promotedIds.length > 0) {
+          this.ctx.waitUntil(this.dispatchRunnerJobs(promotedIds))
+        }
+        return Response.json({ ok: true, promotedCount: promotedIds.length })
       }
-      return Response.json({ ok: true, promotedCount: promotedIds.length })
-    }
 
-    if (request.method === 'POST' && url.pathname === '/cancel') {
-      const payload = (await request.json()) as {
-        jobId: string
-        expectedUserId?: string
-        reason?: string
-        ledgerNote?: string
+      if (request.method === 'POST' && url.pathname === '/cancel') {
+        const payload = (await request.json()) as {
+          jobId: string
+          expectedUserId?: string
+          reason?: string
+          ledgerNote?: string
+        }
+        const { cancelRes, promotedIds } = await this.runSerialized(async () => {
+          const res = await cancelQueuedJob(
+            this.env.DB,
+            payload.jobId,
+            payload.reason || '用户已取消排队，积分已全额退还',
+            {
+              expectedUserId: payload.expectedUserId,
+              ledgerNote: payload.ledgerNote,
+            }
+          )
+          const promoted = await promoteEligibleQueuedJobs(this.env.DB)
+          await this.updateAlarmLocked(promoted.hasAnyActive)
+          return { cancelRes: res, promotedIds: promoted.promotedIds }
+        })
+        if (promotedIds.length > 0) {
+          this.ctx.waitUntil(this.dispatchRunnerJobs(promotedIds))
+        }
+        return Response.json(cancelRes)
       }
-      const { cancelRes, promotedIds } = await this.runSerialized(async () => {
-        const res = await cancelQueuedJob(
-          this.env.DB,
-          payload.jobId,
-          payload.reason || '用户已取消排队，积分已全额退还',
-          {
-            expectedUserId: payload.expectedUserId,
-            ledgerNote: payload.ledgerNote,
-          }
+
+      if (request.method === 'POST' && url.pathname === '/force-cancel-processing') {
+        const payload = (await request.json()) as { jobId: string; reason?: string }
+        const { refundRes, promotedIds } = await this.runSerialized(async () => {
+          const res = await forceCancelProcessingJob(
+            this.env.DB,
+            payload.jobId,
+            payload.reason || '管理员强制中止绘制任务并全额退还积分'
+          )
+          const promoted = await promoteEligibleQueuedJobs(this.env.DB)
+          await this.updateAlarmLocked(promoted.hasAnyActive)
+          return { refundRes: res, promotedIds: promoted.promotedIds }
+        })
+        if (promotedIds.length > 0) {
+          this.ctx.waitUntil(this.dispatchRunnerJobs(promotedIds))
+        }
+        return Response.json(refundRes)
+      }
+
+      if (request.method === 'POST' && url.pathname === '/reconcile') {
+        const { reaped, promoted } = await this.runSerialized(async () => {
+          const reapRes = await this.sweepIfNeededLocked(true)
+          const promoRes = await promoteEligibleQueuedJobs(this.env.DB)
+          await this.updateAlarmLocked(promoRes.hasAnyActive)
+          return { reaped: reapRes, promoted: promoRes }
+        })
+        if (promoted.promotedIds.length > 0) {
+          this.ctx.waitUntil(this.dispatchRunnerJobs(promoted.promotedIds))
+        }
+        return Response.json({
+          ok: true,
+          reapedProcessing: reaped.reapedProcessing,
+          reapedQueued: reaped.reapedQueued,
+          promotedCount: promoted.promotedIds.length,
+        })
+      }
+
+      if (request.method === 'GET' && url.pathname === '/snapshot') {
+        const { snapshot, promotedIds } = await this.runSerialized(async () => {
+          await this.sweepIfNeededLocked(false)
+          const promoRes = await promoteEligibleQueuedJobs(this.env.DB)
+          await this.updateAlarmLocked(promoRes.hasAnyActive)
+          const snap = await buildAdminQueueSnapshotDirect(this.env.DB)
+          return { snapshot: snap, promotedIds: promoRes.promotedIds }
+        })
+        if (promotedIds.length > 0) {
+          this.ctx.waitUntil(this.dispatchRunnerJobs(promotedIds))
+        }
+        return Response.json(snapshot)
+      }
+
+      if (request.method === 'POST' && url.pathname === '/oauth-refresh') {
+        const payload = (await request.json().catch(() => ({}))) as {
+          keyId?: string
+          forceRefresh?: boolean
+        }
+        const keyId = typeof payload.keyId === 'string' ? payload.keyId.trim() : ''
+        if (!keyId) {
+          return Response.json({ ok: false, error: 'Missing keyId' }, { status: 400 })
+        }
+        const result = await this.runSerialized(() =>
+          refreshSupplierOAuthKeyDirect(this.env, keyId, { force: payload.forceRefresh === true })
         )
-        const promoted = await promoteEligibleQueuedJobs(this.env.DB)
-        await this.updateAlarmLocked(promoted.hasAnyActive)
-        return { cancelRes: res, promotedIds: promoted.promotedIds }
-      })
-      if (promotedIds.length > 0) {
-        this.ctx.waitUntil(this.dispatchRunnerJobs(promotedIds))
+        return Response.json({ ok: true, result })
       }
-      return Response.json(cancelRes)
-    }
 
-    if (request.method === 'POST' && url.pathname === '/force-cancel-processing') {
-      const payload = (await request.json()) as { jobId: string; reason?: string }
-      const { refundRes, promotedIds } = await this.runSerialized(async () => {
-        const res = await forceCancelProcessingJob(
-          this.env.DB,
-          payload.jobId,
-          payload.reason || '管理员强制中止绘制任务并全额退还积分'
-        )
-        const promoted = await promoteEligibleQueuedJobs(this.env.DB)
-        await this.updateAlarmLocked(promoted.hasAnyActive)
-        return { refundRes: res, promotedIds: promoted.promotedIds }
-      })
-      if (promotedIds.length > 0) {
-        this.ctx.waitUntil(this.dispatchRunnerJobs(promotedIds))
-      }
-      return Response.json(refundRes)
+      return Response.json({ error: { message: 'Not found' } }, { status: 404 })
+    } catch (err) {
+      logError('do.queue.fetch_error', { method: request.method, path: url.pathname }, err)
+      return Response.json(
+        {
+          ok: false,
+          error: { message: err instanceof Error ? err.message : '队列协调服务异常，请稍后重试' },
+        },
+        { status: 500 }
+      )
     }
-
-    if (request.method === 'POST' && url.pathname === '/reconcile') {
-      const { reaped, promoted } = await this.runSerialized(async () => {
-        const reapRes = await this.sweepIfNeededLocked(true)
-        const promoRes = await promoteEligibleQueuedJobs(this.env.DB)
-        await this.updateAlarmLocked(promoRes.hasAnyActive)
-        return { reaped: reapRes, promoted: promoRes }
-      })
-      if (promoted.promotedIds.length > 0) {
-        this.ctx.waitUntil(this.dispatchRunnerJobs(promoted.promotedIds))
-      }
-      return Response.json({
-        ok: true,
-        reapedProcessing: reaped.reapedProcessing,
-        reapedQueued: reaped.reapedQueued,
-        promotedCount: promoted.promotedIds.length,
-      })
-    }
-
-    if (request.method === 'GET' && url.pathname === '/snapshot') {
-      const { snapshot, promotedIds } = await this.runSerialized(async () => {
-        await this.sweepIfNeededLocked(false)
-        const promoRes = await promoteEligibleQueuedJobs(this.env.DB)
-        await this.updateAlarmLocked(promoRes.hasAnyActive)
-        const snap = await buildAdminQueueSnapshotDirect(this.env.DB)
-        return { snapshot: snap, promotedIds: promoRes.promotedIds }
-      })
-      if (promotedIds.length > 0) {
-        this.ctx.waitUntil(this.dispatchRunnerJobs(promotedIds))
-      }
-      return Response.json(snapshot)
-    }
-
-    return Response.json({ error: { message: 'Not found' } }, { status: 404 })
   }
 }
 
 export class GenerationJobRunner extends DurableObject<Env> {
+  private activeJobs = new Set<string>()
+
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url)
-    if (request.method === 'POST' && url.pathname === '/execute') {
-      const { jobId } = (await request.json()) as { jobId: string }
-      if (!jobId) {
-        return Response.json({ error: { message: 'Missing jobId' } }, { status: 400 })
+    try {
+      if (request.method === 'POST' && url.pathname === '/execute') {
+        const { jobId } = (await request.json()) as { jobId: string }
+        if (!jobId) {
+          return Response.json({ error: { message: 'Missing jobId' } }, { status: 400 })
+        }
+        if (this.activeJobs.has(jobId)) {
+          return Response.json({ accepted: true, duplicate: true, jobId }, { status: 202 })
+        }
+        this.activeJobs.add(jobId)
+        this.ctx.waitUntil(
+          this.runJob(jobId).finally(() => {
+            this.activeJobs.delete(jobId)
+          })
+        )
+        return Response.json({ accepted: true, jobId }, { status: 202 })
       }
-      this.ctx.waitUntil(this.runJob(jobId))
-      return Response.json({ accepted: true, jobId }, { status: 202 })
+      return Response.json({ error: { message: 'Not found' } }, { status: 404 })
+    } catch (err) {
+      logError('do.runner.fetch_error', { method: request.method, path: url.pathname }, err)
+      return Response.json(
+        { error: { message: err instanceof Error ? err.message : '后台任务执行器异常' } },
+        { status: 500 }
+      )
     }
-    return Response.json({ error: { message: 'Not found' } }, { status: 404 })
   }
 
   private async runJob(jobId: string): Promise<void> {
     try {
       await executeQueuedJobById(this.env, jobId)
+    } catch (err) {
+      logError('do.runner.unhandled_job_error', { jobId }, err)
+      try {
+        await refundFailedJob(
+          this.env.DB,
+          jobId,
+          '后台生成任务异常中断，系统已自动退还积分'
+        )
+      } catch (refundErr) {
+        logError('do.runner.refund_failed', { jobId }, refundErr)
+      }
     } finally {
       await notifyJobFinished(this.env, jobId)
     }
@@ -745,7 +800,33 @@ export class GenerationJobRunner extends DurableObject<Env> {
 
 function getCoordinatorStub(env: Env): DurableObjectStub | null {
   if (!env.GENERATION_QUEUE) return null
-  return env.GENERATION_QUEUE.get(env.GENERATION_QUEUE.idFromName('global-queue'))
+  return env.GENERATION_QUEUE.getByName('global-queue')
+}
+
+export async function dispatchJobToRunner(env: Env, jobId: string): Promise<boolean> {
+  if (!env.GENERATION_RUNNER) return false
+  const idx = hashToRunnerIndex(jobId)
+  const stub = env.GENERATION_RUNNER.getByName(`runner-${idx}`)
+  const res = await stub.fetch('https://runner.internal/execute', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ jobId }),
+  })
+  if (!res.ok) {
+    const detail = await res.text().catch(() => '')
+    throw new Error(
+      `Runner dispatch HTTP ${res.status}${detail ? `: ${detail.slice(0, 160)}` : ''}`
+    )
+  }
+  return true
+}
+
+async function readCoordinatorJson<T>(res: Response, action: string): Promise<T> {
+  if (!res.ok) {
+    const detail = await res.text().catch(() => '')
+    throw new Error(`队列协调器 ${action} 失败（HTTP ${res.status}）${detail ? `: ${detail.slice(0, 200)}` : ''}`)
+  }
+  return (await res.json()) as T
 }
 
 export async function admitOrEnqueueViaCoordinator(
@@ -759,7 +840,7 @@ export async function admitOrEnqueueViaCoordinator(
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(input),
     })
-    return (await res.json()) as InternalAdmitOutcome
+    return readCoordinatorJson<InternalAdmitOutcome>(res, 'admit')
   }
 
   await reapStaleProcessingJobs(env.DB)
@@ -819,7 +900,7 @@ export async function cancelQueuedJobViaCoordinator(
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(payload),
     })
-    return res.json()
+    return readCoordinatorJson(res, 'cancel')
   }
   const res = await cancelQueuedJob(
     env.DB,
@@ -845,7 +926,7 @@ export async function forceCancelProcessingJobViaCoordinator(
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(payload),
     })
-    return res.json()
+    return readCoordinatorJson(res, 'force-cancel-processing')
   }
   const res = await forceCancelProcessingJob(env.DB, payload.jobId, payload.reason)
   await notifyJobFinished(env, payload.jobId)
@@ -861,7 +942,7 @@ export async function reconcileQueueViaCoordinator(env: Env): Promise<{
   const stub = getCoordinatorStub(env)
   if (stub) {
     const res = await stub.fetch('https://do.internal/reconcile', { method: 'POST' })
-    return res.json()
+    return readCoordinatorJson(res, 'reconcile')
   }
   const reaped = await reapStaleProcessingJobs(env.DB)
   const promoted = await promoteEligibleQueuedJobs(env.DB)
@@ -882,7 +963,7 @@ export async function fetchQueueSnapshotViaCoordinator(
   const stub = getCoordinatorStub(env)
   if (stub) {
     const res = await stub.fetch('https://do.internal/snapshot', { method: 'GET' })
-    return res.json()
+    return readCoordinatorJson(res, 'snapshot')
   }
   return buildAdminQueueSnapshotDirect(env.DB)
 }

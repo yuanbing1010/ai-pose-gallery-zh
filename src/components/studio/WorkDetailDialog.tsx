@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { motion } from 'motion/react'
 import {
   BanIcon,
   CheckIcon,
@@ -13,15 +14,27 @@ import {
   ImagePlusIcon,
   LoaderCircleIcon,
   RotateCcwIcon,
+  Share2Icon,
   SparklesIcon,
   Trash2Icon,
   XIcon,
   ZoomInIcon,
 } from 'lucide-react'
 import { ArtistLogo } from '@/components/studio/StudioEmblems'
+import { MOTION_EASE_OUT } from '@/lib/motionTokens'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogClose, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { getEstimatedOutputDimensions, getStudioArtist } from '@/lib/artists'
+import { formatAspectRatioLabel, getEstimatedOutputDimensions } from '@/lib/artists'
 import { comparisonReferences } from '@/lib/comparisonReferences'
 import { toast } from '@/lib/notifications'
 import { downloadFileName } from '@/lib/recipeImages'
@@ -44,6 +57,7 @@ export interface WorkDetailDialogProps {
   onApplyRecipe: (item: GenerationHistoryItem) => void
   onRegenerate?: (item: GenerationHistoryItem) => void
   onUseAsExtraRef?: (item: GenerationHistoryItem) => void
+  onShareToGallery?: (item: GenerationHistoryItem) => void
   onFocusMonitor?: (jobId: string) => void
   onCancelQueued?: (jobId: string) => void
   onDelete: (item: GenerationHistoryItem) => void
@@ -57,7 +71,7 @@ const STATUS_META = {
   },
   processing: {
     label: '绘制中',
-    dot: 'animate-pulse bg-[#E5A918]',
+    dot: 'animate-pulse bg-[#E5A918] motion-reduce:animate-none',
     pill: 'bg-[#E5A918]/15 text-[#7A5200] dark:text-[#F5C443]',
   },
   queued: {
@@ -91,13 +105,14 @@ export function WorkDetailDialog({
   onApplyRecipe,
   onRegenerate,
   onUseAsExtraRef,
+  onShareToGallery,
   onFocusMonitor,
   onCancelQueued,
   onDelete,
 }: WorkDetailDialogProps) {
   const [paramsExpanded, setParamsExpanded] = useState(true)
-  const [copiedPromptForId, setCopiedPromptForId] = useState<string | null>(null)
-  const [expandedPromptForId, setExpandedPromptForId] = useState<string | null>(null)
+  const [copiedRecipeForId, setCopiedRecipeForId] = useState<string | null>(null)
+  const [confirmRegenOpen, setConfirmRegenOpen] = useState(false)
 
   useEffect(() => {
     if (!open) return
@@ -116,7 +131,6 @@ export function WorkDetailDialog({
 
   if (!item) return null
 
-  const artist = getStudioArtist(item.provider)
   const statusMeta = STATUS_META[item.status] ?? STATUS_META.succeeded
   const styleItem =
     item.stylePreset === 'none'
@@ -129,21 +143,24 @@ export function WorkDetailDialog({
   const dims = getEstimatedOutputDimensions(item.provider, item.aspectRatio, item.resolution)
   const durationLabel = formatJobDuration(item.startedAt ?? item.createdAt, item.finishedAt)
   const refs = comparisonReferences(item)
+  const isPromptMode = item.snapshot?.generationMode === 'prompt'
+  const userPrompt = isPromptMode ? item.snapshot?.userPrompt?.trim() || '' : ''
   const sceneNote = item.snapshot?.sceneNote?.trim() || ''
-  const copyPayload = sceneNote
-    ? `${item.recipeSummary}\n补充细节：${sceneNote}\n\n${item.prompt}`
-    : item.prompt || item.recipeSummary
+  const copyPayload = isPromptMode && userPrompt
+    ? userPrompt
+    : sceneNote
+      ? `${item.recipeSummary}\n补充细节：${sceneNote}`
+      : item.recipeSummary
 
-  const copiedPrompt = copiedPromptForId === item.id
-  const promptExpanded = expandedPromptForId === item.id
+  const copiedRecipe = copiedRecipeForId === item.id
 
-  const handleCopyPrompt = async () => {
+  const handleCopyRecipe = async () => {
     try {
       await navigator.clipboard.writeText(copyPayload)
-      setCopiedPromptForId(item.id)
-      toast.success('已复制配方与提示词')
+      setCopiedRecipeForId(item.id)
+      toast.success('已复制配方内容')
       window.setTimeout(() => {
-        setCopiedPromptForId((curr) => (curr === item.id ? null : curr))
+        setCopiedRecipeForId((curr) => (curr === item.id ? null : curr))
       }, 1800)
     } catch {
       toast.error('复制失败，请手动选中复制')
@@ -158,13 +175,13 @@ export function WorkDetailDialog({
       >
         <div className="relative grid md:h-[min(86dvh,760px)] md:grid-cols-[1.28fr_360px]">
           {/* 左侧：暗房画框展示区 */}
-          <div className="relative flex min-h-[300px] flex-col items-center justify-center overflow-hidden bg-[#FAF8F4] p-4 pt-14 sm:min-h-[420px] sm:p-6 sm:pt-16 dark:bg-[#121210]">
+          <div className="relative flex min-h-[300px] flex-col items-center justify-center overflow-hidden bg-secondary/55 p-4 pt-14 sm:min-h-[420px] sm:p-6 sm:pt-16 dark:bg-black/60">
             {/* 左上角尺寸/比例徽章 */}
             <div className="absolute top-3 left-3 z-20 flex flex-wrap items-center gap-1.5 sm:top-4 sm:left-4">
               <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-background/90 px-2.5 py-1 font-mono text-xs font-semibold text-foreground backdrop-blur-md">
                 <span>{dims.label}</span>
                 <span className="text-muted-foreground">·</span>
-                <span>{item.aspectRatio}</span>
+                <span>{formatAspectRatioLabel(item.aspectRatio)}</span>
                 {item.resolution && (
                   <>
                     <span className="text-muted-foreground">·</span>
@@ -220,7 +237,7 @@ export function WorkDetailDialog({
                 <button
                   type="button"
                   aria-label="关闭任务详情"
-                  className="flex size-8 items-center justify-center rounded-full border border-border bg-background/90 text-muted-foreground backdrop-blur-md transition-colors hover:bg-muted hover:text-foreground md:hidden"
+                  className="relative flex size-8 items-center justify-center rounded-full border border-border bg-background/90 text-muted-foreground backdrop-blur-md transition-[transform,background-color,color] duration-150 ease-[var(--ease-out)] before:absolute before:-inset-1.5 before:content-[''] hover:bg-muted hover:text-foreground active:scale-[0.96] md:hidden"
                 >
                   <XIcon className="size-4" />
                 </button>
@@ -233,7 +250,7 @@ export function WorkDetailDialog({
                 type="button"
                 aria-label="上一张作品"
                 onClick={onPrev}
-                className="absolute top-1/2 left-3 z-20 flex size-9 -translate-y-1/2 items-center justify-center rounded-full border border-border bg-background/85 text-foreground shadow-sm backdrop-blur-md transition hover:bg-background"
+                className="absolute top-1/2 left-3 z-20 flex size-9 -translate-y-1/2 items-center justify-center rounded-full border border-border bg-background/85 text-foreground shadow-sm backdrop-blur-md transition-[transform,background-color] duration-150 ease-[var(--ease-out)] hover:bg-background active:scale-95"
               >
                 <ChevronLeftIcon className="size-4" />
               </button>
@@ -243,7 +260,7 @@ export function WorkDetailDialog({
                 type="button"
                 aria-label="下一张作品"
                 onClick={onNext}
-                className="absolute top-1/2 right-3 z-20 flex size-9 -translate-y-1/2 items-center justify-center rounded-full border border-border bg-background/85 text-foreground shadow-sm backdrop-blur-md transition hover:bg-background"
+                className="absolute top-1/2 right-3 z-20 flex size-9 -translate-y-1/2 items-center justify-center rounded-full border border-border bg-background/85 text-foreground shadow-sm backdrop-blur-md transition-[transform,background-color] duration-150 ease-[var(--ease-out)] hover:bg-background active:scale-95"
               >
                 <ChevronRightIcon className="size-4" />
               </button>
@@ -256,10 +273,14 @@ export function WorkDetailDialog({
                 onClick={() => onZoom(item.imageUrl)}
                 className="group relative flex max-h-full max-w-full cursor-zoom-in items-center justify-center"
               >
-                <img
+                <motion.img
+                  key={item.id}
+                  initial={{ opacity: 0, scale: 0.985 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  transition={{ duration: 0.16, ease: MOTION_EASE_OUT }}
                   src={item.imageUrl}
                   alt={item.recipeSummary}
-                  className="max-h-[54dvh] max-w-full rounded-xl border border-border/70 object-contain shadow-lg transition group-hover:brightness-[1.02] md:max-h-[72dvh]"
+                  className="max-h-[54dvh] max-w-full rounded-xl border border-border/70 object-contain shadow-lg transition-[filter] duration-150 group-hover:brightness-[1.02] md:max-h-[72dvh]"
                 />
               </button>
             ) : item.status === 'processing' ? (
@@ -368,16 +389,18 @@ export function WorkDetailDialog({
 
             {/* 可滚动元信息主体 */}
             <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-4">
-              {/* 配方摘要与提示词 */}
+              {/* 配方摘要与补充细节 */}
               <div className="space-y-2">
                 <div className="flex items-center justify-between gap-2">
-                  <span className="text-xs font-semibold text-muted-foreground">输入内容与提示词</span>
+                  <span className="text-xs font-semibold text-muted-foreground">
+                    {isPromptMode ? '创作文本' : '输入配方与细节'}
+                  </span>
                   <button
                     type="button"
-                    onClick={() => void handleCopyPrompt()}
+                    onClick={() => void handleCopyRecipe()}
                     className="inline-flex items-center gap-1 rounded-lg border border-border bg-muted/40 px-2 py-1 text-xs font-medium text-foreground transition hover:bg-muted"
                   >
-                    {copiedPrompt ? (
+                    {copiedRecipe ? (
                       <>
                         <CheckIcon className="size-3 text-[#116E65]" />
                         <span>已复制</span>
@@ -391,29 +414,19 @@ export function WorkDetailDialog({
                   </button>
                 </div>
 
-                <div className="rounded-xl border border-border/80 bg-[#FAF8F4] p-3 text-xs leading-relaxed dark:bg-muted/35">
-                  <div className="font-bold text-foreground">{item.recipeSummary}</div>
-                  {sceneNote && (
-                    <div className="mt-1.5 rounded-lg border border-border/70 bg-card px-2.5 py-1.5 text-foreground">
-                      <span className="font-semibold text-muted-foreground">补充细节：</span>
-                      {sceneNote}
-                    </div>
-                  )}
-                  {item.prompt && (
-                    <div className="mt-2 border-t border-border/60 pt-2 text-muted-foreground">
-                      <p className={cn(!promptExpanded && 'line-clamp-4')}>{item.prompt}</p>
-                      {item.prompt.length > 140 && (
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setExpandedPromptForId((curr) => (curr === item.id ? null : item.id))
-                          }
-                          className="mt-1 font-semibold text-foreground hover:underline"
-                        >
-                          {promptExpanded ? '收起提示词' : '展开完整提示词'}
-                        </button>
+                <div className="rounded-xl border border-border/80 bg-secondary/55 p-3 text-xs leading-relaxed dark:bg-muted/35">
+                  {isPromptMode && userPrompt ? (
+                    <div className="whitespace-pre-wrap break-words text-foreground">{userPrompt}</div>
+                  ) : (
+                    <>
+                      <div className="font-bold text-foreground">{item.recipeSummary}</div>
+                      {sceneNote && (
+                        <div className="mt-1.5 rounded-lg border border-border/70 bg-card px-2.5 py-1.5 text-foreground">
+                          <span className="font-semibold text-muted-foreground">补充细节：</span>
+                          {sceneNote}
+                        </div>
                       )}
-                    </div>
+                    </>
                   )}
                 </div>
               </div>
@@ -476,39 +489,43 @@ export function WorkDetailDialog({
 
                 {paramsExpanded && (
                   <div className="grid grid-cols-2 gap-2">
-                    <div className="col-span-2 flex items-center gap-2 rounded-xl border border-border/80 bg-[#FAF8F4] px-3 py-2 dark:bg-muted/35">
+                    <div className="col-span-2 flex items-center gap-2 rounded-xl border border-border/80 bg-secondary/55 px-3 py-2 dark:bg-muted/35">
                       <ArtistLogo providerId={item.provider} />
                       <div className="min-w-0 flex-1">
-                        <div className="text-xs text-muted-foreground">画师与画笔</div>
+                        <div className="text-xs text-muted-foreground">使用画笔</div>
                         <div className="truncate text-xs font-bold text-foreground">
-                          {artist.name} · {item.profileName || item.model}
+                          {item.profileName || '默认画笔'}
                         </div>
                       </div>
                     </div>
 
-                    <div className="rounded-xl border border-border/80 bg-[#FAF8F4] px-3 py-2 dark:bg-muted/35">
+                    <div className="rounded-xl border border-border/80 bg-secondary/55 px-3 py-2 dark:bg-muted/35">
                       <div className="text-xs text-muted-foreground">成图画风</div>
                       <div className="mt-0.5 truncate text-xs font-bold text-foreground">
                         {styleLabel}
                       </div>
                     </div>
 
-                    <div className="rounded-xl border border-border/80 bg-[#FAF8F4] px-3 py-2 dark:bg-muted/35">
+                    <div className="rounded-xl border border-border/80 bg-secondary/55 px-3 py-2 dark:bg-muted/35">
                       <div className="text-xs text-muted-foreground">比例与档位</div>
                       <div className="mt-0.5 truncate font-mono text-xs font-bold text-foreground">
-                        {item.aspectRatio}
+                        {formatAspectRatioLabel(item.aspectRatio)}
                         {item.resolution ? ` · ${item.resolution}` : ''}
                       </div>
                     </div>
 
-                    <div className="rounded-xl border border-border/80 bg-[#FAF8F4] px-3 py-2 dark:bg-muted/35">
+                    <div className="rounded-xl border border-border/80 bg-secondary/55 px-3 py-2 dark:bg-muted/35">
                       <div className="text-xs text-muted-foreground">生成模式</div>
                       <div className="mt-0.5 truncate text-xs font-bold text-foreground">
-                        {item.snapshot?.textFallbackOnly ? '图转文纯文' : '直传参考图'}
+                        {isPromptMode
+                          ? '文生图'
+                          : item.snapshot?.textFallbackOnly
+                            ? '图转文纯文'
+                            : '直传参考图'}
                       </div>
                     </div>
 
-                    <div className="rounded-xl border border-border/80 bg-[#FAF8F4] px-3 py-2 dark:bg-muted/35">
+                    <div className="rounded-xl border border-border/80 bg-secondary/55 px-3 py-2 dark:bg-muted/35">
                       <div className="text-xs text-muted-foreground">积分消耗</div>
                       <div className="mt-0.5 truncate font-mono text-xs font-bold text-foreground">
                         {item.creditsRefunded > 0
@@ -552,19 +569,30 @@ export function WorkDetailDialog({
                   <Button
                     type="button"
                     size="sm"
-                    onClick={() => {
-                      onOpenChange(false)
-                      onRegenerate(item)
-                    }}
-                    className="ks-keycap h-8 flex-1 rounded-xl border-0 bg-[#D9381E] text-xs font-bold text-white hover:bg-[#C23018]"
+                    onClick={() => setConfirmRegenOpen(true)}
+                    className="ks-keycap h-8 flex-1 rounded-xl border-0 skin-accent-btn text-xs font-bold"
                   >
                     <SparklesIcon className="size-3.5" />
-                    <span>同配重绘</span>
+                    <span>
+                      {item.creditsCost > 0 ? `同配重绘 · ${item.creditsCost} 积分` : '同配重绘'}
+                    </span>
                   </Button>
                 )}
               </div>
 
-              <div className="flex items-center gap-1.5">
+              <div className="flex flex-wrap items-center gap-1.5">
+                {item.status === 'succeeded' && item.imageUrl && onShareToGallery && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => onShareToGallery(item)}
+                    className="h-8 flex-1 rounded-xl border-[#E5A918]/45 bg-[#E5A918]/8 text-xs font-semibold text-foreground hover:bg-[#E5A918]/15"
+                  >
+                    <Share2Icon className="size-3.5 text-[#B47B00] dark:text-[#F5C443]" />
+                    <span>分享到画廊</span>
+                  </Button>
+                )}
                 {item.status === 'succeeded' && item.imageUrl && onUseAsExtraRef && (
                   <Button
                     type="button"
@@ -577,7 +605,7 @@ export function WorkDetailDialog({
                     className="h-8 flex-1 rounded-xl text-xs font-semibold"
                   >
                     <ImagePlusIcon className="size-3.5 text-[#116E65] dark:text-[#4FD1C5]" />
-                    <span>设为附图继续创作</span>
+                    <span>设为附图</span>
                   </Button>
                 )}
                 {item.status !== 'processing' && item.status !== 'queued' && (
@@ -598,6 +626,32 @@ export function WorkDetailDialog({
           </div>
         </div>
       </DialogContent>
+
+      <AlertDialog open={confirmRegenOpen} onOpenChange={setConfirmRegenOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>确认使用相同配方重绘？</AlertDialogTitle>
+            <AlertDialogDescription className="text-xs leading-relaxed">
+              本次将沿用该作品的三轨配方与画笔参数直接发起生图
+              {item.creditsCost > 0 ? `，预计消耗 ${item.creditsCost} 积分` : ''}
+              （若生成失败，系统将自动全额退还积分）。如需先修改参数，可点击「套用配方」。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogAction
+              className="skin-accent-btn border-0"
+              onClick={() => {
+                setConfirmRegenOpen(false)
+                onOpenChange(false)
+                onRegenerate?.(item)
+              }}
+            >
+              确认重绘{item.creditsCost > 0 ? `（${item.creditsCost} 积分）` : ''}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Dialog>
   )
 }

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { prefersReducedMotionNow } from '@/lib/motionTokens'
 import { cn } from '@/lib/utils'
 
 export interface GlowCard3DProps {
@@ -262,8 +263,16 @@ float sdRoundRect(vec2 p, vec2 b, float r) {
   vec2 q = abs(p) - (b - r);
   return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r;
 }
-vec3 spectrum(float x) {
-  return 0.5 + 0.5 * cos(6.2831853 * (x + vec3(0.0, 0.33, 0.67)));
+vec3 kinpakuFoil(float x) {
+  float w = 0.5 + 0.5 * cos(6.2831853 * x);
+  float w2 = 0.5 + 0.5 * sin(6.2831853 * x * 0.72 + 0.9);
+  vec3 gold = vec3(0.96, 0.77, 0.26);
+  vec3 bronze = vec3(0.76, 0.54, 0.16);
+  vec3 ivory = vec3(0.98, 0.95, 0.87);
+  vec3 lacquer = vec3(0.85, 0.28, 0.16);
+  vec3 base = mix(bronze, gold, w);
+  base = mix(base, ivory, pow(w2, 2.2) * 0.52);
+  return mix(base, lacquer, smoothstep(0.78, 1.0, 1.0 - w) * 0.18);
 }
 void main() {
   float d = sdRoundRect(vP, uHalf, uRadius);
@@ -287,15 +296,15 @@ void main() {
   float fresnel = pow(1.0 - clamp(dot(N, V), 0.0, 1.0), 2.5);
   float bevelEdge = 1.0 - top;
 
-  vec3 foil = spectrum(
-    dot(R.xy, vec2(1.25, 0.85)) * 0.75 +
-    dot(vP, vec2(0.55, 0.35)) +
-    uTime * 0.06
+  vec3 foil = kinpakuFoil(
+    dot(R.xy, vec2(1.25, 0.85)) * 0.65 +
+    dot(vP, vec2(0.5, 0.32)) +
+    uTime * 0.045
   );
 
-  vec3 col = c.rgb * (0.9 + 0.1 * diff);
-  col += foil * (sheenBand * 0.12 + fresnel * 0.26 + bevelEdge * 0.42);
-  col += vec3(1.0) * (spec * 0.28 * top);
+  vec3 col = c.rgb * (0.91 + 0.09 * diff);
+  col += foil * (sheenBand * 0.1 + fresnel * 0.2 + bevelEdge * 0.36);
+  col += vec3(1.0, 0.98, 0.92) * (spec * 0.26 * top);
 
   outColor = vec4(col * alpha, alpha);
 }
@@ -522,6 +531,12 @@ export function GlowCard3D({
       camZ = Math.max(fitH, fitZ)
     }
 
+    const reduced = prefersReducedMotionNow()
+    const motionAmp = reduced ? 0 : 1
+    let raf = 0
+    let lastNow = 0
+    let scheduleFrame: () => void = () => {}
+
     const resize = () => {
       const dpr = Math.min(window.devicePixelRatio || 1, 2)
       const w = Math.max(1, stage.clientWidth)
@@ -531,6 +546,7 @@ export function GlowCard3D({
       const aspect = w / h
       projMat = mat4Perspective((30 * Math.PI) / 180, aspect, 0.1, 30)
       updateCamZ()
+      scheduleFrame()
     }
     const ro = new ResizeObserver(resize)
     ro.observe(stage)
@@ -568,7 +584,16 @@ export function GlowCard3D({
             seed: seedCounter,
           }
 
-          if (transition) {
+          if (reduced) {
+            if (transition) {
+              disposeCard(transition.from)
+              disposeCard(transition.to)
+              transition = null
+            } else {
+              disposeCard(currentCard)
+            }
+            currentCard = nextCard
+          } else if (transition) {
             // 如果上一次转场尚未结束，立即释放更早的旧卡，衔接新一轮插入转场
             disposeCard(transition.from)
             const prevTo = transition.to
@@ -593,6 +618,7 @@ export function GlowCard3D({
             currentCard = nextCard
           }
           updateCamZ()
+          scheduleFrame()
         })
         .catch(() => {
           if (!disposed && token === loadSeq) {
@@ -603,20 +629,29 @@ export function GlowCard3D({
 
     loadImageRef.current(imageUrl, dirRef.current)
 
-    const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
-    const motionAmp = reduced ? 0 : 1
-
     const pointer = { x: 0, y: 0, over: false }
     const smoothTilt = { x: 0, y: 0, z: 0 }
     const targetTilt = { x: 0, y: 0, z: 0 }
-    const drag = { active: false, lastX: 0, lastY: 0, x: 0, y: 0, vx: 0, vy: 0, fx: 0, fy: 0, movedAt: 0 }
+    const drag = {
+      active: false,
+      pointerId: null as number | null,
+      lastX: 0,
+      lastY: 0,
+      x: 0,
+      y: 0,
+      vx: 0,
+      vy: 0,
+      fx: 0,
+      fy: 0,
+      movedAt: 0,
+    }
 
     const onMove = (e: PointerEvent) => {
       const rect = stage.getBoundingClientRect()
       pointer.x = ((e.clientX - rect.left) / Math.max(1, rect.width)) * 2 - 1
       pointer.y = 1 - ((e.clientY - rect.top) / Math.max(1, rect.height)) * 2
       pointer.over = true
-      if (drag.active) {
+      if (drag.active && drag.pointerId === e.pointerId) {
         const dx = e.clientX - drag.lastX
         const dy = e.clientY - drag.lastY
         drag.lastX = e.clientX
@@ -627,26 +662,33 @@ export function GlowCard3D({
         drag.fy = dx * 0.009 * 55
         drag.movedAt = performance.now()
       }
+      scheduleFrame()
     }
     const onLeave = () => {
       pointer.over = false
+      scheduleFrame()
     }
     const onDown = (e: PointerEvent) => {
-      if (e.button !== 0) return
+      if (e.button !== 0 && e.pointerType === 'mouse') return
+      if (drag.active) return
       drag.active = true
+      drag.pointerId = e.pointerId
       drag.lastX = e.clientX
       drag.lastY = e.clientY
       drag.fx = 0
       drag.fy = 0
       stage.setPointerCapture(e.pointerId)
+      scheduleFrame()
     }
     const onUp = (e: PointerEvent) => {
-      if (!drag.active) return
+      if (!drag.active || (drag.pointerId !== null && drag.pointerId !== e.pointerId)) return
       drag.active = false
+      drag.pointerId = null
       const stale = performance.now() - drag.movedAt > 90
       drag.vx = stale ? 0 : drag.fx
       drag.vy = stale ? 0 : drag.fy
       if (stage.hasPointerCapture(e.pointerId)) stage.releasePointerCapture(e.pointerId)
+      scheduleFrame()
     }
 
     stage.addEventListener('pointermove', onMove)
@@ -654,6 +696,7 @@ export function GlowCard3D({
     stage.addEventListener('pointerdown', onDown)
     stage.addEventListener('pointerup', onUp)
     stage.addEventListener('pointercancel', onUp)
+    stage.addEventListener('lostpointercapture', onUp)
 
     const idlePose = (t: number, seed: number) => ({
       x: 0,
@@ -711,14 +754,13 @@ export function GlowCard3D({
       gl.drawElements(gl.TRIANGLES, card.mesh.count, gl.UNSIGNED_SHORT, 0)
     }
 
-    let raf = 0
-    let lastNow = 0
-
     const tick = (now: number) => {
-      raf = requestAnimationFrame(tick)
+      raf = 0
       const dt = lastNow ? Math.min((now - lastNow) / 1000, 0.05) : 1 / 60
       lastNow = now
-      clock += dt
+      if (!reduced) {
+        clock += dt
+      }
 
       const hovering = pointer.over && !drag.active
       const px = hovering ? pointer.x : 0
@@ -779,6 +821,30 @@ export function GlowCard3D({
       } else if (currentCard) {
         drawCard(currentCard, idlePose(clock, currentCard.seed))
       }
+
+      const needsMoreFrames =
+        !reduced ||
+        Boolean(transition) ||
+        drag.active ||
+        Math.abs(targetTilt.x - smoothTilt.x) > 0.001 ||
+        Math.abs(targetTilt.y - smoothTilt.y) > 0.001 ||
+        Math.abs(drag.x) > 0.001 ||
+        Math.abs(drag.y) > 0.001 ||
+        Math.abs(drag.vx) > 0.002 ||
+        Math.abs(drag.vy) > 0.002
+
+      if (!disposed && document.visibilityState !== 'hidden' && needsMoreFrames) {
+        raf = requestAnimationFrame(tick)
+      } else {
+        lastNow = 0
+      }
+    }
+
+    scheduleFrame = () => {
+      if (!disposed && !raf && document.visibilityState !== 'hidden') {
+        lastNow = 0
+        raf = requestAnimationFrame(tick)
+      }
     }
 
     const onVisibility = () => {
@@ -787,16 +853,13 @@ export function GlowCard3D({
           cancelAnimationFrame(raf)
           raf = 0
         }
-      } else if (!disposed && !raf) {
-        lastNow = 0
-        raf = requestAnimationFrame(tick)
+      } else {
+        scheduleFrame()
       }
     }
     document.addEventListener('visibilitychange', onVisibility)
 
-    if (document.visibilityState !== 'hidden') {
-      raf = requestAnimationFrame(tick)
-    }
+    scheduleFrame()
 
     return () => {
       disposed = true
@@ -809,6 +872,7 @@ export function GlowCard3D({
       stage.removeEventListener('pointerdown', onDown)
       stage.removeEventListener('pointerup', onUp)
       stage.removeEventListener('pointercancel', onUp)
+      stage.removeEventListener('lostpointercapture', onUp)
       if (transition) {
         disposeCard(transition.from)
         disposeCard(transition.to)

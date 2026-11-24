@@ -129,6 +129,12 @@ function resolveDefaultChannelSetup(
       model: dreaminaOptions[0]?.value || PROVIDER_META[providerId].models[0].value,
     }
   }
+  if (providerId === 'gpt' && supplierBaseUrl && /chatgpt\.com\/backend-api\/codex/i.test(supplierBaseUrl)) {
+    return {
+      endpointMode: 'responses',
+      model: PROVIDER_META[providerId].models[0].value,
+    }
+  }
   return {
     endpointMode: defaultEndpoint,
     model: PROVIDER_META[providerId].models[0].value,
@@ -749,6 +755,7 @@ export function AdminProvidersTab({
   return (
     <div className="space-y-6">
       <AdminPageHeader
+        eyebrow="SECTION 04 // BRUSH PROFILES & ROUTING"
         title="画笔档位、分辨率定价与路由调度"
         description="每位画师家族下可开放多支画笔（建议用直白中文命名与简短特点词，如 GPT Sunburst 设为「稳绘精修 · 画得稳」、Flare 设为「疾速草图 · 画得快」），分别配置分辨率开关与积分价格；每支画笔内部独立挂载多条官方/中转站渠道做容灾调度。"
       />
@@ -1640,9 +1647,22 @@ export function AdminProvidersTab({
                     <SelectContent className="rounded-none">
                       {suppliers.map((s) => (
                         <SelectItem key={s.id} value={s.id} className="text-xs">
+                          {s.authMode === 'oauth_openai_codex'
+                            ? '[Codex OAuth] '
+                            : s.authMode === 'oauth_xai'
+                              ? '[Grok OAuth] '
+                              : ''}
                           {s.name} ({s.baseUrl})
-                          {s.keyCount > 1 ? ` [${s.activeKeyCount}/${s.keyCount} Key]` : ''}{' '}
-                          {!s.enabled ? '[已停用]' : !s.hasApiKey ? '[未配Key]' : ''}
+                          {s.keyCount > 1
+                            ? ` [${s.activeKeyCount}/${s.keyCount} ${s.authMode !== 'api_key' ? '账号' : 'Key'}]`
+                            : ''}{' '}
+                          {!s.enabled
+                            ? '[已停用]'
+                            : !s.hasApiKey
+                              ? s.authMode !== 'api_key'
+                                ? '[未授权]'
+                                : '[未配Key]'
+                              : ''}
                         </SelectItem>
                       ))}
                     </SelectContent>

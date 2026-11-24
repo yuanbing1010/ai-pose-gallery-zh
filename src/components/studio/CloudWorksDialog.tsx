@@ -17,6 +17,16 @@ import {
   Trash2Icon,
   XIcon,
 } from 'lucide-react'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
@@ -27,12 +37,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { getStudioArtist, STUDIO_ARTISTS } from '@/lib/artists'
+import { formatAspectRatioLabel } from '@/lib/artists'
 import { downloadFileName } from '@/lib/recipeImages'
 import { formatJobDuration, formatShortTime } from '@/lib/studioPromptChips'
 import { cn } from '@/lib/utils'
 import type { GenerationHistoryItem } from '@/types/gallery'
-import type { ImageProviderId } from '../../../shared/studio'
 
 type StatusFilter = 'all' | 'succeeded' | 'processing' | 'queued' | 'failed'
 
@@ -73,11 +82,24 @@ export function CloudWorksDialog({
 }: CloudWorksDialogProps) {
   const [searchQuery, setSearchQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
-  const [providerFilter, setProviderFilter] = useState<'all' | ImageProviderId>('all')
+  const [brushFilter, setBrushFilter] = useState<string>('all')
   const [refreshing, setRefreshing] = useState(false)
   const [batchMode, setBatchMode] = useState(false)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
   const [batchDeleting, setBatchDeleting] = useState(false)
+  const [batchDeleteConfirmOpen, setBatchDeleteConfirmOpen] = useState(false)
+  const [pendingRegenerateItem, setPendingRegenerateItem] = useState<GenerationHistoryItem | null>(
+    null
+  )
+
+  const brushOptions = useMemo(() => {
+    const seen = new Set<string>()
+    for (const item of history) {
+      const name = item.profileName?.trim()
+      if (name) seen.add(name)
+    }
+    return Array.from(seen)
+  }, [history])
 
   const counts = useMemo(() => {
     const map = { all: history.length, succeeded: 0, processing: 0, queued: 0, failed: 0 }
@@ -103,23 +125,19 @@ export function CloudWorksDialog({
       ) {
         return false
       }
-      if (providerFilter !== 'all' && item.provider !== providerFilter) return false
+      if (brushFilter !== 'all' && (item.profileName?.trim() || '') !== brushFilter) return false
       if (!q) return true
-      const artist = getStudioArtist(item.provider)
       const haystack = [
         item.recipeSummary,
-        item.prompt,
         item.snapshot?.sceneNote || '',
         item.profileName || '',
-        item.model,
-        artist.name,
         item.aspectRatio,
       ]
         .join(' ')
         .toLowerCase()
       return haystack.includes(q)
     })
-  }, [history, searchQuery, statusFilter, providerFilter])
+  }, [history, searchQuery, statusFilter, brushFilter])
 
   const deletableFilteredIds = useMemo(
     () =>
@@ -130,12 +148,12 @@ export function CloudWorksDialog({
   )
 
   const hasActiveFilter =
-    searchQuery.trim().length > 0 || statusFilter !== 'all' || providerFilter !== 'all'
+    searchQuery.trim().length > 0 || statusFilter !== 'all' || brushFilter !== 'all'
 
   const resetFilters = () => {
     setSearchQuery('')
     setStatusFilter('all')
-    setProviderFilter('all')
+    setBrushFilter('all')
   }
 
   const handleRefresh = async () => {
@@ -206,7 +224,7 @@ export function CloudWorksDialog({
               云端作品集 ({history.length})
             </DialogTitle>
             <span className="text-xs text-muted-foreground">
-              点击缩略图查看任务配方详情与提示词
+              点击缩略图查看任务配方与参数详情
             </span>
           </div>
 
@@ -239,14 +257,14 @@ export function CloudWorksDialog({
 
         {/* 搜索与状态筛选栏 */}
         {history.length > 0 && (
-          <div className="shrink-0 space-y-2 rounded-2xl border border-border/80 bg-[#FAF8F4] p-2.5 dark:bg-muted/30">
+          <div className="shrink-0 space-y-2 rounded-2xl border border-border/80 bg-secondary/55 p-2.5 dark:bg-muted/30">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
               <div className="relative min-w-0 flex-1">
                 <SearchIcon className="pointer-events-none absolute top-1/2 left-3 size-3.5 -translate-y-1/2 text-muted-foreground" />
                 <Input
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="搜索配方、补充细节、提示词或画笔…"
+                  placeholder="搜索配方、补充细节或画笔…"
                   className="h-8 rounded-xl bg-card pr-8 pl-8 text-xs"
                 />
                 {searchQuery && (
@@ -262,25 +280,24 @@ export function CloudWorksDialog({
               </div>
 
               <div className="flex items-center gap-1.5">
-                <Select
-                  value={providerFilter}
-                  onValueChange={(v) => setProviderFilter(v as 'all' | ImageProviderId)}
-                >
-                  <SelectTrigger
-                    aria-label="按画师筛选"
-                    className="h-8 w-full rounded-xl bg-card text-xs sm:w-40"
-                  >
-                    <SelectValue placeholder="全部画师" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">全部画师</SelectItem>
-                    {STUDIO_ARTISTS.map((a) => (
-                      <SelectItem key={a.id} value={a.id}>
-                        {a.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                {brushOptions.length > 0 && (
+                  <Select value={brushFilter} onValueChange={setBrushFilter}>
+                    <SelectTrigger
+                      aria-label="按画笔筛选"
+                      className="h-8 w-full rounded-xl bg-card text-xs sm:w-40"
+                    >
+                      <SelectValue placeholder="全部画笔" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">全部画笔</SelectItem>
+                      {brushOptions.map((name) => (
+                        <SelectItem key={name} value={name}>
+                          {name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
 
                 {hasActiveFilter && (
                   <Button
@@ -352,7 +369,7 @@ export function CloudWorksDialog({
                     variant="destructive"
                     size="sm"
                     disabled={selectedIds.size === 0 || batchDeleting}
-                    onClick={() => void handleBatchDeleteConfirm()}
+                    onClick={() => setBatchDeleteConfirmOpen(true)}
                     className="h-7 rounded-full px-3 text-xs font-semibold"
                   >
                     {batchDeleting ? '删除中…' : `删除选中 (${selectedIds.size})`}
@@ -364,7 +381,7 @@ export function CloudWorksDialog({
         )}
 
         {/* 主体列表区 */}
-        <div className="min-h-0 flex-1 overflow-y-auto pr-0.5">
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain pr-0.5">
           {history.length === 0 ? (
             <div className="flex flex-col items-center justify-center gap-2 py-14 text-center">
               <SparklesIcon className="size-7 text-[#E5A918]" />
@@ -377,7 +394,7 @@ export function CloudWorksDialog({
             <div className="flex flex-col items-center justify-center gap-2.5 py-14 text-center">
               <SearchIcon className="size-7 text-muted-foreground/60" />
               <div className="text-sm font-bold text-foreground">没有匹配的作品记录</div>
-              <p className="text-xs text-muted-foreground">试试调整搜索关键词、状态或画师筛选。</p>
+              <p className="text-xs text-muted-foreground">试试调整搜索关键词、状态或画笔筛选。</p>
               <Button
                 type="button"
                 variant="outline"
@@ -391,7 +408,6 @@ export function CloudWorksDialog({
           ) : (
             <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
               {filteredItems.map((h) => {
-                const artist = getStudioArtist(h.provider)
                 const duration = formatJobDuration(h.startedAt ?? h.createdAt, h.finishedAt)
                 const sceneNote = h.snapshot?.sceneNote?.trim()
                 const deletable = h.status !== 'processing' && h.status !== 'queued'
@@ -403,12 +419,12 @@ export function CloudWorksDialog({
                     className={cn(
                       'group flex overflow-hidden rounded-2xl border bg-card transition-colors',
                       selected
-                        ? 'border-[#D9381E] ring-1 ring-[#D9381E]/60'
+                        ? 'border-[var(--skin-accent)] ring-1 ring-[var(--skin-accent)]/60'
                         : 'border-border/85 hover:border-foreground/25'
                     )}
                   >
                     {/* 左侧封面舞台（固定宽高比例，点击进详情或批量勾选） */}
-                    <div className="relative w-34 shrink-0 overflow-hidden bg-[#FAF8F4] sm:w-42 dark:bg-muted/35">
+                    <div className="relative w-34 shrink-0 overflow-hidden bg-secondary/55 sm:w-42 dark:bg-muted/35">
                       {h.status === 'succeeded' && h.imageUrl ? (
                         <button
                           type="button"
@@ -518,7 +534,7 @@ export function CloudWorksDialog({
                           className={cn(
                             'absolute top-2 right-2 flex size-6 items-center justify-center rounded-full border transition',
                             selected
-                              ? 'border-[#D9381E] bg-[#D9381E] text-white'
+                              ? 'skin-accent-btn border-transparent'
                               : 'border-border bg-background/90 text-transparent hover:border-foreground'
                           )}
                         >
@@ -540,17 +556,17 @@ export function CloudWorksDialog({
                           </button>
                         </div>
 
-                        {/* 标签行：画师/画笔、画幅分辨率、耗时、积分 */}
+                        {/* 标签行：画笔、画幅分辨率、耗时、积分 */}
                         <div className="flex flex-wrap items-center gap-1 text-xs">
-                          <span className="rounded-md border border-border/80 bg-[#FAF8F4] px-1.5 py-0.5 font-medium text-foreground dark:bg-muted/40">
-                            {h.profileName || artist.name}
+                          <span className="rounded-md border border-border/80 bg-secondary/55 px-1.5 py-0.5 font-medium text-foreground dark:bg-muted/40">
+                            {h.profileName || '默认画笔'}
                           </span>
-                          <span className="rounded-md border border-border/80 bg-[#FAF8F4] px-1.5 py-0.5 font-mono text-foreground dark:bg-muted/40">
-                            {h.aspectRatio}
+                          <span className="rounded-md border border-border/80 bg-secondary/55 px-1.5 py-0.5 font-mono text-foreground dark:bg-muted/40">
+                            {formatAspectRatioLabel(h.aspectRatio)}
                             {h.resolution ? ` · ${h.resolution}` : ''}
                           </span>
                           {duration && (
-                            <span className="rounded-md border border-border/80 bg-[#FAF8F4] px-1.5 py-0.5 font-mono tabular-nums text-muted-foreground dark:bg-muted/40">
+                            <span className="rounded-md border border-border/80 bg-secondary/55 px-1.5 py-0.5 font-mono tabular-nums text-muted-foreground dark:bg-muted/40">
                               {duration}
                             </span>
                           )}
@@ -572,7 +588,7 @@ export function CloudWorksDialog({
                         <p className="line-clamp-2 text-xs leading-relaxed text-muted-foreground">
                           {h.status === 'failed' || h.status === 'cancelled'
                             ? h.errorMessage || '任务未生成成图'
-                            : sceneNote || h.prompt || '无额外细节描述'}
+                            : sceneNote || '无额外细节描述'}
                         </p>
                       </div>
 
@@ -581,8 +597,8 @@ export function CloudWorksDialog({
                         <div className="flex flex-wrap items-center gap-1">
                           <button
                             type="button"
-                            title="查看任务信息与提示词"
-                            aria-label="查看任务信息与提示词"
+                            title="查看任务详情"
+                            aria-label="查看任务详情"
                             onClick={() => onOpenDetail(h)}
                             className="inline-flex h-7 items-center gap-1 rounded-lg border border-border/75 bg-background px-2 text-xs font-medium text-foreground transition hover:bg-muted"
                           >
@@ -603,13 +619,18 @@ export function CloudWorksDialog({
                               </button>
                               <button
                                 type="button"
-                                title="用相同配方再来一张"
-                                aria-label="同配重绘"
-                                onClick={() => {
-                                  onOpenChange(false)
-                                  onRegenerate(h)
-                                }}
-                                className="inline-flex size-7 items-center justify-center rounded-lg border border-border/75 bg-background text-[#D9381E] transition hover:bg-[#D9381E]/10"
+                                title={
+                                  h.creditsCost > 0
+                                    ? `同配重绘（约 ${h.creditsCost} 积分）`
+                                    : '用相同配方再来一张'
+                                }
+                                aria-label={
+                                  h.creditsCost > 0
+                                    ? `同配重绘（约 ${h.creditsCost} 积分）`
+                                    : '同配重绘'
+                                }
+                                onClick={() => setPendingRegenerateItem(h)}
+                                className="inline-flex size-7 items-center justify-center rounded-lg border border-border/75 bg-background text-[var(--skin-accent)] transition-[transform,background-color] duration-150 ease-[var(--ease-out)] hover:bg-[var(--skin-accent)]/12 active:scale-95"
                               >
                                 <SparklesIcon className="size-3.5" />
                               </button>
@@ -681,6 +702,68 @@ export function CloudWorksDialog({
           )}
         </div>
       </DialogContent>
+
+      <AlertDialog open={batchDeleteConfirmOpen} onOpenChange={setBatchDeleteConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>确认永久删除选中的 {selectedIds.size} 件作品？</AlertDialogTitle>
+            <AlertDialogDescription className="text-xs leading-relaxed">
+              将从云端作品集永久移除这 {selectedIds.size} 条记录及对应成图，删除后不可恢复。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={batchDeleting}>取消</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              disabled={batchDeleting}
+              onClick={() => {
+                setBatchDeleteConfirmOpen(false)
+                void handleBatchDeleteConfirm()
+              }}
+            >
+              {batchDeleting ? '删除中…' : `确认删除 (${selectedIds.size})`}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog
+        open={pendingRegenerateItem !== null}
+        onOpenChange={(next) => {
+          if (!next) setPendingRegenerateItem(null)
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>确认同配重绘？</AlertDialogTitle>
+            <AlertDialogDescription className="text-xs leading-relaxed">
+              将直接复用「{pendingRegenerateItem?.recipeSummary || '该作品'}」的配方发起生图
+              {pendingRegenerateItem && pendingRegenerateItem.creditsCost > 0
+                ? `，预计消耗 ${pendingRegenerateItem.creditsCost} 积分`
+                : ''}
+              （失败自动全额退还积分）。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogAction
+              className="skin-accent-btn border-0"
+              onClick={() => {
+                if (!pendingRegenerateItem) return
+                const target = pendingRegenerateItem
+                setPendingRegenerateItem(null)
+                onOpenChange(false)
+                onRegenerate(target)
+              }}
+            >
+              确认重绘
+              {pendingRegenerateItem && pendingRegenerateItem.creditsCost > 0
+                ? `（${pendingRegenerateItem.creditsCost} 积分）`
+                : ''}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Dialog>
   )
 }

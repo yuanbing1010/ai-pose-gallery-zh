@@ -42,13 +42,31 @@ export function generateRedeemCode(prefix = 'POSE'): string {
   return `${cleanPrefix}-${chars.slice(0, 4)}-${chars.slice(4, 8)}`
 }
 
-function timingSafeEqual(a: Uint8Array, b: Uint8Array): boolean {
-  if (a.length !== b.length) return false
+function timingSafeEqualBytes(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.byteLength !== b.byteLength) return false
+  const subtle = crypto.subtle as SubtleCrypto & {
+    timingSafeEqual?: (a: BufferSource, b: BufferSource) => boolean
+  }
+  if (typeof subtle.timingSafeEqual === 'function') {
+    return subtle.timingSafeEqual(a, b)
+  }
   let diff = 0
   for (let i = 0; i < a.length; i++) {
     diff |= a[i] ^ b[i]
   }
   return diff === 0
+}
+
+/**
+ * 恒定时间文本比较：先做定长 SHA-256 摘要，再用 Workers 原生 crypto.subtle.timingSafeEqual 比对，
+ * 避免长度短路与逐字节时序侧信道。
+ */
+export async function timingSafeEqualText(a: string, b: string): Promise<boolean> {
+  const [hashA, hashB] = await Promise.all([
+    crypto.subtle.digest('SHA-256', textEncoder.encode(a)),
+    crypto.subtle.digest('SHA-256', textEncoder.encode(b)),
+  ])
+  return timingSafeEqualBytes(new Uint8Array(hashA), new Uint8Array(hashB))
 }
 
 const PBKDF2_ITERATIONS = 100_000
@@ -83,16 +101,17 @@ export async function verifyPassword(password: string, stored: string): Promise<
       baseKey,
       expected.length * 8
     )
-    return timingSafeEqual(new Uint8Array(bits), expected)
+    return timingSafeEqualBytes(new Uint8Array(bits), expected)
   } catch {
     return false
   }
 }
 
-const FALLBACK_DEV_SECRET = 'ai-pose-gallery-local-dev-only-secret-do-not-use-in-prod'
-
 async function deriveAesKey(secret?: string): Promise<CryptoKey> {
-  const material = (secret && secret.trim()) || FALLBACK_DEV_SECRET
+  const material = (secret || '').trim()
+  if (!material) {
+    throw new Error('未配置 APP_ENCRYPTION_KEY，拒绝在无加密密钥时处理敏感凭证')
+  }
   const digest = await crypto.subtle.digest('SHA-256', textEncoder.encode(material))
   return crypto.subtle.importKey('raw', digest, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt'])
 }
@@ -112,10 +131,11 @@ export async function decryptSecret(stored: string, secret?: string): Promise<st
   if (!stored.startsWith('enc:v1:')) return stored
   const parts = stored.split(':')
   if (parts.length !== 4) return ''
+  // 先校验并派生密钥（缺失 APP_ENCRYPTION_KEY 时显式抛错，禁止在 catch 中静默吞掉配置故障）
+  const key = await deriveAesKey(secret)
   try {
     const iv = base64ToBytes(parts[2])
     const cipher = base64ToBytes(parts[3])
-    const key = await deriveAesKey(secret)
     const plainBuf = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, cipher)
     return textDecoder.decode(plainBuf)
   } catch {

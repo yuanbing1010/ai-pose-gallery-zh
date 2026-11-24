@@ -362,6 +362,7 @@ export function AdminDescriptionsTab({
   return (
     <div className="space-y-6">
       <AdminPageHeader
+        eyebrow="SECTION 09 // IMAGE-TO-TEXT CACHE"
         title="图转文生图与描述库"
         description="开启后，前台工作台将常驻「带图生图 / 图转文生图」切换开关：用户选择图转文生图时，将把姿势图、服装图、人像图及附加参考图转译为文字描述并执行纯文生图（适用于 GPT / Grok / Gemini 自家协议渠道，跳过 WaveSpeed 渠道）。同一张图仅转译一次，后续命中 D1 缓存直读。"
       />
@@ -417,8 +418,19 @@ export function AdminDescriptionsTab({
                         disabled={!usable}
                         className="text-xs"
                       >
+                        {s.authMode === 'oauth_openai_codex'
+                          ? '[Codex OAuth] '
+                          : s.authMode === 'oauth_xai'
+                            ? '[Grok OAuth] '
+                            : ''}
                         {s.name} ({s.baseUrl}){' '}
-                        {!s.enabled ? '[已停用 · 不可用]' : !s.hasApiKey ? '[未配Key · 不可用]' : ''}
+                        {!s.enabled
+                          ? '[已停用 · 不可用]'
+                          : !s.hasApiKey
+                            ? s.authMode !== 'api_key'
+                              ? '[未授权 · 不可用]'
+                              : '[未配Key · 不可用]'
+                            : ''}
                       </SelectItem>
                     )
                   })}
@@ -751,7 +763,7 @@ export function AdminDescriptionsTab({
       </AdminPanel>
 
       <Dialog open={Boolean(editingItem)} onOpenChange={(v) => !v && setEditingItem(null)}>
-        <DialogContent className={`max-w-xl ${ADMIN_DIALOG_CLS}`}>
+        <DialogContent className={`w-[95vw] max-w-xl sm:max-w-xl ${ADMIN_DIALOG_CLS}`}>
           <DialogHeader>
             <DialogTitle className="text-sm font-bold">
               编辑参考图文字描述（保存后锁定为人工精修）
@@ -803,7 +815,7 @@ export function AdminDescriptionsTab({
       </Dialog>
 
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-        <DialogContent className={`max-w-xl ${ADMIN_DIALOG_CLS}`}>
+        <DialogContent className={`w-[95vw] max-w-xl sm:max-w-xl ${ADMIN_DIALOG_CLS}`}>
           <DialogHeader>
             <DialogTitle className="text-sm font-bold">
               即时测试视觉转译 / 手动预录入参考图描述

@@ -39,6 +39,16 @@ const distDir = path.join(repoRoot, 'dist')
 const isWin = process.platform === 'win32'
 const pnpmCmd = isWin ? 'pnpm.cmd' : 'pnpm'
 
+console.log('[build-dist] Generating lightweight data/home-preview.json...')
+const previewRes = spawnSync(process.execPath, ['scripts/build-home-preview.mjs'], {
+  cwd: repoRoot,
+  stdio: 'inherit',
+  env: process.env,
+})
+if (previewRes.status !== 0) {
+  process.exit(previewRes.status ?? 1)
+}
+
 console.log('[build-dist] Running frontend & TypeScript build...')
 const buildRes = spawnSync(pnpmCmd, ['build'], {
   cwd: repoRoot,

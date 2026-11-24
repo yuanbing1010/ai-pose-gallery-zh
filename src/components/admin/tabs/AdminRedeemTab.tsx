@@ -256,6 +256,7 @@ export function AdminRedeemTab({
   return (
     <div className="space-y-6">
       <AdminPageHeader
+        eyebrow="SECTION 02 // REDEEM CODES"
         title={`积分兑换码管理 (${counts.all})`}
         description="批量生成一次性或多次可用兑换码，支持按卡密码/批次备注检索及服务端分页。"
       />

@@ -26,12 +26,12 @@ export const CARD_ACCENT_PALETTES = {
     glow: 'from-[#4FD1C5]/18',
   },
   violet: {
-    ring: 'border-violet-400/40',
-    beam: 'via-violet-400/80',
-    jewel: 'bg-violet-400 shadow-[0_0_10px_rgba(167,139,250,0.85)]',
-    dot: 'bg-violet-400',
-    pill: 'bg-violet-500/12 text-violet-700 dark:bg-violet-400/15 dark:text-violet-300 ring-violet-400/35',
-    glow: 'from-violet-400/18',
+    ring: 'border-[#9B4D5B]/40',
+    beam: 'via-[#9B4D5B]/80',
+    jewel: 'bg-[#9B4D5B] shadow-[0_0_10px_rgba(155,77,91,0.75)]',
+    dot: 'bg-[#9B4D5B]',
+    pill: 'bg-[#9B4D5B]/12 text-[#7A3442] dark:bg-[#C47380]/18 dark:text-[#E8A3AE] ring-[#9B4D5B]/35',
+    glow: 'from-[#9B4D5B]/16',
   },
   amber: {
     ring: 'border-amber-400/40',
@@ -86,11 +86,11 @@ export function getCostumeAccent(category: string, _kind = '', tiltSeed = 0): Ca
   let key: PaletteKey = 'gold'
   if (/性感|内衣/.test(category)) {
     key = 'crimson'
-  } else if (/礼服|派对|偶像|洛丽塔|地雷|哥特|暗黑/.test(category)) {
+  } else if (/礼服|派对|偶像|洛丽塔|地雷|哥特|暗黑|Y2K|辣妹/.test(category)) {
     key = 'violet'
-  } else if (/春|夏|泳装|运动/.test(category)) {
+  } else if (/春|夏|泳装|运动|芭蕾/.test(category)) {
     key = 'cyan'
-  } else if (/制服|通勤|居家|职业|奇幻|军事|科幻|创意/.test(category)) {
+  } else if (/制服|通勤|居家|职业|奇幻|军事|军装|机能|科幻|未来|创意|户外/.test(category)) {
     key = 'amber'
   }
   return withTilt(key, tiltSeed)

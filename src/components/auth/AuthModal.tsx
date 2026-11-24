@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from 'react'
+import { motion } from 'motion/react'
 import { EyeIcon, EyeOffIcon, KeyRoundIcon, LoaderCircleIcon, SparklesIcon, UserPlusIcon } from 'lucide-react'
 import { BrandMark } from '@/components/common/BrandMark'
 import { Button } from '@/components/ui/button'
@@ -132,38 +133,56 @@ export function AuthModal() {
             </DialogTitle>
           </div>
           <DialogDescription className="text-xs text-muted-foreground">
-            登录后可使用云端 AI 画师生成角色立绘，并在云端持久保存全部创作作品与配方记录。
+            登录后即可使用云端生图并在多设备同步作品集；本地已挑好的三轨配方草稿将自动保留。
           </DialogDescription>
         </DialogHeader>
 
         {/* 登录 / 注册切换（关闭自助注册时仅保留登录视图） */}
         {(!bootstrapLoaded || platform.allowRegistration) && (
-          <div className="grid grid-cols-2 gap-1.5 rounded-xl border border-border bg-muted/60 p-1">
+          <div role="tablist" aria-label="账号认证方式" className="ks-recess grid grid-cols-2 gap-1.5 rounded-xl border border-border p-1">
             <button
               type="button"
+              role="tab"
+              aria-selected={effectiveTab === 'login'}
               onClick={() => switchTab('login')}
               className={cn(
-                'flex h-8 items-center justify-center gap-1.5 rounded-lg text-xs font-semibold transition-colors',
+                'relative flex h-9 items-center justify-center gap-1.5 rounded-lg text-xs font-semibold transition-colors sm:h-8',
                 effectiveTab === 'login'
-                  ? 'bg-card text-foreground shadow-xs'
+                  ? 'text-foreground'
                   : 'text-muted-foreground hover:text-foreground'
               )}
             >
-              <KeyRoundIcon className="size-3.5" />
-              <span>登录账号</span>
+              {effectiveTab === 'login' && (
+                <motion.span
+                  layoutId="auth-modal-tab-pill"
+                  transition={{ type: 'spring', stiffness: 500, damping: 36 }}
+                  className="ks-paper-keycap pointer-events-none absolute inset-0 rounded-lg bg-card dark:bg-[#2A2722] dark:ring-1 dark:ring-[#E5A918]/35"
+                />
+              )}
+              <KeyRoundIcon className="relative z-10 size-3.5" />
+              <span className="relative z-10">登录账号</span>
             </button>
             <button
               type="button"
+              role="tab"
+              aria-selected={effectiveTab === 'register'}
               onClick={() => switchTab('register')}
               className={cn(
-                'flex h-8 items-center justify-center gap-1.5 rounded-lg text-xs font-semibold transition-colors',
+                'relative flex h-9 items-center justify-center gap-1.5 rounded-lg text-xs font-semibold transition-colors sm:h-8',
                 effectiveTab === 'register'
-                  ? 'bg-card text-foreground shadow-xs'
+                  ? 'text-foreground'
                   : 'text-muted-foreground hover:text-foreground'
               )}
             >
-              <UserPlusIcon className="size-3.5" />
-              <span>注册账号</span>
+              {effectiveTab === 'register' && (
+                <motion.span
+                  layoutId="auth-modal-tab-pill"
+                  transition={{ type: 'spring', stiffness: 500, damping: 36 }}
+                  className="ks-paper-keycap pointer-events-none absolute inset-0 rounded-lg bg-card dark:bg-[#2A2722] dark:ring-1 dark:ring-[#E5A918]/35"
+                />
+              )}
+              <UserPlusIcon className="relative z-10 size-3.5" />
+              <span className="relative z-10">注册账号</span>
             </button>
           </div>
         )}
@@ -207,6 +226,9 @@ export function AuthModal() {
                 <Input
                   id="auth-account"
                   autoComplete="username"
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  enterKeyHint="next"
                   value={account}
                   onChange={(e) => {
                     setAccount(e.target.value)
@@ -226,6 +248,7 @@ export function AuthModal() {
                     id="auth-login-password"
                     type={showPassword ? 'text' : 'password'}
                     autoComplete="current-password"
+                    enterKeyHint="done"
                     value={password}
                     onChange={(e) => {
                       setPassword(e.target.value)
@@ -238,7 +261,7 @@ export function AuthModal() {
                     type="button"
                     aria-label={showPassword ? '隐藏密码' : '显示密码'}
                     onClick={() => setShowPassword((v) => !v)}
-                    className="absolute top-1/2 right-2.5 -translate-y-1/2 rounded p-1 text-muted-foreground hover:text-foreground"
+                    className="absolute top-1/2 right-1.5 flex size-8 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground before:absolute before:-inset-1.5 before:content-[''] hover:text-foreground"
                   >
                     {showPassword ? <EyeOffIcon className="size-3.5" /> : <EyeIcon className="size-3.5" />}
                   </button>
@@ -248,7 +271,7 @@ export function AuthModal() {
               <Button
                 type="submit"
                 disabled={submitting}
-                className="ks-keycap h-10 w-full rounded-xl border-0 bg-[#D9381E] text-xs font-bold text-white hover:bg-[#C23018]"
+                className="skin-accent-btn ks-keycap h-10 w-full rounded-xl border-0 text-xs font-bold text-white"
               >
                 {submitting ? <LoaderCircleIcon className="size-4 animate-spin" /> : null}
                 <span>{submitting ? '正在登录…' : '立即登录'}</span>
@@ -321,6 +344,9 @@ export function AuthModal() {
                 <Input
                   id="auth-reg-username"
                   autoComplete="username"
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  enterKeyHint="next"
                   value={username}
                   onChange={(e) => {
                     setUsername(e.target.value)
@@ -338,6 +364,7 @@ export function AuthModal() {
                   </Label>
                   <Input
                     id="auth-reg-display"
+                    enterKeyHint="next"
                     value={displayName}
                     onChange={(e) => setDisplayName(e.target.value)}
                     placeholder="展示名称"
@@ -352,6 +379,9 @@ export function AuthModal() {
                     id="auth-reg-email"
                     type="email"
                     autoComplete="email"
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    enterKeyHint="next"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     placeholder="可用于登录"
@@ -370,6 +400,7 @@ export function AuthModal() {
                       id="auth-reg-password"
                       type={showPassword ? 'text' : 'password'}
                       autoComplete="new-password"
+                      enterKeyHint="next"
                       value={password}
                       onChange={(e) => {
                         setPassword(e.target.value)
@@ -382,7 +413,7 @@ export function AuthModal() {
                       type="button"
                       aria-label={showPassword ? '隐藏密码' : '显示密码'}
                       onClick={() => setShowPassword((v) => !v)}
-                      className="absolute top-1/2 right-2.5 -translate-y-1/2 rounded p-1 text-muted-foreground hover:text-foreground"
+                      className="absolute top-1/2 right-1.5 flex size-8 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground before:absolute before:-inset-1.5 before:content-[''] hover:text-foreground"
                     >
                       {showPassword ? <EyeOffIcon className="size-3.5" /> : <EyeIcon className="size-3.5" />}
                     </button>
@@ -397,6 +428,7 @@ export function AuthModal() {
                       id="auth-reg-confirm"
                       type={showConfirmPassword ? 'text' : 'password'}
                       autoComplete="new-password"
+                      enterKeyHint="done"
                       value={confirmPassword}
                       onChange={(e) => {
                         setConfirmPassword(e.target.value)
@@ -409,7 +441,7 @@ export function AuthModal() {
                       type="button"
                       aria-label={showConfirmPassword ? '隐藏确认密码' : '显示确认密码'}
                       onClick={() => setShowConfirmPassword((v) => !v)}
-                      className="absolute top-1/2 right-2.5 -translate-y-1/2 rounded p-1 text-muted-foreground hover:text-foreground"
+                      className="absolute top-1/2 right-1.5 flex size-8 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground before:absolute before:-inset-1.5 before:content-[''] hover:text-foreground"
                     >
                       {showConfirmPassword ? <EyeOffIcon className="size-3.5" /> : <EyeIcon className="size-3.5" />}
                     </button>
@@ -420,7 +452,7 @@ export function AuthModal() {
               <Button
                 type="submit"
                 disabled={submitting}
-                className="ks-keycap h-10 w-full rounded-xl border-0 bg-[#D9381E] text-xs font-bold text-white hover:bg-[#C23018]"
+                className="skin-accent-btn ks-keycap h-10 w-full rounded-xl border-0 text-xs font-bold text-white"
               >
                 {submitting ? <LoaderCircleIcon className="size-4 animate-spin" /> : null}
                 <span>{submitting ? '正在创建账号…' : '完成注册并登录'}</span>

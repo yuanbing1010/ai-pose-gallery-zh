@@ -1,0 +1,398 @@
+/* /blindbox 3D 手撕盲盒物理样式（金属金箔 / 朱砂 / 青铜松石光泽收敛版） */
+.hp-stage {
+    --ph: min(400px, 50dvh);
+    --pw: calc(var(--ph) * 0.69);
+    --cw: calc(var(--pw) * 0.84);
+    --ch: calc(var(--cw) * 1.4);
+    --crimp: calc(var(--ph) * 0.068);
+    --d: 14px;
+    /* 金属金箔 × 朱砂 × 松石冷银微光，替代彩虹糖果渐变 */
+    --rainbow: repeating-linear-gradient(
+        112deg,
+        #f5c443 0%,
+        #e5a918 6%,
+        #f3ede0 11%,
+        #4dc4b8 16%,
+        #e57252 21%,
+        #f5c443 26%
+    );
+    perspective: 1400px;
+    perspective-origin: 50% 44%;
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+.hp-scene {
+    position: absolute;
+    inset: 0;
+    transform-style: preserve-3d;
+    pointer-events: none;
+}
+
+.hp-scene.hp-flat {
+    transform-style: flat;
+    perspective: 1400px;
+    perspective-origin: 50% 44%;
+}
+
+.hp-ground {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: calc(var(--pw) * 0.95);
+    height: calc(var(--pw) * 0.16);
+    margin: calc(var(--pw) * -0.08) 0 0 calc(var(--pw) * -0.475);
+    border-radius: 50%;
+    background: radial-gradient(closest-side, rgba(25, 20, 12, 0.32), transparent);
+    filter: blur(6px);
+    pointer-events: none;
+}
+
+.hp-pack,
+.hp-card {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform-style: preserve-3d;
+}
+
+.hp-held .hp-pack,
+.hp-tug .hp-pack {
+    will-change: transform;
+}
+
+.hp-pack {
+    width: var(--pw);
+    height: var(--ph);
+    margin: calc(var(--ph) / -2) 0 0 calc(var(--pw) / -2);
+}
+
+.hp-skin,
+.hp-ply-front,
+.hp-ply-foil {
+    position: absolute;
+    inset: 0;
+    backface-visibility: hidden;
+    --tooth: calc(var(--pw) / 26);
+    background:
+        linear-gradient(90deg, transparent 91%, rgba(0, 0, 0, 0.16) 97.6%) 0 50% / 100% calc(100% - 2 * var(--crimp)) no-repeat,
+        repeating-linear-gradient(90deg, rgba(0, 0, 0, 0.18) 0 1px, rgba(255, 255, 255, 0.08) 1px 2px, transparent 2px 5px) 0 0 / 100% var(--crimp) no-repeat,
+        repeating-linear-gradient(90deg, rgba(0, 0, 0, 0.18) 0 1px, rgba(255, 255, 255, 0.08) 1px 2px, transparent 2px 5px) 0 100% / 100% var(--crimp) no-repeat,
+        var(--pack, #B86B27);
+    -webkit-mask:
+        conic-gradient(from 135deg at 50% 0, #0000, #000 1deg 89deg, #0000 90deg) 0 0 / var(--tooth) calc(var(--tooth) / 2) repeat-x,
+        linear-gradient(#000 0 0) 0 50% / 100% calc(100% - var(--tooth)) no-repeat,
+        conic-gradient(from -45deg at 50% 100%, #0000, #000 1deg 89deg, #0000 90deg) 0 100% / var(--tooth) calc(var(--tooth) / 2) repeat-x;
+    mask:
+        conic-gradient(from 135deg at 50% 0, #0000, #000 1deg 89deg, #0000 90deg) 0 0 / var(--tooth) calc(var(--tooth) / 2) repeat-x,
+        linear-gradient(#000 0 0) 0 50% / 100% calc(100% - var(--tooth)) no-repeat,
+        conic-gradient(from -45deg at 50% 100%, #0000, #000 1deg 89deg, #0000 90deg) 0 100% / var(--tooth) calc(var(--tooth) / 2) repeat-x;
+}
+
+.hp-skin {
+    transform: translateZ(calc(var(--d) / 2));
+}
+
+.hp-skin.hp-back {
+    transform: rotateY(180deg) translateZ(calc(var(--d) / 2));
+}
+
+.hp-skin::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    pointer-events: none;
+    background: linear-gradient(90deg, transparent 2.4%, rgba(255, 255, 255, 0.72) 3%, rgba(255, 255, 255, 0.28) 5%, transparent 9%);
+    -webkit-mask: linear-gradient(transparent 7%, #000 13% 48%, transparent 84%);
+    mask: linear-gradient(transparent 7%, #000 13% 48%, transparent 84%);
+    translate: calc(var(--gx, 0) * 1%) 0;
+}
+
+.hp-flow {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: var(--pw);
+    height: var(--ph);
+    margin: calc(var(--ph) / -2) 0 0 calc(var(--pw) / -2);
+    transform-style: preserve-3d;
+    pointer-events: none;
+}
+
+.hp-rays {
+    position: absolute;
+    left: 0;
+    width: 100%;
+    top: calc(10.8% - var(--pw) * 0.6);
+    height: calc(var(--pw) * 0.76);
+    overflow: visible;
+    opacity: 0;
+    transform: translateZ(-6px);
+}
+
+.hp-tear-tag {
+    position: absolute;
+    left: 9%;
+    top: calc(var(--crimp) + 1%);
+    font: 700 calc(var(--pw) * 0.029) / 1 system-ui, sans-serif;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: rgba(255, 255, 255, 0.8);
+}
+
+.hp-mark {
+    position: absolute;
+    left: 9%;
+    top: 15.5%;
+    font: 800 calc(var(--pw) * 0.132) / 1 system-ui, sans-serif;
+    letter-spacing: -0.045em;
+    color: #ffffff;
+}
+
+.hp-mark.hp-sm {
+    left: 0;
+    right: 0;
+    top: 22%;
+    text-align: center;
+    font-size: max(12px, calc(var(--pw) * 0.088));
+}
+
+.hp-series {
+    position: absolute;
+    right: 9%;
+    top: 17.5%;
+    font: 600 calc(var(--pw) * 0.036) / 1 system-ui, sans-serif;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: rgba(255, 255, 255, 0.74);
+}
+
+.hp-foot {
+    position: absolute;
+    bottom: calc(var(--crimp) + 3.4%);
+    font: 500 calc(var(--pw) * 0.042) / 1 system-ui, sans-serif;
+    color: rgba(255, 255, 255, 0.8);
+}
+
+.hp-foot.hp-l { left: 9%; }
+.hp-foot.hp-r { right: 9%; }
+
+.hp-fin {
+    position: absolute;
+    left: 45%;
+    width: 10%;
+    top: 0;
+    bottom: 0;
+    background: repeating-linear-gradient(rgba(0, 0, 0, 0.14) 0 1px, transparent 1px 4px),
+        linear-gradient(90deg, rgba(0, 0, 0, 0.3), rgba(255, 255, 255, 0.18) 45%, rgba(0, 0, 0, 0.22));
+}
+
+.hp-blurb {
+    position: absolute;
+    left: 10%;
+    right: 10%;
+    top: 42%;
+    margin: 0;
+    text-align: center;
+    font: 500 calc(var(--pw) * 0.044) / 1.5 system-ui, sans-serif;
+    color: rgba(255, 255, 255, 0.85);
+}
+
+.hp-orb {
+    position: absolute;
+    left: 24%;
+    right: 24%;
+    top: 34%;
+    aspect-ratio: 1;
+    border-radius: 26%;
+    padding: 4px;
+    background: conic-gradient(from 45deg, #f5c443, #c98c18, #faf4e4, #d9381e, #e5a918, #f5c443);
+    filter: drop-shadow(0 10px 18px rgba(0, 0, 0, 0.28));
+    transition: transform 240ms var(--ease-out);
+}
+
+.hp-orb-core {
+    display: grid;
+    place-items: center;
+    width: 100%;
+    height: 100%;
+    border-radius: 23%;
+    background: rgba(250, 248, 242, 0.94);
+    color: #141414;
+}
+
+.hp-orb-rest,
+.hp-orb-ouch {
+    grid-area: 1 / 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    transition: opacity 0.12s, transform 0.2s var(--ease-out);
+}
+
+.hp-orb-rest b { font-size: max(12px, calc(var(--pw) * 0.13)); line-height: 1; }
+.hp-orb-rest small { font: 700 calc(var(--pw) * 0.036) / 1 ui-monospace, monospace; letter-spacing: 0.12em; }
+.hp-orb-ouch { opacity: 0; transform: scale(0.6); font: 900 calc(var(--pw) * 0.08) / 1 ui-monospace, monospace; }
+
+@keyframes hp-tremble {
+    0% { transform: scale(1.06, 0.92) translate3d(-1px, 0, 0); }
+    50% { transform: scale(1.06, 0.92) translate3d(1px, 0, 0); }
+    100% { transform: scale(1.06, 0.92) translate3d(-1px, 0, 0); }
+}
+
+.hp-held .hp-orb {
+    transform: scale(1.06, 0.92);
+    animation: hp-tremble 90ms steps(2) infinite;
+}
+.hp-held .hp-orb-rest { opacity: 0; transform: scale(0.5); }
+.hp-held .hp-orb-ouch { opacity: 1; transform: scale(1); }
+.hp-tug .hp-orb { transform: scale(0.94, 1.07); }
+
+.hp-flap {
+    position: absolute;
+    inset: 0;
+    transform-style: preserve-3d;
+    visibility: hidden;
+    transform: translateZ(calc(var(--d) / 2));
+}
+.hp-flap.hp-on { visibility: visible; }
+
+.hp-ply {
+    position: absolute;
+    inset: 0;
+    transform-style: preserve-3d;
+    transform-origin: 0 0;
+}
+.hp-ply-front { transform: translateZ(0.4px); }
+.hp-ply-foil {
+    transform: rotateY(180deg) translateZ(0.4px);
+    background: linear-gradient(97deg, #e7e2d6, #ffffff 12%, #d5cec0 26%, #ffffff 44%, #e2dcd0 58%, #ffffff 76%, #dad3c4);
+}
+
+.hp-tone {
+    position: absolute;
+    inset: 0;
+    z-index: 3;
+    background: #151412;
+    opacity: 0;
+    pointer-events: none;
+}
+
+.hp-lips {
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    filter: drop-shadow(0 1.5px 1.2px rgba(0, 0, 0, 0.42));
+}
+
+.hp-lip {
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    clip-path: polygon(0 0);
+    background: linear-gradient(100deg, #f4f1e8, #ffffff 14%, #cdc5b4 27%, #ffffff 42%, #d8d1c2 58%, #faf8f2 72%, #c4bca9 86%, #efece5);
+}
+
+.hp-hit {
+    position: absolute;
+    inset: -20px -14px -8px;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 12px;
+    background: none;
+    appearance: none;
+    cursor: grab;
+    touch-action: none;
+    pointer-events: auto;
+    transform: translateZ(calc(var(--d) / 2 + 2px));
+}
+.hp-hit:focus-visible { outline: 2px solid var(--ring); outline-offset: 6px; }
+.hp-held .hp-hit,
+.hp-tug .hp-hit { cursor: grabbing; }
+
+.hp-card {
+    width: var(--cw);
+    height: var(--ch);
+    margin: calc(var(--ch) / -2) 0 0 calc(var(--cw) / -2);
+    pointer-events: none;
+    --px: 50;
+    --py: 50;
+    --hyp: 0;
+}
+
+.hp-stage[data-phase='opened'] .hp-card {
+    pointer-events: auto;
+    cursor: pointer;
+}
+
+.hp-face,
+.hp-bevel {
+    position: absolute;
+    inset: 0;
+    border-radius: calc(var(--cw) * 0.072);
+}
+
+.hp-bevel {
+    background: linear-gradient(135deg, rgba(255, 252, 245, 0.72), rgba(208, 198, 180, 0.55) 50%, rgba(255, 250, 240, 0.45));
+    transform: translateZ(-2px);
+    box-shadow: 0 22px 38px -14px rgba(18, 16, 12, 0.42);
+    pointer-events: none;
+}
+.dark .hp-bevel {
+    background: linear-gradient(135deg, rgba(255, 248, 232, 0.24), rgba(104, 96, 84, 0.55) 50%, rgba(255, 248, 232, 0.16));
+    box-shadow: 0 24px 44px -12px rgba(0, 0, 0, 0.72);
+}
+
+.hp-face {
+    overflow: hidden;
+    isolation: isolate;
+    background: #f4f1ea;
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.38);
+}
+.dark .hp-face {
+    background: #181715;
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.2);
+}
+
+.hp-win {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+}
+.hp-win img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    object-position: 50% 15%;
+}
+
+.hp-holo {
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    border-radius: inherit;
+    pointer-events: none;
+    background: var(--rainbow) calc(var(--px) * 1%) calc(var(--py) * 1%) / 400% 400%;
+    mix-blend-mode: color-dodge;
+    opacity: calc(0.08 + var(--hyp) * 0.28);
+}
+
+.hp-fx {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 25;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .hp-held .hp-orb {
+        animation: none;
+    }
+}

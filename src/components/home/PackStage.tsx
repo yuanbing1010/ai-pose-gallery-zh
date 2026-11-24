@@ -3,9 +3,12 @@ import { createPortal } from 'react-dom'
 import { AnimatePresence, motion } from 'motion/react'
 import { Link } from '@tanstack/react-router'
 import { ArrowRightIcon, CheckIcon, DicesIcon, LayersIcon, Volume2Icon, VolumeXIcon, XIcon } from 'lucide-react'
+import { isContainCostumeSource } from '@/lib/costumeSources'
+import { MOTION_EASE_OUT } from '@/lib/motionTokens'
 import { toast } from '@/lib/notifications'
 import { poseThumbPath, referenceImageUrl } from '@/lib/recipeImages'
 import { cn } from '@/lib/utils'
+import '@/styles/blindbox.css'
 import type { CostumeItem, PortraitItem, PoseItem } from '@/types/gallery'
 
 export interface DrawnPack {
@@ -52,7 +55,7 @@ const PACK_SKINS = [
   ['Plum', '#7A3E48'],
 ] as const
 
-const BANDS = ['#ff3d6e', '#ff8a3d', '#ffd34d', '#4fd9a0', '#4fb2ff', '#8b6cff', '#ff5cc8']
+const BANDS = ['#f5c443', '#e5a918', '#f3ede0', '#d9381e', '#19857b', '#c9932c', '#faf4e6']
 const N_JAG = 84
 const K_PLIES = 10
 const ORBIT_DUR = 1.05
@@ -336,7 +339,7 @@ export function PackStage({
         dotColor: '#19857B',
         title: drawn.costume.服装名称,
         img: referenceImageUrl(drawn.costume.缩略图),
-        contain: drawn.costume.source === 'mio' || drawn.costume.source === 'shisei',
+        contain: isContainCostumeSource(drawn.costume.source),
       },
       {
         slotKey: 'pose' as const,
@@ -924,6 +927,7 @@ export function PackStage({
         const slot = i
         const el = document.createElement('div')
         el.className = 'hp-card'
+        el.setAttribute('aria-hidden', 'true')
         const bevel = document.createElement('i')
         bevel.className = 'hp-bevel'
         const face = document.createElement('div')
@@ -1682,7 +1686,7 @@ export function PackStage({
               initial={{ opacity: 0, y: -4 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -4 }}
-              transition={{ duration: 0.18 }}
+              transition={{ duration: 0.18, ease: MOTION_EASE_OUT }}
               className="flex flex-col items-center gap-1.5"
             >
               <span className="inline-flex items-center gap-1.5 rounded-full border border-black/10 bg-white/75 px-3 py-0.5 font-mono text-xs font-semibold whitespace-nowrap text-foreground/85 backdrop-blur-md sm:text-xs dark:border-white/15 dark:bg-white/10">
@@ -1690,7 +1694,7 @@ export function PackStage({
                 <span className="sm:hidden">3-IN-1 配方盲盒 · {totalCount.toLocaleString('zh-CN')} 参考卡</span>
                 <span className="hidden sm:inline">3-IN-1 角色配方盲盒 · {totalCount.toLocaleString('zh-CN')} 中文参考卡</span>
               </span>
-              <p className="text-xs text-muted-foreground sm:text-sm">
+              <p className="max-w-[270px] text-balance text-xs leading-relaxed text-muted-foreground sm:max-w-none sm:text-sm">
                 沿顶部铝箔横向划开，或轻点两次直接拆封今日角色配方
               </p>
             </motion.div>
@@ -1700,12 +1704,13 @@ export function PackStage({
               initial={{ opacity: 0, y: 6 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -4 }}
-              transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
+              transition={{ duration: 0.24, ease: MOTION_EASE_OUT }}
               className="pointer-events-auto flex flex-col items-center gap-1.5"
             >
               <div className="flex flex-wrap items-center justify-center gap-1.5">
                 {cardSpecs.map((spec, idx) => {
                   const isLocked = Boolean(lockedSlots[spec.slotKey])
+                  const chipDelay = idx === 0 ? 0 : idx === 1 ? 0.036 : 0.064
                   return (
                     <motion.button
                       key={spec.slotKey}
@@ -1713,7 +1718,7 @@ export function PackStage({
                       title={`点击单独锁入${spec.kindLabel}：${spec.title}`}
                       initial={{ opacity: 0, scale: 0.9, y: 4 }}
                       animate={{ opacity: 1, scale: 1, y: 0 }}
-                      transition={{ duration: 0.22, delay: idx * 0.04, ease: [0.22, 1, 0.36, 1] }}
+                      transition={{ duration: 0.22, delay: chipDelay, ease: MOTION_EASE_OUT }}
                       onClick={() => {
                         onSynthesizeSlotRef.current?.(spec.slotKey, drawnRef.current)
                         setLockedSlots((prev) => ({ ...prev, [spec.slotKey]: true }))
@@ -1726,9 +1731,9 @@ export function PackStage({
                         toast.success(`已单独锁入${spec.kindLabel}：${spec.title}`)
                       }}
                       className={cn(
-                        'inline-flex max-w-[14rem] items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium shadow-2xs backdrop-blur-md transition-colors active:scale-95',
+                        'inline-flex max-w-[14rem] items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium shadow-2xs backdrop-blur-md transition-[transform,background-color,border-color,color] duration-150 ease-[var(--ease-out)] active:scale-95',
                         isLocked
-                          ? 'border-foreground bg-foreground text-background'
+                          ? 'border-[#151412] bg-[#151412] text-white dark:border-[#E5A918]/50 dark:bg-[#2A2722] dark:text-[#F5C443]'
                           : 'border-black/10 bg-white/85 text-foreground hover:bg-white dark:border-white/15 dark:bg-white/10 dark:hover:bg-white/20'
                       )}
                     >
@@ -1757,7 +1762,7 @@ export function PackStage({
           aria-label={muted ? '开启音效' : '静音'}
           aria-pressed={muted}
           onClick={onToggleMute}
-          className="flex size-9 items-center justify-center rounded-full border border-black/10 bg-white/75 text-[#141414] backdrop-blur-md transition-all hover:bg-white active:scale-95 dark:border-white/15 dark:bg-white/10 dark:text-white dark:hover:bg-white/20"
+          className="flex size-9 items-center justify-center rounded-full border border-black/10 bg-white/75 text-[#141414] backdrop-blur-md transition-[transform,background-color] duration-150 hover:bg-white active:scale-95 dark:border-white/15 dark:bg-white/10 dark:text-white dark:hover:bg-white/20"
         >
           {muted ? <VolumeXIcon className="size-4" /> : <Volume2Icon className="size-4" />}
         </button>
@@ -1835,13 +1840,13 @@ export function PackStage({
               initial={{ opacity: 0, y: 10, scale: 0.94 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: 6, scale: 0.94 }}
-              transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
+              transition={{ duration: 0.24, ease: MOTION_EASE_OUT }}
               className="flex flex-wrap items-center justify-center gap-3"
             >
               <button
                 type="button"
                 onClick={onRedraw}
-                className="inline-flex h-10 items-center gap-2 rounded-full border border-black/15 bg-white px-5 text-xs font-semibold text-[#141414] shadow-sm transition-all hover:bg-zinc-100 active:scale-[0.97] dark:border-white/15 dark:bg-white/10 dark:text-white dark:hover:bg-white/20"
+                className="inline-flex h-10 items-center gap-2 rounded-full border border-black/15 bg-white px-5 text-xs font-semibold text-[#141414] shadow-sm transition-[transform,background-color] duration-150 hover:bg-zinc-100 active:scale-[0.97] dark:border-white/15 dark:bg-white/10 dark:text-white dark:hover:bg-white/20"
               >
                 <DicesIcon className="size-3.5" />
                 <span>再抽一包</span>
@@ -1850,7 +1855,7 @@ export function PackStage({
               {lockedSlots.portrait && lockedSlots.costume && lockedSlots.pose ? (
                 <Link
                   to="/studio"
-                  className="inline-flex h-10 items-center gap-2 rounded-full border border-foreground/20 bg-card px-5 text-xs font-semibold text-foreground shadow-xs transition-all hover:bg-muted active:scale-[0.97]"
+                  className="inline-flex h-10 items-center gap-2 rounded-full border border-foreground/20 bg-card px-5 text-xs font-semibold text-foreground shadow-xs transition-[transform,background-color] duration-150 hover:bg-muted active:scale-[0.97]"
                 >
                   <CheckIcon className="size-3.5 text-emerald-600 dark:text-emerald-400" />
                   <span>已装入配方 · 前往合成台</span>
@@ -1860,7 +1865,7 @@ export function PackStage({
                 <button
                   type="button"
                   onClick={handleSynthesizeClick}
-                  className="inline-flex h-10 items-center gap-2 rounded-full bg-foreground px-6 text-xs font-semibold text-background shadow-md transition-all hover:-translate-y-0.5 hover:opacity-90 active:scale-[0.97]"
+                  className="inline-flex h-10 items-center gap-2 rounded-full bg-foreground px-6 text-xs font-semibold text-background shadow-md transition-[transform,opacity] duration-150 hover:-translate-y-0.5 hover:opacity-90 active:scale-[0.97]"
                 >
                   <LayersIcon className="size-3.5" />
                   <span>装入配方槽</span>

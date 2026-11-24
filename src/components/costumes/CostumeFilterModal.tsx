@@ -11,7 +11,7 @@ import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import { COSTUME_STYLE_TABS, type CostumeStyleTab } from '@/lib/costumeFrame'
 import { cn } from '@/lib/utils'
 
-export type CostumeSourceFilter = 'all' | 'gia' | 'gia-anime' | 'charadb' | 'shisei' | 'mio'
+export type CostumeSourceFilter = 'all' | 'gia' | 'gia-anime' | 'charadb' | 'shisei' | 'mio' | 'outfit-db'
 
 type SectionKey = 'all' | 'style' | 'category' | 'tag' | 'source'
 
@@ -106,7 +106,7 @@ export function CostumeFilterModal({
           <button
             type="button"
             onClick={() => onOpenChange(false)}
-            className="shrink-0 rounded-md border border-border bg-muted px-2 py-0.5 font-mono text-xs text-muted-foreground transition-colors hover:text-foreground"
+            className="shrink-0 rounded-md border border-border bg-muted px-2 py-0.5 font-mono text-xs text-muted-foreground transition-[transform,color] duration-150 ease-[var(--ease-out)] hover:text-foreground active:scale-[0.96]"
           >
             esc
           </button>
@@ -123,7 +123,7 @@ export function CostumeFilterModal({
                   type="button"
                   onClick={() => setSection(item.id)}
                   className={cn(
-                    'relative flex shrink-0 items-center gap-2.5 rounded-[10px] px-3 py-2 text-left text-[13px] transition-colors',
+                    'relative flex shrink-0 items-center gap-2.5 rounded-[10px] px-3 py-2 text-left text-sm transition-colors',
                     active
                       ? 'font-medium text-foreground'
                       : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground'
@@ -143,7 +143,7 @@ export function CostumeFilterModal({
             })}
           </aside>
 
-          <div className="overflow-y-auto p-3.5 space-y-5">
+          <div className="overscroll-contain overflow-y-auto p-3.5 space-y-5">
             {showStyle && (
               <section className="space-y-1.5">
                 <div className="px-2 text-xs font-medium tracking-wider text-muted-foreground uppercase">
@@ -159,7 +159,7 @@ export function CostumeFilterModal({
                         role="radio"
                         aria-checked={checked}
                         onClick={() => onSelectStyle(t.id)}
-                        className="flex w-full items-center justify-between rounded-[10px] px-2.5 py-2 text-[13px] transition-colors hover:bg-muted/70"
+                        className="flex w-full items-center justify-between rounded-[10px] px-2.5 py-2 text-sm transition-colors hover:bg-muted/70"
                       >
                         <span className="flex items-center gap-2.5">
                           <span
@@ -198,7 +198,7 @@ export function CostumeFilterModal({
                       role="radio"
                       aria-checked={category === ''}
                       onClick={() => onSelectCategory('')}
-                      className="flex w-full items-center justify-between rounded-[10px] px-2.5 py-2 text-[13px] transition-colors hover:bg-muted/70"
+                      className="flex w-full items-center justify-between rounded-[10px] px-2.5 py-2 text-sm transition-colors hover:bg-muted/70"
                     >
                       <span className="flex items-center gap-2.5">
                         <span
@@ -226,7 +226,7 @@ export function CostumeFilterModal({
                         role="radio"
                         aria-checked={checked}
                         onClick={() => onSelectCategory(checked ? '' : c.label)}
-                        className="flex w-full items-center justify-between rounded-[10px] px-2.5 py-2 text-[13px] transition-colors hover:bg-muted/70"
+                        className="flex w-full items-center justify-between rounded-[10px] px-2.5 py-2 text-sm transition-colors hover:bg-muted/70"
                       >
                         <span className="flex items-center gap-2.5">
                           <span
@@ -268,7 +268,7 @@ export function CostumeFilterModal({
                         role="radio"
                         aria-checked={checked}
                         onClick={() => onSelectSource(checked && s.id !== 'all' ? 'all' : s.id)}
-                        className="flex w-full items-center justify-between rounded-[10px] px-2.5 py-2 text-[13px] transition-colors hover:bg-muted/70"
+                        className="flex w-full items-center justify-between rounded-[10px] px-2.5 py-2 text-sm transition-colors hover:bg-muted/70"
                       >
                         <span className="flex items-center gap-2.5">
                           <span
@@ -312,7 +312,7 @@ export function CostumeFilterModal({
                       role="radio"
                       aria-checked={tag === 'all'}
                       onClick={() => onSelectTag('all')}
-                      className="flex w-full items-center justify-between rounded-[10px] px-2.5 py-2 text-[13px] transition-colors hover:bg-muted/70"
+                      className="flex w-full items-center justify-between rounded-[10px] px-2.5 py-2 text-sm transition-colors hover:bg-muted/70"
                     >
                       <span className="flex items-center gap-2.5">
                         <span
@@ -340,7 +340,7 @@ export function CostumeFilterModal({
                         role="radio"
                         aria-checked={checked}
                         onClick={() => onSelectTag(checked ? 'all' : t.label)}
-                        className="flex w-full items-center justify-between rounded-[10px] px-2.5 py-2 text-[13px] transition-colors hover:bg-muted/70"
+                        className="flex w-full items-center justify-between rounded-[10px] px-2.5 py-2 text-sm transition-colors hover:bg-muted/70"
                       >
                         <span className="flex items-center gap-2.5">
                           <span
@@ -380,14 +380,14 @@ export function CostumeFilterModal({
           <button
             type="button"
             onClick={onReset}
-            className="h-9 rounded-full border border-border bg-card px-4 text-xs font-medium text-foreground transition-colors hover:bg-muted active:scale-[0.97]"
+            className="h-9 rounded-full border border-border bg-card px-4 text-xs font-medium text-foreground transition-[transform,background-color] duration-150 ease-[var(--ease-out)] hover:bg-muted active:scale-[0.97]"
           >
             重置
           </button>
           <button
             type="button"
             onClick={() => onOpenChange(false)}
-            className="h-9 rounded-full bg-primary px-5 text-xs font-semibold text-primary-foreground transition-all hover:opacity-90 active:scale-[0.97]"
+            className="h-9 rounded-full bg-primary px-5 text-xs font-semibold text-primary-foreground transition-[transform,opacity] duration-150 hover:opacity-90 active:scale-[0.97]"
           >
             显示 {resultCount.toLocaleString('zh-CN')} 套
           </button>

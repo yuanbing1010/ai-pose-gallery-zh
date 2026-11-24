@@ -1,18 +1,14 @@
 import { useSuspenseQuery } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
-import {
-  RotateCcwIcon,
-  SearchIcon,
-  SlidersHorizontalIcon,
-  SparklesIcon,
-  XIcon,
-} from 'lucide-react'
+import { XIcon } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { costumesQuery } from '@/api/gallery'
 import { FashionCard } from '@/components/cards/FashionCard'
 import { EmptyState } from '@/components/common/EmptyState'
 import { GalleryDensityControl } from '@/components/common/GalleryDensityControl'
 import { HorizontalFilterStrip } from '@/components/common/HorizontalFilterStrip'
+import { InfiniteScrollSentinel } from '@/components/common/InfiniteScrollSentinel'
+import { LibraryPageHeader } from '@/components/common/LibraryPageHeader'
 import { ScrollToTopButton } from '@/components/common/ScrollToTopButton'
 import { CostumeDetailModal } from '@/components/costumes/CostumeDetailModal'
 import {
@@ -28,7 +24,8 @@ import {
 import { COSTUME_SOURCES, costumeSourceId, selectCostumeView } from '@/lib/costumeSources'
 import { galleryGridClassName, useGalleryDesktopCols } from '@/lib/galleryDensity'
 import { cn } from '@/lib/utils'
-import { useStudio } from '@/store/studioStore'
+import { useStudioActions, useStudioShallow } from '@/store/studioStore'
+import { OUTFIT_DB_SOURCE_LABEL } from '../../shared/outfitDbArchive'
 
 export interface CostumesSearchParams {
   style?: CostumeStyleTab
@@ -50,7 +47,8 @@ export const Route = createFileRoute('/costumes')({
       raw.source === 'gia-anime' ||
       raw.source === 'charadb' ||
       raw.source === 'shisei' ||
-      raw.source === 'mio'
+      raw.source === 'mio' ||
+      raw.source === 'outfit-db'
     ) {
       out.source = raw.source
     }
@@ -88,11 +86,14 @@ const SOURCE_FILTER_LABELS: Array<{ id: CostumeSourceFilter; label: string }> = 
   { id: 'charadb', label: 'たき AI · CharaDB' },
   { id: 'shisei', label: 'Shisei · 中国历代' },
   { id: 'mio', label: '霧島澪 · 设计档案' },
+  { id: 'outfit-db', label: OUTFIT_DB_SOURCE_LABEL },
 ]
 
 function CostumesPage() {
   const { data: costumes } = useSuspenseQuery(costumesQuery)
-  const { recipe, toggleCostume } = useStudio()
+  const { recipeCostume } = useStudioShallow((s) => ({ recipeCostume: s.recipe.costume }))
+  const { toggleCostume } = useStudioActions()
+  const recipe = { costume: recipeCostume }
   const search = Route.useSearch()
   const navigate = Route.useNavigate()
 
@@ -253,7 +254,7 @@ function CostumesPage() {
         target &&
         (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)
 
-      if ((e.key === '/' && !typing) || ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k')) {
+      if (e.key === '/' && !typing && !e.metaKey && !e.ctrlKey && !e.altKey) {
         e.preventDefault()
         searchInputRef.current?.focus()
         return
@@ -275,137 +276,42 @@ function CostumesPage() {
 
   return (
     <div className="space-y-5">
-      {/* StyleKit 编辑杂志风格顶栏：左侧短线眉题与标题 + 右侧 4 格统计矩阵切换 */}
-      <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-end">
-        <div className="space-y-1.5">
-          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            <span className="inline-block h-px w-5 bg-foreground/40" aria-hidden="true" />
-            <span>穿搭风格集合</span>
-          </div>
-          <h1 className="text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
-            服装穿搭库
-          </h1>
-          <p className="text-xs text-muted-foreground sm:text-sm">
-            现实写真、动漫次元与中国历代华服参考 · 当前匹配{' '}
-            <span className="font-mono font-medium text-foreground">{filtered.length.toLocaleString('zh-CN')}</span> 套
-          </p>
-        </div>
-
-        {/* StyleKit 式 1px 分隔统计矩阵，点击直切风格板块 */}
-        <div
-          role="tablist"
-          aria-label="穿搭风格板块"
-          className="grid grid-cols-2 divide-x divide-y divide-border overflow-hidden rounded-xl border border-border bg-card sm:grid-cols-4 sm:divide-y-0"
-        >
-          {COSTUME_STYLE_TABS.map((tab) => {
-            const active = styleTab === tab.id
-            const cnt = styleCounts[tab.id]
-            return (
-              <button
-                key={tab.id}
-                type="button"
-                role="tab"
-                aria-selected={active}
-                onClick={() => {
-                  setStyleTab(tab.id)
-                  setSourceFilter('all')
-                  setCategory('')
-                  setTag('all')
-                  setShown(60)
-                  setViewerOpen(false)
-                }}
-                className={cn(
-                  'px-3.5 py-2.5 text-center transition-colors sm:px-5',
-                  active
-                    ? 'bg-primary text-primary-foreground'
-                    : 'text-foreground hover:bg-muted/60'
-                )}
-              >
-                <div className={cn('text-xs', active ? 'opacity-80' : 'text-muted-foreground')}>
-                  {tab.label}
-                </div>
-                <div className="mt-0.5 font-mono text-sm font-semibold tabular-nums">
-                  {cnt.toLocaleString('zh-CN')}
-                </div>
-              </button>
-            )
-          })}
-        </div>
-      </div>
-
-      {/* 检索与双栏命令筛选控制条 */}
-      <div className="space-y-3">
-        <div className="flex flex-wrap items-center gap-2.5">
-          <div className="relative flex h-10 min-w-[160px] flex-1 items-center rounded-xl border border-border bg-card px-3.5 transition-colors focus-within:border-foreground/40">
-            <SearchIcon className="mr-2.5 size-4 shrink-0 text-muted-foreground" />
-            <input
-              ref={searchInputRef}
-              type="search"
-              value={query}
-              onChange={(e) => {
-                setQuery(e.target.value)
-                setShown(60)
-              }}
-              placeholder="搜索款式、材质、颜色或英文词条 (如 denim, lace, 针织)…"
-              className="w-full bg-transparent text-xs text-foreground placeholder:text-muted-foreground focus:outline-none"
-            />
-            {query ? (
-              <button
-                type="button"
-                aria-label="清空搜索"
-                onClick={() => {
-                  setQuery('')
-                  setShown(60)
-                }}
-                className="ml-2 flex size-5 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground hover:text-foreground"
-              >
-                <XIcon className="size-3" />
-              </button>
-            ) : (
-              <kbd className="ml-2 hidden shrink-0 rounded-md border border-border bg-muted px-1.5 py-0.5 font-mono text-xs text-muted-foreground sm:inline-block">
-                /
-              </kbd>
-            )}
-          </div>
-
-          <button
-            type="button"
-            onClick={() => setFilterOpen(true)}
-            className={cn(
-              'inline-flex h-10 shrink-0 items-center gap-2 rounded-xl border px-4 text-xs font-medium transition-colors active:scale-[0.98]',
-              activeFilterCount > 0
-                ? 'border-primary bg-primary text-primary-foreground hover:opacity-90'
-                : 'border-border bg-card text-foreground hover:bg-muted'
-            )}
-          >
-            <SlidersHorizontalIcon className="size-3.5" />
-            <span>筛选</span>
-            {activeFilterCount > 0 ? (
-              <span className="flex size-4 items-center justify-center rounded-full bg-background font-mono text-xs font-semibold text-foreground">
-                {activeFilterCount}
-              </span>
-            ) : (
-              <kbd className="hidden rounded-md border border-border bg-muted px-1.5 py-0.5 font-mono text-xs text-muted-foreground sm:inline-block">
-                F
-              </kbd>
-            )}
-          </button>
-
+      <LibraryPageHeader
+        title="服装穿搭"
+        tabsLabel="穿搭风格板块"
+        tabs={COSTUME_STYLE_TABS.map((tab) => ({
+          id: tab.id,
+          label: tab.label,
+          count: styleCounts[tab.id],
+          active: styleTab === tab.id,
+          onClick: () => {
+            setStyleTab(tab.id)
+            setSourceFilter('all')
+            setCategory('')
+            setTag('all')
+            setShown(60)
+            setViewerOpen(false)
+          },
+        }))}
+        searchValue={query}
+        searchPlaceholder="搜索款式、材质或颜色…"
+        searchInputRef={searchInputRef}
+        onSearchChange={(val) => {
+          setQuery(val)
+          setShown(60)
+        }}
+        onOpenFilter={() => setFilterOpen(true)}
+        activeFilterCount={activeFilterCount}
+        hasActiveFilters={hasActiveFilters}
+        filteredCount={filtered.length}
+        onResetFilters={resetFilters}
+        extraControls={
           <GalleryDensityControl value={desktopCols} onChange={setDesktopCols} />
+        }
+      />
 
-          {hasActiveFilters && (
-            <button
-              type="button"
-              onClick={resetFilters}
-              className="inline-flex h-10 shrink-0 items-center gap-1.5 rounded-xl border border-border bg-card px-3.5 text-xs font-medium text-foreground transition-colors hover:bg-muted active:scale-[0.98]"
-            >
-              <RotateCcwIcon className="size-3.5" />
-              <span>重置</span>
-            </button>
-          )}
-        </div>
-
-        {/* 单行横向轻盈分类胶囊 */}
+      {/* 单行横向轻盈分类胶囊 */}
+      <div className="space-y-3">
         <HorizontalFilterStrip>
           {sourceFilter !== 'all' && (
             <button
@@ -482,7 +388,21 @@ function CostumesPage() {
 
       {/* 对齐架构网格：无黑底、无裁切、与姿势库统一的底部色条铭牌 */}
       {filtered.length === 0 ? (
-        <EmptyState title="没有找到匹配的服装穿搭" description="试试更换搜索词或重置筛选条件" />
+        <EmptyState
+          title="没有找到匹配的服装穿搭"
+          description="试试更换搜索词或重置筛选条件"
+          action={
+            hasActiveFilters ? (
+              <button
+                type="button"
+                onClick={resetFilters}
+                className="inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-full border border-border bg-card px-4 text-xs font-semibold text-foreground transition-[transform,background-color] duration-150 ease-[var(--ease-out)] hover:bg-muted active:scale-95"
+              >
+                <span>重置全部筛选</span>
+              </button>
+            ) : undefined
+          }
+        />
       ) : (
         <div className={galleryGridClassName(desktopCols)}>
           {filtered.slice(0, shown).map((item, idx) => (
@@ -492,6 +412,7 @@ function CostumesPage() {
               index={idx % 60}
               aspect={styleTab === 'historical' ? '3/4' : '2/3'}
               picked={recipe.costume?.id === item.id}
+              eager={idx < 6}
               onTogglePick={() => toggleCostume(item)}
               onOpenViewer={() => openViewer(idx)}
             />
@@ -499,18 +420,12 @@ function CostumesPage() {
         </div>
       )}
 
-      {shown < filtered.length && (
-        <div className="flex justify-center pt-2">
-          <button
-            type="button"
-            onClick={() => setShown((s) => s + 60)}
-            className="inline-flex h-10 items-center gap-2 rounded-full border border-border bg-card px-6 text-xs font-medium text-foreground transition-colors hover:bg-muted active:scale-[0.98]"
-          >
-            <SparklesIcon className="size-3.5 text-muted-foreground" />
-            <span>加载更多穿搭（剩余 {(filtered.length - shown).toLocaleString('zh-CN')} 套）</span>
-          </button>
-        </div>
-      )}
+      <InfiniteScrollSentinel
+        shown={shown}
+        total={filtered.length}
+        unitLabel="套穿搭"
+        onLoadMore={() => setShown((s) => s + 60)}
+      />
 
       {/* 底部来源说明 */}
       <footer className="space-y-1 rounded-2xl border border-border bg-card px-4 py-3 text-xs text-muted-foreground">

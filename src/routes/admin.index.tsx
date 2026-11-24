@@ -9,16 +9,24 @@ import {
   type AdminConfirmAction,
   type AdminTab,
 } from '@/components/admin/auditHelpers'
-import { AdminOverviewTab } from '@/components/admin/tabs/AdminOverviewTab'
 import { fetchAdminMeApi } from '@/lib/apiClient'
 import { useStudio } from '@/store/studioStore'
 import type { ImageProviderId, PublicUser } from '@/types/gallery'
+
+const AdminOverviewTab = lazy(() =>
+  import('@/components/admin/tabs/AdminOverviewTab').then((m) => ({
+    default: m.AdminOverviewTab,
+  }))
+)
 
 const AdminUsersTab = lazy(() =>
   import('@/components/admin/tabs/AdminUsersTab').then((m) => ({ default: m.AdminUsersTab }))
 )
 const AdminRedeemTab = lazy(() =>
   import('@/components/admin/tabs/AdminRedeemTab').then((m) => ({ default: m.AdminRedeemTab }))
+)
+const AdminGalleryTab = lazy(() =>
+  import('@/components/admin/tabs/AdminGalleryTab').then((m) => ({ default: m.AdminGalleryTab }))
 )
 const AdminSuppliersTab = lazy(() =>
   import('@/components/admin/tabs/AdminSuppliersTab').then((m) => ({
@@ -213,8 +221,10 @@ function AdminHomePage() {
       directoryLabel={directoryLabel}
       adminUser={adminUser}
       loading={loading}
+      dirty={tabDirty}
       onRefresh={() => setReloadTick((n) => n + 1)}
       onSelectTab={handleSelectTab}
+      onQuickCreateUser={handleQuickCreateUser}
       onBeforeLeave={handleBeforeLeave}
     >
       {tab === 'overview' && (
@@ -243,6 +253,14 @@ function AdminHomePage() {
 
           {tab === 'redeem' && (
             <AdminRedeemTab
+              reloadTick={reloadTick}
+              onLoadingChange={setLoading}
+              onConfirm={setConfirmAction}
+            />
+          )}
+
+          {tab === 'gallery' && (
+            <AdminGalleryTab
               reloadTick={reloadTick}
               onLoadingChange={setLoading}
               onConfirm={setConfirmAction}

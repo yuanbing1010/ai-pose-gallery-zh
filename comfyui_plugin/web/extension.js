@@ -72,7 +72,11 @@ async function fetchCatalogue(lib) {
 function getThumbUrl(lib, id, relPath, useDepth = false) {
   if (!relPath && catalogueCache[lib]) relPath = catalogueCache[lib].find((r) => r.id === id)?.缩略图;
   if (lib === "costume" && /^charadb-O\d{3}$/.test(id)) return `https://charadb-2fi.pages.dev/thumb/${id.slice(8)}.webp`;
-  if (relPath?.startsWith("https://ai-costume-anime-gallery.pages.dev/") || relPath?.startsWith("https://sleepyzone.online/mio-design-archive/")) {
+  if (
+    relPath?.startsWith("https://ai-costume-anime-gallery.pages.dev/") ||
+    relPath?.startsWith("https://sleepyzone.online/mio-design-archive/") ||
+    relPath?.startsWith("https://sleepyzone.online/outfit-db-cn/")
+  ) {
     return relPath;
   }
   const depthParam = lib === "pose" && useDepth ? "&depth=1" : "";
@@ -189,7 +193,7 @@ class PoseAtlasModal {
           <div class="pca-title-group">
             <div>
               <h3 class="pca-title">AI 角色三合一参考图集 (ComfyUI 选图器)</h3>
-              <div class="pca-subtitle">中文参考索引 · Shisei / wquguru CC0 · <a href="https://sleepyzone.online/mio-design-archive/" target="_blank" rel="noopener noreferrer">霧島澪(@Mio_2am)设计档案</a> · <a href="https://github.com/taki-ttt/charadb/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">CharaDB来源条款</a></div>
+              <div class="pca-subtitle">中文参考索引 · Shisei / wquguru CC0 · <a href="https://sleepyzone.online/mio-design-archive/" target="_blank" rel="noopener noreferrer">霧島澪(@Mio_2am)设计档案</a> · <a href="https://sleepyzone.online/outfit-db-cn/" target="_blank" rel="noopener noreferrer">ChiHAL(@chihal_ai0509)服装档案</a> · <a href="https://github.com/taki-ttt/charadb/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">CharaDB来源条款</a></div>
             </div>
           </div>
           <div class="pca-tabs" id="pca-tabs"></div>
@@ -199,7 +203,7 @@ class PoseAtlasModal {
           <input class="pca-search-input" id="pca-search" type="text" placeholder="搜索中文标题、动作、服装、发型、编号 (如: 坐姿 / 水手服 / 双马尾 / SPR-0001)..." />
           <select class="pca-select" id="pca-filter-primary"></select>
           <select class="pca-select" id="pca-filter-secondary"></select>
-          <select class="pca-select" aria-label="素材来源" id="pca-filter-source"><option value="">全部来源</option><option value="gia">ギア · 写实/素体</option><option value="gia-anime">ギア · 动漫</option><option value="charadb">CharaDB</option><option value="shisei">Shisei · 中国历代</option><option value="mio">霧島澪 · 设计档案</option></select>
+          <select class="pca-select" aria-label="素材来源" id="pca-filter-source"><option value="">全部来源</option><option value="gia">ギア · 写实/素体</option><option value="gia-anime">ギア · 动漫</option><option value="charadb">CharaDB</option><option value="shisei">Shisei · 中国历代</option><option value="mio">霧島澪 · 设计档案</option><option value="outfit-db">ChiHAL · 服装档案</option></select>
           <button class="pca-btn" id="pca-depth-btn">${this.useDepth ? "🌗 深度图 (Depth)" : "🗿 素体白模"}</button>
           <button class="pca-btn" id="pca-sfw-btn">${this.safeMode ? "🛡️ 安全模式 (SFW)" : "🔞 18+ 完整模式"}</button>
           <button class="pca-btn" id="pca-random-btn">🎲 随机抽一张</button>
@@ -468,7 +472,7 @@ class PoseAtlasModal {
         (cfg.secondaryField && item[cfg.secondaryField]
           ? ` · ${item[cfg.secondaryField]}`
           : "") +
-        (item.source === "charadb" ? " · たき AI / CharaDB" : item.source === "mio" ? " · 霧島澪 / mio-design-archive" : "");
+        (item.source === "charadb" ? " · たき AI / CharaDB" : item.source === "mio" ? " · 霧島澪 / mio-design-archive" : item.source === "outfit-db" ? " · ChiHAL / outfit-db-cn" : "");
 
       card.innerHTML = `
         <div class="pca-card-img-wrap">

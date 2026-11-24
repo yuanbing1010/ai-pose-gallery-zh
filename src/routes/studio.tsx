@@ -1,82 +1,56 @@
-import { ReferenceComparisonDialog } from '@/components/common/ReferenceComparisonDialog'
-import { ImageViewer } from '@/components/common/ImageViewer'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { createFileRoute, Link } from '@tanstack/react-router'
+import { createFileRoute } from '@tanstack/react-router'
+import type { DragEndEvent } from '@dnd-kit/core'
+import { DownloadIcon, LayersIcon } from 'lucide-react'
 import {
-  closestCenter,
-  DndContext,
-  type DragEndEvent,
-  KeyboardSensor,
-  PointerSensor,
-  useSensor,
-  useSensors,
-} from '@dnd-kit/core'
-import {
-  horizontalListSortingStrategy,
-  SortableContext,
-  sortableKeyboardCoordinates,
-  useSortable,
-} from '@dnd-kit/sortable'
-import { CSS } from '@dnd-kit/utilities'
-import { motion } from 'motion/react'
-import {
-  ArrowRightIcon,
-  ArrowUpRightIcon,
-  CheckCircle2Icon,
-  CircleAlertIcon,
-  ClockIcon,
-  CoinsIcon,
-  CopyIcon,
-  DicesIcon,
-  DownloadIcon,
-  EyeIcon,
-  FileTextIcon,
-  GripVerticalIcon,
-  ImageIcon,
-  ImagesIcon,
-  ImagePlusIcon,
-  InfoIcon,
-  LayersIcon,
-  LayoutGridIcon,
-  LinkIcon,
-  LoaderCircleIcon,
-  LockIcon,
-  LockOpenIcon,
-  LogInIcon,
-  MonitorIcon,
-  PersonStandingIcon,
-  RotateCcwIcon,
-  ShirtIcon,
-  ShuffleIcon,
-  SparklesIcon,
-  Trash2Icon,
-  UploadIcon,
-  UserRoundIcon,
-  Volume2Icon,
-  VolumeXIcon,
-  WandSparklesIcon,
-  WrenchIcon,
-  XIcon,
-  ZoomInIcon,
-} from 'lucide-react'
-import { type ChangeEvent, type DragEvent, type PointerEvent as ReactPointerEvent, type ReactNode, useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from 'react'
+  Suspense,
+  lazy,
+  type ChangeEvent,
+  type DragEvent,
+  useCallback,
+  useEffect,
+  useEffectEvent,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
 import { toast } from '@/lib/notifications'
 import { costumesQuery, portraitsQuery, posesQuery } from '@/api/gallery'
-import {
-  ArtistStageSelector,
-  GeneratingSpriteStage,
-} from '@/components/studio/ArtistSprite3D'
 import {
   type HomeworkThrowTask,
   type SpriteTravelTask,
   SpriteTravelPortal,
 } from '@/components/studio/SpriteTravelPortal'
-import { AspectRatioLogo } from '@/components/studio/StudioEmblems'
-import { CloudWorksDialog } from '@/components/studio/CloudWorksDialog'
-import { LocalImageToolsDialog } from '@/components/studio/LocalImageToolsDialog'
-import { StyleBrowserPanel } from '@/components/studio/StyleBrowserPanel'
-import { StylePresetSelector } from '@/components/studio/StylePresetSelector'
-import { WorkDetailDialog } from '@/components/studio/WorkDetailDialog'
+import { ClassicStudioLayout } from '@/components/studio/layouts/ClassicStudioLayout'
+
+const ReferenceComparisonDialog = lazy(() =>
+  import('@/components/common/ReferenceComparisonDialog').then((m) => ({
+    default: m.ReferenceComparisonDialog,
+  }))
+)
+const ImageViewer = lazy(() =>
+  import('@/components/common/ImageViewer').then((m) => ({ default: m.ImageViewer }))
+)
+const CloudWorksDialog = lazy(() =>
+  import('@/components/studio/CloudWorksDialog').then((m) => ({ default: m.CloudWorksDialog }))
+)
+const LocalImageToolsDialog = lazy(() =>
+  import('@/components/studio/LocalImageToolsDialog').then((m) => ({
+    default: m.LocalImageToolsDialog,
+  }))
+)
+const StyleBrowserPanel = lazy(() =>
+  import('@/components/studio/StyleBrowserPanel').then((m) => ({ default: m.StyleBrowserPanel }))
+)
+const PublishToGalleryDialog = lazy(() =>
+  import('@/components/gallery/PublishToGalleryDialog').then((m) => ({
+    default: m.PublishToGalleryDialog,
+  }))
+)
+const WorkDetailDialog = lazy(() =>
+  import('@/components/studio/WorkDetailDialog').then((m) => ({ default: m.WorkDetailDialog }))
+)
+import type { StudioLayoutProps } from '@/components/studio/layouts/types'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -87,29 +61,18 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
-import { Textarea } from '@/components/ui/textarea'
-import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { uploadReferenceFileApi } from '@/lib/apiClient'
 import {
   getEstimatedOutputDimensions,
   getStudioArtist,
-  STUDIO_ARTISTS,
   STUDIO_ASPECT_RATIOS,
   type StudioAspectRatio,
 } from '@/lib/artists'
-import { STUDIO_PROMPT_CHIP_GROUPS, toggleSceneNoteChip } from '@/lib/studioPromptChips'
 import { getBrushPalette } from '@/lib/brushPalettes'
-import { selectCostumeView } from '@/lib/costumeSources'
+import { isContainCostumeSource } from '@/lib/costumeSources'
 import type { RandomScope, ReferenceSlot } from '@/lib/randomRecipe'
-import { downloadFileName, hasPoseDepthMap, poseImagePath, poseThumbPath, referenceImageUrl, uploadedReferences } from '@/lib/recipeImages'
+import { poseThumbPath, referenceImageUrl, uploadedReferences } from '@/lib/recipeImages'
 import {
   getStudioMuted,
   playHomeworkThrow,
@@ -120,7 +83,6 @@ import {
   unlockStudioAudio,
 } from '@/lib/studioAudio'
 import { getStyleVisualMeta } from '@/lib/stylePresets'
-import { cn } from '@/lib/utils'
 import {
   dataUrlToBlob,
   fileToDataUrl,
@@ -128,11 +90,9 @@ import {
 } from '@/services/aiGenerator'
 import {
   NONE_STYLE_PRESET,
-  buildRecipePrompt,
   getEffectiveProfileCreditCost,
   getEffectiveStyleCatalog,
   mergeGenerationQueueConfig,
-  STUDIO_RESOLUTION_META,
   type GenerationLiveStage,
   type ImageProviderId,
 } from '../../shared/studio'
@@ -144,296 +104,15 @@ import {
 import type { GenerationHistoryItem } from '@/types/gallery'
 
 export const Route = createFileRoute('/studio')({
-  staticData: { title: '角色合成台' },
+  staticData: { title: 'AI 视觉创作台' },
+  validateSearch: (search: Record<string, unknown>): { mode?: 'prompt' | 'recipe' } => ({
+    mode:
+      search.mode === 'prompt' || search.mode === 'recipe'
+        ? search.mode
+        : undefined,
+  }),
   component: StudioPage,
 })
-
-function MonitorResultCard({
-  previewUrl,
-  onZoom,
-  hiddenForDelivery = false,
-  skipIntro = false,
-  onImageReady,
-}: {
-  previewUrl: string
-  onZoom: () => void
-  hiddenForDelivery?: boolean
-  skipIntro?: boolean
-  onImageReady?: () => void
-}) {
-  const frameRef = useRef<HTMLButtonElement | null>(null)
-  const imgRef = useRef<HTMLImageElement | null>(null)
-  const [hovered, setHovered] = useState(false)
-
-  useEffect(() => {
-    if (!onImageReady) return
-    const img = imgRef.current
-    if (img && img.complete && img.naturalWidth > 0) {
-      const raf = requestAnimationFrame(() => onImageReady())
-      return () => cancelAnimationFrame(raf)
-    }
-  }, [previewUrl, onImageReady])
-
-  const handlePointerMove = (e: ReactPointerEvent<HTMLButtonElement>) => {
-    const el = frameRef.current
-    if (!el) return
-    const rect = el.getBoundingClientRect()
-    if (!rect.width || !rect.height) return
-    const nx = Math.max(-1, Math.min(1, ((e.clientX - rect.left) / rect.width) * 2 - 1))
-    const ny = Math.max(-1, Math.min(1, ((e.clientY - rect.top) / rect.height) * 2 - 1))
-    el.style.setProperty('--srx', `${(-ny * 5.2).toFixed(2)}deg`)
-    el.style.setProperty('--sry', `${(nx * 6.2).toFixed(2)}deg`)
-    el.style.setProperty('--glare-x', `${((nx + 1) * 50).toFixed(1)}%`)
-    el.style.setProperty('--glare-y', `${((ny + 1) * 50).toFixed(1)}%`)
-  }
-
-  const resetTilt = () => {
-    const el = frameRef.current
-    if (!el) return
-    el.style.setProperty('--srx', '0deg')
-    el.style.setProperty('--sry', '0deg')
-  }
-
-  return (
-    <div
-      className={cn(
-        'st-sprite-perspective absolute inset-2.5 flex items-center justify-center',
-        hiddenForDelivery && 'pointer-events-none opacity-0'
-      )}
-    >
-      <motion.button
-        ref={frameRef}
-        key={previewUrl}
-        type="button"
-        aria-label="放大生成结果"
-        initial={skipIntro ? false : { opacity: 0, scale: 0.94, filter: 'blur(6px)' }}
-        animate={{ opacity: 1, scale: 1, filter: 'blur(0px)' }}
-        transition={{ duration: 0.38, ease: [0.22, 1, 0.36, 1] }}
-        onClick={onZoom}
-        onPointerEnter={(e) => {
-          setHovered(true)
-          handlePointerMove(e)
-        }}
-        onPointerMove={handlePointerMove}
-        onPointerLeave={() => {
-          setHovered(false)
-          resetTilt()
-        }}
-        data-hover={hovered ? 'true' : 'false'}
-        className="st-sprite-rig group relative flex h-full w-full cursor-zoom-in items-center justify-center overflow-hidden rounded-xl focus-visible:outline-2 focus-visible:outline-ring"
-      >
-        <img
-          ref={imgRef}
-          data-monitor-result-img
-          src={previewUrl}
-          alt="生成结果"
-          onLoad={onImageReady}
-          className="max-h-full max-w-full rounded-lg border border-border/60 object-contain shadow-md transition duration-300 group-hover:brightness-[1.03]"
-        />
-        {/* 指针动态光晕层 */}
-        <span
-          aria-hidden="true"
-          className="pointer-events-none absolute inset-0 rounded-xl opacity-0 transition-opacity duration-300 group-hover:opacity-100"
-          style={{
-            background:
-              'radial-gradient(circle at var(--glare-x, 50%) var(--glare-y, 35%), rgba(255,255,255,0.2) 0%, transparent 55%)',
-          }}
-        />
-        {/* 首次揭晓斜向扫光 */}
-        {!hiddenForDelivery && (
-          <span
-            aria-hidden="true"
-            className="st-reveal-sheen pointer-events-none absolute inset-y-0 left-0 w-1/3 bg-gradient-to-r from-transparent via-white/35 to-transparent"
-          />
-        )}
-      </motion.button>
-    </div>
-  )
-}
-
-function SortableExtraPill({
-  img,
-  idx,
-  onUpdateName,
-  onRemove,
-  onPreview,
-}: {
-  img: { id: string; name: string; url: string }
-  idx: number
-  onUpdateName: (id: string, name: string) => void
-  onRemove: (id: string) => void
-  onPreview: (url: string) => void
-}) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: img.id })
-  const style = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-    zIndex: isDragging ? 20 : undefined,
-  }
-  return (
-    <div
-      ref={setNodeRef}
-      style={style}
-      className={cn(
-        'flex h-7 shrink-0 items-center gap-1.5 rounded-lg border bg-card pr-1 pl-1 transition-all',
-        isDragging ? 'border-[#E5A918] opacity-95 shadow-md' : 'border-border/80'
-      )}
-    >
-      <button
-        type="button"
-        aria-label={`拖拽排序附图 ${idx + 1}`}
-        className="cursor-grab touch-none text-muted-foreground hover:text-foreground active:cursor-grabbing"
-        {...attributes}
-        {...listeners}
-      >
-        <GripVerticalIcon className="size-3" />
-      </button>
-      <button
-        type="button"
-        aria-label={`放大预览附图 ${idx + 1}`}
-        onClick={(e) => {
-          e.stopPropagation()
-          onPreview(img.url)
-        }}
-        className="shrink-0 cursor-zoom-in overflow-hidden rounded border border-border transition-transform hover:scale-105"
-      >
-        <img src={img.url} alt={img.name} className="size-5 object-cover" />
-      </button>
-      <input
-        type="text"
-        value={img.name}
-        onChange={(e) => onUpdateName(img.id, e.target.value)}
-        placeholder={`附图#${idx + 1}`}
-        aria-label={`附图 ${idx + 1} 备注`}
-        className="w-16 truncate bg-transparent text-xs font-medium outline-none focus:w-24 focus:underline"
-      />
-      <button
-        type="button"
-        aria-label={`删除附图 ${idx + 1}`}
-        onClick={() => onRemove(img.id)}
-        className="rounded-full p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
-      >
-        <XIcon className="size-3" />
-      </button>
-    </div>
-  )
-}
-
-function SlotSwapActions({
-  slot,
-  diceColorClass,
-  similarTitle,
-  otherTitle,
-  uploadLabel,
-  disabled,
-  randomizingAction,
-  uploadingSlot,
-  spinKey,
-  onRandomSlot,
-  onUploadClick,
-}: {
-  slot: ReferenceSlot
-  diceColorClass: string
-  similarTitle: string
-  otherTitle: string
-  uploadLabel: string
-  disabled: boolean
-  randomizingAction: { slot: ReferenceSlot; scope: RandomScope } | null
-  uploadingSlot: string | null
-  spinKey: number
-  onRandomSlot: (slot: ReferenceSlot, scope: RandomScope) => void
-  onUploadClick: () => void
-}) {
-  const slotLabel = slot === 'portrait' ? '人像' : slot === 'costume' ? '服装' : '姿势'
-  return (
-    <div className="flex items-center gap-1.5">
-      <button
-        type="button"
-        disabled={disabled}
-        onClick={() => onRandomSlot(slot, 'similar')}
-        aria-label={`${slotLabel}换同类`}
-        title={similarTitle}
-        className="inline-flex h-7.5 flex-1 items-center justify-center gap-1 whitespace-nowrap rounded-lg border border-border/80 bg-[#FAF8F4] px-2 text-xs font-semibold text-foreground transition-colors hover:border-foreground/35 hover:bg-muted disabled:opacity-50 dark:bg-muted/35"
-      >
-        {randomizingAction?.slot === slot && randomizingAction.scope === 'similar' ? (
-          <LoaderCircleIcon className="size-3 shrink-0 animate-spin" />
-        ) : (
-          <motion.span
-            key={spinKey}
-            animate={{ rotate: spinKey ? 360 : 0 }}
-            transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
-            className="inline-flex shrink-0 items-center"
-          >
-            <DicesIcon className={cn('size-3.5', diceColorClass)} />
-          </motion.span>
-        )}
-        <span>换同类</span>
-      </button>
-
-      <button
-        type="button"
-        disabled={disabled}
-        onClick={() => onRandomSlot(slot, 'other')}
-        aria-label={`${slotLabel}换其他`}
-        title={otherTitle}
-        className="inline-flex h-7.5 flex-1 items-center justify-center gap-1 whitespace-nowrap rounded-lg border border-border/80 bg-[#FAF8F4] px-2 text-xs font-medium text-foreground transition-colors hover:border-foreground/35 hover:bg-muted disabled:opacity-50 dark:bg-muted/35"
-      >
-        {randomizingAction?.slot === slot && randomizingAction.scope === 'other' ? (
-          <LoaderCircleIcon className="size-3 shrink-0 animate-spin" />
-        ) : (
-          <ShuffleIcon className="size-3.5 shrink-0 text-muted-foreground" />
-        )}
-        <span>换其他</span>
-      </button>
-
-      <button
-        type="button"
-        disabled={disabled}
-        onClick={onUploadClick}
-        title={uploadLabel}
-        aria-label={uploadLabel}
-        className="inline-flex h-7.5 shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded-lg border border-border/80 bg-card px-2.5 text-xs font-medium text-muted-foreground transition-colors hover:border-foreground/35 hover:bg-muted hover:text-foreground disabled:opacity-50"
-      >
-        {uploadingSlot === slot ? (
-          <LoaderCircleIcon className="size-3.5 shrink-0 animate-spin" />
-        ) : (
-          <UploadIcon className="size-3.5 shrink-0" />
-        )}
-        <span>上传</span>
-      </button>
-    </div>
-  )
-}
-
-function StudioSplitLayout({
-  isMobile,
-  left,
-  right,
-}: {
-  isMobile: boolean
-  left: ReactNode
-  right: ReactNode
-}) {
-  if (isMobile) {
-    return (
-      <div className="flex flex-col gap-3">
-        {left}
-        {right}
-      </div>
-    )
-  }
-  return (
-    <ResizablePanelGroup orientation="horizontal" className="min-h-0 w-full flex-1 gap-0">
-      <ResizablePanel defaultSize="46%" minSize="34%" className="flex h-full min-h-0 min-w-0 flex-col pr-2.5">
-        {left}
-      </ResizablePanel>
-      <ResizableHandle withHandle />
-      <ResizablePanel defaultSize="54%" minSize="34%" className="flex h-full min-h-0 min-w-0 flex-col pl-2.5">
-        {right}
-      </ResizablePanel>
-    </ResizablePanelGroup>
-  )
-}
 
 function StudioPage() {
   const {
@@ -452,12 +131,20 @@ function StudioPage() {
     setSelectedResolutionForProfile,
     stylePreset,
     setStylePreset,
+    promptStyleEnabled,
+    setPromptStyleEnabled,
+    promptStylePreset,
+    setPromptStylePreset,
     allowFaceStyleShift,
     setAllowFaceStyleShift,
     allowPoseStyleShift,
     setAllowPoseStyleShift,
     aspectRatio,
     setAspectRatio,
+    promptAspectRatioEnabled,
+    setPromptAspectRatioEnabled,
+    promptAspectRatio,
+    setPromptAspectRatio,
     history,
     previewUrl,
     setPreviewUrl,
@@ -475,6 +162,12 @@ function StudioPage() {
     failedGenerationMeta,
     textToImageMode,
     setTextToImageMode,
+    studioMode,
+    setStudioMode,
+    userPrompt,
+    setUserPrompt,
+    remixGallerySource,
+    setRemixGallerySource,
     refreshBootstrap,
     refreshHistory,
     startGeneration,
@@ -501,11 +194,15 @@ function StudioPage() {
     removeHistoryItems,
   } = useStudio()
 
+  const { mode: routeMode } = Route.useSearch()
   const isMobile = useIsMobile()
-  const dndSensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
-  )
+  const [shutterTick, setShutterTick] = useState(0)
+
+  useEffect(() => {
+    if (routeMode === 'prompt' || routeMode === 'recipe') {
+      setStudioMode(routeMode)
+    }
+  }, [routeMode, setStudioMode])
   const handleExtraDragEnd = (event: DragEndEvent) => {
     const { active, over } = event
     if (over && active.id !== over.id) {
@@ -515,14 +212,17 @@ function StudioPage() {
 
   const [comparisonResult, setComparisonResult] = useState<GenerationHistoryItem | null>(null)
   const [detailWorkItem, setDetailWorkItem] = useState<GenerationHistoryItem | null>(null)
+  const [shareGalleryJob, setShareGalleryJob] = useState<GenerationHistoryItem | null>(null)
   const [pendingDeleteHistoryItem, setPendingDeleteHistoryItem] = useState<GenerationHistoryItem | null>(null)
   const [deletingHistoryId, setDeletingHistoryId] = useState<string | null>(null)
   const [promptChipsOpen, setPromptChipsOpen] = useState(false)
   const [localToolsOpen, setLocalToolsOpen] = useState(false)
-  const [promptPreviewOpen, setPromptPreviewOpen] = useState(false)
   const previewResult = history.find((item) => item.imageUrl === previewUrl)
   const qc = useQueryClient()
-  const { data: posesData } = useQuery(posesQuery)
+  const { data: posesData } = useQuery({
+    ...posesQuery,
+    enabled: Boolean(recipe.pose && recipe.pose.source !== 'upload'),
+  })
   const activePoseGroup =
     recipe.pose && recipe.pose.source !== 'upload' && posesData
       ? posesData.groups.find(
@@ -627,8 +327,20 @@ function StudioPage() {
   const effectiveTextToImageMode = Boolean(
     textFallbackFeatureEnabled && activeProfileSupportsTextFallback && textToImageMode
   )
+  const activeAspectRatio = studioMode === 'prompt' ? promptAspectRatio : aspectRatio
+  const handleAspectRatioChange = useCallback(
+    (nextRatio: StudioAspectRatio) => {
+      if (studioMode === 'prompt') {
+        setPromptAspectRatio(nextRatio)
+        setPromptAspectRatioEnabled(true)
+        return
+      }
+      setAspectRatio(nextRatio)
+    },
+    [setAspectRatio, setPromptAspectRatio, setPromptAspectRatioEnabled, studioMode]
+  )
   const displayRatio =
-    STUDIO_ASPECT_RATIOS.find((r) => r.id === (hoveredRatio ?? aspectRatio)) ??
+    STUDIO_ASPECT_RATIOS.find((r) => r.id === (hoveredRatio ?? activeAspectRatio)) ??
     STUDIO_ASPECT_RATIOS[0]
   const displayRatioDims = getEstimatedOutputDimensions(
     selectedProvider,
@@ -1362,15 +1074,35 @@ function StudioPage() {
     const snap = item.snapshot
     applyRecipe(snap.recipe)
     const validStyleIds = new Set(getEffectiveStyleCatalog(platform).map((s) => s.id))
-    if (snap.stylePreset && (snap.stylePreset === 'none' || validStyleIds.has(snap.stylePreset))) {
-      setStylePreset(snap.stylePreset)
+    const validRatioIds = new Set<StudioAspectRatio>(['3:4', '1:1', '4:3', '9:16', '16:9'])
+    if (snap.generationMode === 'prompt') {
+      setStudioMode('prompt')
+      setUserPrompt(snap.userPrompt ?? '')
+      setRemixGallerySource(null)
+      const restoredPromptStyle =
+        snap.stylePreset && snap.stylePreset !== 'none' && validStyleIds.has(snap.stylePreset)
+          ? snap.stylePreset
+          : 'none'
+      setPromptStylePreset(restoredPromptStyle)
+      setPromptStyleEnabled(restoredPromptStyle !== 'none')
+      if (snap.aspectRatio && snap.aspectRatio !== 'auto' && validRatioIds.has(snap.aspectRatio)) {
+        setPromptAspectRatio(snap.aspectRatio)
+        setPromptAspectRatioEnabled(true)
+      } else {
+        setPromptAspectRatioEnabled(false)
+      }
+    } else {
+      setStudioMode('recipe')
+      if (snap.aspectRatio && snap.aspectRatio !== 'auto' && validRatioIds.has(snap.aspectRatio)) {
+        setAspectRatio(snap.aspectRatio)
+      }
+      if (snap.stylePreset && (snap.stylePreset === 'none' || validStyleIds.has(snap.stylePreset))) {
+        setStylePreset(snap.stylePreset)
+      }
+      setAllowFaceStyleShift(Boolean(snap.allowFaceStyleShift))
+      setAllowPoseStyleShift(Boolean(snap.allowPoseStyleShift))
+      setSceneNote(snap.sceneNote ?? '')
     }
-    setAllowFaceStyleShift(Boolean(snap.allowFaceStyleShift))
-    setAllowPoseStyleShift(Boolean(snap.allowPoseStyleShift))
-    if (snap.aspectRatio) {
-      setAspectRatio(snap.aspectRatio)
-    }
-    setSceneNote(snap.sceneNote ?? '')
     if (typeof snap.textFallbackOnly === 'boolean') {
       setTextToImageMode(snap.textFallbackOnly)
     }
@@ -1435,12 +1167,18 @@ function StudioPage() {
       void startGeneration(sceneNote, opts)
       return
     }
-    if (!hasAnyRef) {
+    if (studioMode === 'prompt') {
+      if (userPrompt.trim().length < 2) {
+        toast.error('请输入文生图提示词（至少 2 个字符）')
+        return
+      }
+    } else if (!hasAnyRef) {
       toast.error('请先选择或上传至少 1 张参考图')
       return
     }
     if (showFailedStage && failedStageArtist?.providerId === selectedProvider) {
       unlockStudioAudio()
+      setShutterTick((n) => n + 1)
       setEntranceDone(true)
       entranceStartedRef.current = true
       setStageResumeTick((n) => n + 1)
@@ -1452,16 +1190,38 @@ function StudioPage() {
       setEntranceDone(false)
       entranceStartedRef.current = false
     }
+    setShutterTick((n) => n + 1)
     void startGeneration(sceneNote, opts)
   }
 
   const styleCatalog = useMemo(() => getEffectiveStyleCatalog(platform), [platform])
   const isKnownStyle = (key: string | null | undefined) =>
     key === 'none' || Boolean(key && styleCatalog.some((s) => s.id === key))
-  const activeStyleKey = isKnownStyle(stylePreset) ? stylePreset : 'none'
+  const activeStyleValue = studioMode === 'prompt' ? promptStylePreset : stylePreset
+  const effectiveStylePreset =
+    studioMode === 'prompt'
+      ? promptStyleEnabled
+        ? promptStylePreset
+        : 'none'
+      : stylePreset
+  const activeStyleKey = isKnownStyle(effectiveStylePreset) ? effectiveStylePreset : 'none'
   const activeStyleItem = styleCatalog.find((s) => s.id === activeStyleKey) ?? null
   const styleVisual = getStyleVisualMeta(activeStyleKey, activeStyleItem)
   const viewfinderStyleLabel = activeStyleItem?.label || NONE_STYLE_PRESET.label
+
+  const handleStyleChange = useCallback(
+    (nextPreset: string) => {
+      if (studioMode === 'prompt') {
+        setPromptStylePreset(nextPreset)
+        if (nextPreset !== 'none') {
+          setPromptStyleEnabled(true)
+        }
+        return
+      }
+      setStylePreset(nextPreset)
+    },
+    [setPromptStyleEnabled, setPromptStylePreset, setStylePreset, studioMode]
+  )
   const succeededHistory = history.filter((h) => h.status === 'succeeded' && h.imageUrl)
   const recentHistory = succeededHistory.slice(0, 10)
 
@@ -1540,9 +1300,182 @@ function StudioPage() {
           ? `排队中 ${queuedJobs.length}`
           : ''
 
+  const recipeFanCards: StudioLayoutProps['recipeFanCards'] = [
+    {
+      key: 'pose',
+      label: '姿势',
+      subtitle: recipe.pose?.姿势名称,
+      imageUrl: recipe.pose ? referenceImageUrl(poseThumbPath(recipe.pose)) : undefined,
+      isContain: true,
+      isDepth: Boolean(recipe.pose?.useDepth),
+    },
+    {
+      key: 'costume',
+      label: '服装',
+      subtitle: recipe.costume?.服装名称,
+      imageUrl: recipe.costume ? referenceImageUrl(recipe.costume.缩略图) : undefined,
+      isContain: recipe.costume ? isContainCostumeSource(recipe.costume.source) : false,
+    },
+    {
+      key: 'portrait',
+      label: '人像',
+      subtitle: recipe.portrait?.发型名称,
+      imageUrl: recipe.portrait ? referenceImageUrl(recipe.portrait.缩略图) : undefined,
+    },
+  ]
+
+  const layoutProps: StudioLayoutProps = {
+    user,
+    bootstrapLoaded,
+    providersLoaded,
+    platform,
+    providers,
+    hydrated,
+    isMobile,
+    studioMode,
+    setStudioMode,
+    userPrompt,
+    setUserPrompt,
+    remixGallerySource,
+    setRemixGallerySource,
+    sceneNote,
+    setSceneNote,
+    promptChipsOpen,
+    setPromptChipsOpen,
+    recipe,
+    recipeFanCards,
+    coreCount,
+    hasAnyRef,
+    extraImages,
+    poseAngles,
+    poseFrontOnly,
+    costumeViews,
+    isDragging,
+    uploadingSlot,
+    randomizingAll,
+    randomizingAction,
+    allDiceSpin,
+    slotActionSpin,
+    setPose,
+    setCostume,
+    setPortrait,
+    toggleRecipePoseDepth,
+    clearRecipe,
+    handleTogglePoseFrontOnly,
+    handleRandom,
+    handleRandomSlot,
+    handleOpenStitchModal,
+    triggerSlotUpload: (slot) => {
+      uploadSlotRef.current = slot
+      slotInputRef.current?.click()
+    },
+    triggerExtraFileUpload: () => fileInputRef.current?.click(),
+    openUrlModal: () => setUrlModalOpen(true),
+    updateExtraImageName,
+    removeExtraImage,
+    handleExtraDragEnd,
+    fileInputRef,
+    slotInputRef,
+    selectedProvider,
+    setSelectedProvider,
+    selectedProfileByProvider,
+    setSelectedProfileForProvider,
+    activeProfile,
+    activeProfileResolutions,
+    activeResolution,
+    setSelectedResolutionForProfile,
+    activeProviderReady,
+    activeCost,
+    insufficientCredits,
+    activeBrushPalette,
+    artistReturnTick,
+    awayProviderIds,
+    frustratedAwayProviderId,
+    stylePreset: activeStyleValue,
+    setStylePreset: handleStyleChange,
+    promptStyleEnabled,
+    setPromptStyleEnabled,
+    allowFaceStyleShift,
+    setAllowFaceStyleShift,
+    allowPoseStyleShift,
+    setAllowPoseStyleShift,
+    styleVisual,
+    viewfinderStyleLabel,
+    openStylePicker,
+    aspectRatio: activeAspectRatio,
+    setAspectRatio: handleAspectRatioChange,
+    promptAspectRatioEnabled,
+    setPromptAspectRatioEnabled,
+    hoveredRatio,
+    setHoveredRatio,
+    displayRatio,
+    displayRatioDims,
+    textFallbackFeatureEnabled,
+    activeProfileSupportsTextFallback,
+    effectiveTextToImageMode,
+    setTextToImageMode,
+    history,
+    recentHistory,
+    previewUrl,
+    previewResult,
+    activeJobsCount,
+    activeBadgeLabel: activeBadgeLabel || null,
+    processingJobsCount: processingJobs.length,
+    queuedJobsCount: queuedJobs.length,
+    userQueueFull,
+    foregroundJob,
+    activeCloudJobId,
+    showGeneratingState,
+    showForegroundQueued,
+    showDeliveryScene,
+    showFailedStage,
+    isEnteringMonitor,
+    isForegroundCancelling,
+    isDrawingStage,
+    liveStage,
+    liveStageOrder,
+    barWidth,
+    elapsedSeconds,
+    generationError,
+    deliveryState,
+    failedStageArtist,
+    runningArtistId: runningArtist.id,
+    runningBrushColorHex,
+    runningBrushGlowHex,
+    stageResumeTick,
+    shutterTick,
+    skipResultIntro,
+    handleGenerate,
+    handleMoveToBackground,
+    handleCancelBeforeJob,
+    handleCancelForegroundQueued,
+    clearFailedAndPreview: () => {
+      setGenerationError('')
+      setPreviewUrl('')
+    },
+    selectHistoryPreview: (h) => {
+      setDeliveryState(null)
+      setHomeworkThrowTask(null)
+      setSkipResultIntro(false)
+      setGenerationError('')
+      setPreviewUrl(h.imageUrl)
+    },
+    setResultImgLoadedUrl,
+    setZoomImageUrl,
+    setDetailWorkItem,
+    setComparisonResult,
+    setShareGalleryJob,
+    handleUseImageAsExtraRef,
+    openGalleryModal: () => setGalleryModalOpen(true),
+    openLocalToolsModal: () => setLocalToolsOpen(true),
+    openAuthModal,
+    studioMuted,
+    toggleStudioMute,
+  }
+
   return (
     <div
-      className="flex flex-col gap-1.5 md:min-h-0 md:flex-1"
+      className="flex min-h-0 flex-1 flex-col"
       onDragEnter={(e) => {
         e.preventDefault()
         dragDepthRef.current += 1
@@ -1557,1760 +1490,104 @@ function StudioPage() {
       }}
       onDrop={handleDropFiles}
     >
-      {/* 极简控制台单行顶栏 */}
-      <header className="flex shrink-0 flex-wrap items-center justify-between gap-2">
-        <div className="flex min-w-0 items-baseline gap-2.5">
-          <h1 className="truncate text-lg font-extrabold tracking-tight sm:text-xl">角色合成工作台</h1>
-          <span className="hidden truncate font-mono text-xs text-muted-foreground lg:inline">
-            {coreCount}/3 参考图 · {styleVisual.shortLabel} · {aspectRatio}
-            {activeResolution ? ` · ${activeResolution}` : ''}
-          </span>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-1.5">
-          {!user && bootstrapLoaded && platform.allowRegistration && platform.registerBonusCredits > 0 && (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => openAuthModal('register')}
-              className="h-7 rounded-full bg-card px-3 text-xs font-semibold"
-            >
-              <LogInIcon className="size-3.5 text-[#D9381E]" />
-              <span>注册即赠 {platform.registerBonusCredits} 积分</span>
-            </Button>
-          )}
-
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => setLocalToolsOpen(true)}
-            title="本地裁剪、改尺寸与压缩工具（0 积分）"
-            className="h-7 rounded-full bg-card px-2.5 text-xs font-medium"
-          >
-            <WrenchIcon className="size-3.5 text-[#116E65] dark:text-[#4FD1C5]" />
-            <span className="hidden sm:inline">本地图片工具</span>
-          </Button>
-
-          {(history.length > 0 || activeJobsCount > 0) && (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => setGalleryModalOpen(true)}
-              className={cn(
-                'h-7 rounded-full px-3 text-xs font-medium transition-colors',
-                activeJobsCount > 0
-                  ? 'border-[#E5A918]/65 bg-[#E5A918]/10 text-[#7A5200] hover:bg-[#E5A918]/15 dark:text-[#E5A918]'
-                  : 'bg-card'
-              )}
-            >
-              {activeJobsCount > 0 ? (
-                <LoaderCircleIcon className="size-3.5 animate-spin text-[#B88300] dark:text-[#E5A918]" />
-              ) : (
-                <ImagesIcon className="size-3.5 text-[#E5A918]" />
-              )}
-              <span>云端作品集 ({history.length})</span>
-              {activeBadgeLabel && (
-                <span className="inline-flex items-center gap-1 rounded-full bg-[#E5A918]/20 px-1.5 py-0.5 text-xs font-bold leading-none text-[#7A5200] dark:text-[#F5C443]">
-                  <span aria-hidden="true" className="size-1.5 animate-pulse rounded-full bg-[#D9381E]" />
-                  <span>{activeBadgeLabel}</span>
-                </span>
-              )}
-            </Button>
-          )}
-
-          <button
-            type="button"
-            aria-label={studioMuted ? '开启工作台交互音效' : '静音工作台交互音效'}
-            aria-pressed={studioMuted}
-            title={studioMuted ? '开启工作台交互音效' : '静音工作台交互音效'}
-            onClick={toggleStudioMute}
-            className="flex size-7 items-center justify-center rounded-full border border-border/80 bg-card text-foreground transition-colors hover:border-foreground/40 active:scale-95"
-          >
-            {studioMuted ? <VolumeXIcon className="size-3.5 text-muted-foreground" /> : <Volume2Icon className="size-3.5" />}
-          </button>
-        </div>
-      </header>
-
-      {/* 上区：横跨全宽的三合一角色配方舞台（姿势 / 服装 / 人像 + 附图条） */}
-      <section
-        data-impeccable-ignore="nested-cards"
-        className="ks-elevation shrink-0 rounded-2xl border border-border bg-card p-2 sm:p-2.5"
-      >
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="flex flex-wrap items-center gap-1.5">
-            <h2 className="text-xs font-extrabold tracking-tight sm:text-sm">角色配方</h2>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              disabled={randomizingAll}
-              className="h-7 rounded-full px-2.5 text-xs active:scale-95 disabled:cursor-wait"
-              onClick={handleRandom}
-            >
-              <motion.span
-                key={allDiceSpin}
-                animate={{ rotate: allDiceSpin ? 360 : 0 }}
-                transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
-                className="inline-flex items-center"
-              >
-                <DicesIcon className={cn('size-3.5 text-[#E5A918]', randomizingAll && 'animate-spin')} />
-              </motion.span>
-              <span>全随机</span>
-            </Button>
-            {hasAnyRef && (
-              <>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="h-7 rounded-full px-2.5 text-xs"
-                  onClick={handleOpenStitchModal}
-                >
-                  <LayoutGridIcon className="size-3.5" />
-                  <span>拼图</span>
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="h-7 rounded-full px-2.5 text-xs text-muted-foreground hover:border-destructive/40 hover:bg-destructive/10 hover:text-destructive"
-                  onClick={clearRecipe}
-                >
-                  <Trash2Icon className="size-3.5" />
-                  <span>清空</span>
-                </Button>
-              </>
-            )}
-          </div>
-
-          <div className="flex items-center gap-1.5 rounded-full border border-border/80 bg-[#FAF8F4] px-2.5 py-0.5 text-xs text-muted-foreground dark:bg-muted/50">
-            <span>核心参考</span>
-            <span className="font-mono font-bold text-foreground">{coreCount}/3</span>
-            {extraImages.length > 0 ? (
-              <>
-                <span className="text-muted-foreground/50">·</span>
-                <span className="font-mono">附图 {extraImages.length}</span>
-              </>
-            ) : (
-              <span className="hidden text-muted-foreground/80 sm:inline">· 姿势 + 服装 + 人像</span>
-            )}
-          </div>
-        </div>
-
-        <input ref={slotInputRef} type="file" accept="image/*" className="hidden" onChange={handleSlotUpload} />
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="image/*"
-          multiple
-          className="hidden"
-          onChange={handleUploadFiles}
-        />
-
-        {/* 三列横向大卡：姿势 / 服装 / 人像 */}
-        <div className="ks-recess mt-2 grid grid-cols-1 gap-2 rounded-xl border border-border/75 p-1.5 md:grid-cols-3">
-          {/* 左卡：姿势 */}
-          <div className="ks-paper-keycap @container/slot relative grid min-w-0 grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-2 overflow-hidden rounded-xl border border-border/80 bg-card p-2 pl-3 transition-colors hover:border-[#D9381E]/60">
-            <span aria-hidden="true" className="absolute inset-y-2.5 left-0 w-1 rounded-r bg-[#D9381E]" />
-
-            <div className="relative row-span-1 shrink-0 self-start @[360px]/slot:row-span-2">
-              {recipe.pose ? (
-                <>
-                  <button
-                    type="button"
-                    aria-label="放大姿势参考图"
-                    onClick={() => {
-                      const item = recipe.pose
-                      if (item) setZoomImageUrl(referenceImageUrl(poseImagePath(item)))
-                    }}
-                    className={cn(
-                      'group/img relative block h-[104px] w-[78px] cursor-zoom-in overflow-hidden rounded-xl border border-border/80 @[300px]/slot:h-28 @[300px]/slot:w-[84px]',
-                      recipe.pose.useDepth ? 'bg-[#2B2B32]' : 'bg-white dark:bg-zinc-900'
-                    )}
-                  >
-                    <img
-                      src={referenceImageUrl(poseThumbPath(recipe.pose))}
-                      alt={recipe.pose.姿势名称}
-                      className="h-full w-full object-contain p-1 transition-transform duration-300 group-hover/img:scale-105"
-                    />
-                    <span className="pointer-events-none absolute right-1.5 bottom-1.5 flex size-5 items-center justify-center rounded-full bg-black/55 text-white opacity-0 transition-opacity group-hover/img:opacity-100">
-                      <ZoomInIcon className="size-3" />
-                    </span>
-                  </button>
-                  <button
-                    type="button"
-                    title="清除姿势"
-                    aria-label="清除姿势参考图"
-                    onClick={() => setPose(null)}
-                    className="absolute -top-1.5 -right-1.5 z-10 flex size-5 items-center justify-center rounded-full border border-border bg-card text-muted-foreground shadow-sm transition-colors hover:border-destructive/40 hover:bg-destructive hover:text-white"
-                  >
-                    <XIcon className="size-3" />
-                  </button>
-                </>
-              ) : (
-                <Link
-                  to="/poses"
-                  aria-label="前往姿势库选图"
-                  className="flex h-[104px] w-[78px] flex-col items-center justify-center gap-1.5 rounded-xl border border-dashed border-border bg-muted/25 text-[#B82914] transition-colors hover:border-[#D9381E] hover:bg-muted/50 @[300px]/slot:h-28 @[300px]/slot:w-[84px] dark:text-[#FF7A59]"
-                >
-                  <PersonStandingIcon className="size-5.5" />
-                  <span className="text-xs font-semibold">挑选姿势</span>
-                </Link>
-              )}
-            </div>
-
-            <div className="col-start-2 row-start-1 flex min-w-0 flex-col gap-1.5">
-              <div className="flex items-center justify-between gap-1.5">
-                <div className="flex shrink-0 items-center gap-1.5">
-                  <span className="inline-flex shrink-0 items-center rounded-md bg-[#D9381E]/10 px-1.5 py-0.5 font-mono text-xs font-bold leading-none text-[#B82914] dark:bg-[#D9381E]/20 dark:text-[#FF7A59]">
-                    姿势
-                  </span>
-                  <Link
-                    to="/poses"
-                    className="inline-flex shrink-0 items-center gap-0.5 rounded-md border border-border/70 bg-[#FAF8F4] px-1.5 py-0.5 text-xs font-medium text-muted-foreground transition-colors hover:border-foreground/35 hover:text-foreground dark:bg-muted/45"
-                  >
-                    <span>图库</span>
-                    <ArrowUpRightIcon className="size-3" />
-                  </Link>
-                </div>
-                <span className="min-w-0 truncate text-right text-xs text-muted-foreground">
-                  {recipe.pose ? recipe.pose.分类 || recipe.pose.体系 : '待选动作'}
-                </span>
-              </div>
-
-              {recipe.pose ? (
-                <div
-                  className="line-clamp-2 text-xs leading-snug font-bold text-foreground sm:text-[13px]"
-                  title={
-                    recipe.pose.角度
-                      ? `${recipe.pose.姿势名称} · ${recipe.pose.角度}`
-                      : recipe.pose.姿势名称
-                  }
-                >
-                  {poseAngles.length > 1
-                    ? recipe.pose.姿势名称
-                    : recipe.pose.角度
-                      ? `${recipe.pose.姿势名称} · ${recipe.pose.角度}`
-                      : recipe.pose.姿势名称}
-                </div>
-              ) : (
-                <Link
-                  to="/poses"
-                  className="line-clamp-2 text-xs leading-snug text-muted-foreground hover:text-foreground hover:underline"
-                >
-                  未选择
-                </Link>
-              )}
-
-              {/* 姿势辅助控制：锁定正面随机 / 视角切换 / 白模与深度图 */}
-              <div className="flex flex-wrap items-center gap-1">
-                <button
-                  type="button"
-                  aria-pressed={poseFrontOnly}
-                  title={
-                    poseFrontOnly
-                      ? '已锁定「仅正面」：换同类、换其他与全随机只抽正面姿势（点击解锁全部视角）'
-                      : '未锁定「仅正面」：随机可抽任意视角（点击锁定仅随机正面）'
-                  }
-                  aria-label={
-                    poseFrontOnly
-                      ? '已锁定仅随机正面视角，点击解锁'
-                      : '未锁定仅随机正面视角，点击锁定'
-                  }
-                  onClick={() => void handleTogglePoseFrontOnly()}
-                  className={cn(
-                    'inline-flex h-6 shrink-0 items-center gap-1 whitespace-nowrap rounded-md border px-2 text-xs leading-none transition-colors',
-                    poseFrontOnly
-                      ? 'border-[#D9381E] bg-[#D9381E] font-semibold text-white'
-                      : 'border-border/80 bg-[#FAF8F4] font-medium text-muted-foreground hover:text-foreground dark:bg-muted/45'
-                  )}
-                >
-                  {poseFrontOnly ? (
-                    <LockIcon className="size-3 shrink-0" />
-                  ) : (
-                    <LockOpenIcon className="size-3 shrink-0 opacity-70" />
-                  )}
-                  <span>仅正面</span>
-                </button>
-
-                {recipe.pose && poseAngles.length > 1 && (
-                  <Select
-                    value={recipe.pose.角度}
-                    onValueChange={(angleVal) => {
-                      const nextPose = poseAngles.find((p) => p.角度 === angleVal)
-                      if (nextPose && recipe.pose) {
-                        setPose({ ...nextPose, useDepth: Boolean(recipe.pose.useDepth) })
-                      }
-                    }}
-                  >
-                    <SelectTrigger
-                      size="sm"
-                      aria-label="已选姿势视角"
-                      title="切换当前姿势视角"
-                      className="h-6 max-w-[5.5rem] shrink-0 rounded-md border-border/80 bg-[#FAF8F4] px-2 text-xs font-medium text-foreground shadow-none hover:bg-muted dark:bg-muted/45"
-                    >
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {poseAngles.map((p) => (
-                        <SelectItem key={p.id} value={p.角度} className="text-xs">
-                          {p.角度}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                )}
-
-                {recipe.pose && hasPoseDepthMap(recipe.pose) && (
-                  <button
-                    type="button"
-                    onClick={toggleRecipePoseDepth}
-                    aria-label={`切换白模或深度图，当前为${recipe.pose.useDepth ? '深度图' : '白模'}`}
-                    className={cn(
-                      'h-6 shrink-0 whitespace-nowrap rounded-md px-2 text-xs leading-none font-semibold transition-colors',
-                      recipe.pose.useDepth
-                        ? 'bg-[#116E65] text-white'
-                        : 'border border-border/80 bg-[#FAF8F4] text-foreground hover:bg-muted dark:bg-muted/45'
-                    )}
-                  >
-                    {recipe.pose.useDepth ? '深度图' : '白模图'}
-                  </button>
-                )}
-              </div>
-            </div>
-
-            <div className="col-span-2 @[360px]/slot:col-span-1 @[360px]/slot:col-start-2 @[360px]/slot:row-start-2 @[360px]/slot:self-end">
-              <SlotSwapActions
-                slot="pose"
-                diceColorClass="text-[#D9381E]"
-                similarTitle="在相同体系与动作分类中换一个"
-                otherTitle="从其他体系或动作分类中换一个"
-                uploadLabel={recipe.pose ? '上传替换姿势参考图' : '上传姿势参考图'}
-                disabled={uploadingSlot !== null || randomizingAction !== null}
-                randomizingAction={randomizingAction}
-                uploadingSlot={uploadingSlot}
-                spinKey={slotActionSpin['pose:similar'] || 0}
-                onRandomSlot={(s, scope) => void handleRandomSlot(s, scope)}
-                onUploadClick={() => {
-                  uploadSlotRef.current = 'pose'
-                  slotInputRef.current?.click()
-                }}
-              />
-            </div>
-          </div>
-
-          {/* 中卡：服装 */}
-          <div className="ks-paper-keycap @container/slot relative grid min-w-0 grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-2 overflow-hidden rounded-xl border border-border/80 bg-card p-2 pl-3 transition-colors hover:border-[#19857B]/60">
-            <span aria-hidden="true" className="absolute inset-y-2.5 left-0 w-1 rounded-r bg-[#19857B]" />
-
-            <div className="relative row-span-1 shrink-0 self-start @[360px]/slot:row-span-2">
-              {recipe.costume ? (
-                <>
-                  <button
-                    type="button"
-                    aria-label="放大服装参考图"
-                    onClick={() => {
-                      const item = recipe.costume
-                      if (item) setZoomImageUrl(referenceImageUrl(item.预览图 || item.原图 || item.缩略图))
-                    }}
-                    className="group/img relative block h-[104px] w-[78px] cursor-zoom-in overflow-hidden rounded-xl border border-border/80 bg-muted/30 @[300px]/slot:h-28 @[300px]/slot:w-[84px]"
-                  >
-                    <img
-                      src={referenceImageUrl(recipe.costume.缩略图)}
-                      alt={recipe.costume.服装名称}
-                      className={cn(
-                        'h-full w-full transition-transform duration-300 group-hover/img:scale-105',
-                        recipe.costume.source === 'mio' || recipe.costume.source === 'shisei'
-                          ? 'bg-[#DFDFE2] object-contain p-0.5 dark:bg-[#232328]'
-                          : 'object-cover object-[50%_15%]'
-                      )}
-                    />
-                    <span className="pointer-events-none absolute right-1.5 bottom-1.5 flex size-5 items-center justify-center rounded-full bg-black/55 text-white opacity-0 transition-opacity group-hover/img:opacity-100">
-                      <ZoomInIcon className="size-3" />
-                    </span>
-                  </button>
-                  <button
-                    type="button"
-                    title="清除服装"
-                    aria-label="清除服装参考图"
-                    onClick={() => setCostume(null)}
-                    className="absolute -top-1.5 -right-1.5 z-10 flex size-5 items-center justify-center rounded-full border border-border bg-card text-muted-foreground shadow-sm transition-colors hover:border-destructive/40 hover:bg-destructive hover:text-white"
-                  >
-                    <XIcon className="size-3" />
-                  </button>
-                </>
-              ) : (
-                <Link
-                  to="/costumes"
-                  aria-label="前往服装库选图"
-                  className="flex h-[104px] w-[78px] flex-col items-center justify-center gap-1.5 rounded-xl border border-dashed border-border bg-muted/25 text-[#116E65] transition-colors hover:border-[#19857B] hover:bg-muted/50 @[300px]/slot:h-28 @[300px]/slot:w-[84px] dark:text-[#4FD1C5]"
-                >
-                  <ShirtIcon className="size-5.5" />
-                  <span className="text-xs font-semibold">挑选服装</span>
-                </Link>
-              )}
-            </div>
-
-            <div className="col-start-2 row-start-1 flex min-w-0 flex-col gap-1.5">
-              <div className="flex items-center justify-between gap-1.5">
-                <div className="flex shrink-0 items-center gap-1.5">
-                  <span className="inline-flex shrink-0 items-center rounded-md bg-[#19857B]/12 px-1.5 py-0.5 font-mono text-xs font-bold leading-none text-[#116E65] dark:bg-[#19857B]/20 dark:text-[#4FD1C5]">
-                    服装
-                  </span>
-                  <Link
-                    to="/costumes"
-                    className="inline-flex shrink-0 items-center gap-0.5 rounded-md border border-border/70 bg-[#FAF8F4] px-1.5 py-0.5 text-xs font-medium text-muted-foreground transition-colors hover:border-foreground/35 hover:text-foreground dark:bg-muted/45"
-                  >
-                    <span>图库</span>
-                    <ArrowUpRightIcon className="size-3" />
-                  </Link>
-                </div>
-                <span className="min-w-0 truncate text-right text-xs text-muted-foreground">
-                  {recipe.costume ? recipe.costume.一级分类 || recipe.costume.分类 : '待选穿搭'}
-                </span>
-              </div>
-
-              {recipe.costume ? (
-                <div
-                  className="line-clamp-2 text-xs leading-snug font-bold text-foreground sm:text-[13px]"
-                  title={recipe.costume.服装名称}
-                >
-                  {recipe.costume.服装名称}
-                </div>
-              ) : (
-                <Link
-                  to="/costumes"
-                  className="line-clamp-2 text-xs leading-snug text-muted-foreground hover:text-foreground hover:underline"
-                >
-                  未选择
-                </Link>
-              )}
-
-              {recipe.costume && costumeViews.length > 0 && (
-                <div className="flex items-center gap-1.5">
-                  <span className="shrink-0 text-xs text-muted-foreground">视角</span>
-                  <Select
-                    value={
-                      costumeViews.find((view) => view.id === recipe.costume?.selectedView)?.id ||
-                      costumeViews.find((view) => view.id === 'front')?.id ||
-                      costumeViews[0].id
-                    }
-                    onValueChange={(viewId) => {
-                      if (recipe.costume) setCostume(selectCostumeView(recipe.costume, viewId))
-                    }}
-                  >
-                    <SelectTrigger
-                      size="sm"
-                      aria-label="已选服装视角"
-                      className="h-6.5 max-w-[7.5rem] rounded-md border-border/80 bg-[#FAF8F4] px-2 text-xs font-medium text-foreground shadow-none hover:bg-muted dark:bg-muted/45"
-                    >
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {costumeViews.map((v) => (
-                        <SelectItem key={v.id} value={v.id} className="text-xs">
-                          {v.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              )}
-            </div>
-
-            <div className="col-span-2 @[360px]/slot:col-span-1 @[360px]/slot:col-start-2 @[360px]/slot:row-start-2 @[360px]/slot:self-end">
-              <SlotSwapActions
-                slot="costume"
-                diceColorClass="text-[#19857B]"
-                similarTitle="在相同来源与分类中换一套"
-                otherTitle="从其他分类或来源中换一套"
-                uploadLabel={recipe.costume ? '上传替换服装参考图' : '上传服装参考图'}
-                disabled={uploadingSlot !== null || randomizingAction !== null}
-                randomizingAction={randomizingAction}
-                uploadingSlot={uploadingSlot}
-                spinKey={slotActionSpin['costume:similar'] || 0}
-                onRandomSlot={(s, scope) => void handleRandomSlot(s, scope)}
-                onUploadClick={() => {
-                  uploadSlotRef.current = 'costume'
-                  slotInputRef.current?.click()
-                }}
-              />
-            </div>
-          </div>
-
-          {/* 右卡：人像 */}
-          <div className="ks-paper-keycap @container/slot relative grid min-w-0 grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-2 overflow-hidden rounded-xl border border-border/80 bg-card p-2 pl-3 transition-colors hover:border-[#E5A918]/60">
-            <span aria-hidden="true" className="absolute inset-y-2.5 left-0 w-1 rounded-r bg-[#E5A918]" />
-
-            <div className="relative row-span-1 shrink-0 self-start @[360px]/slot:row-span-2">
-              {recipe.portrait ? (
-                <>
-                  <button
-                    type="button"
-                    aria-label="放大人像参考图"
-                    onClick={() => {
-                      const item = recipe.portrait
-                      if (item) setZoomImageUrl(referenceImageUrl(item.原图 || item.缩略图))
-                    }}
-                    className="group/img relative block h-[104px] w-[78px] cursor-zoom-in overflow-hidden rounded-xl border border-border/80 bg-muted/30 @[300px]/slot:h-28 @[300px]/slot:w-[84px]"
-                  >
-                    <img
-                      src={referenceImageUrl(recipe.portrait.缩略图)}
-                      alt={recipe.portrait.标题}
-                      className="h-full w-full object-cover object-top transition-transform duration-300 group-hover/img:scale-105"
-                    />
-                    <span className="pointer-events-none absolute right-1.5 bottom-1.5 flex size-5 items-center justify-center rounded-full bg-black/55 text-white opacity-0 transition-opacity group-hover/img:opacity-100">
-                      <ZoomInIcon className="size-3" />
-                    </span>
-                  </button>
-                  <button
-                    type="button"
-                    title="清除人像"
-                    aria-label="清除人像参考图"
-                    onClick={() => setPortrait(null)}
-                    className="absolute -top-1.5 -right-1.5 z-10 flex size-5 items-center justify-center rounded-full border border-border bg-card text-muted-foreground shadow-sm transition-colors hover:border-destructive/40 hover:bg-destructive hover:text-white"
-                  >
-                    <XIcon className="size-3" />
-                  </button>
-                </>
-              ) : (
-                <Link
-                  to="/portraits"
-                  aria-label="前往人像库选图"
-                  className="flex h-[104px] w-[78px] flex-col items-center justify-center gap-1.5 rounded-xl border border-dashed border-border bg-muted/25 text-[#7A5200] transition-colors hover:border-[#E5A918] hover:bg-muted/50 @[300px]/slot:h-28 @[300px]/slot:w-[84px] dark:text-[#E5A918]"
-                >
-                  <UserRoundIcon className="size-5.5" />
-                  <span className="text-xs font-semibold">挑选人像</span>
-                </Link>
-              )}
-            </div>
-
-            <div className="col-start-2 row-start-1 flex min-w-0 flex-col gap-1">
-              <div className="flex items-center justify-between gap-1.5">
-                <div className="flex shrink-0 items-center gap-1.5">
-                  <span className="inline-flex shrink-0 items-center rounded-md bg-[#E5A918]/14 px-1.5 py-0.5 font-mono text-xs font-bold leading-none text-[#7A5200] dark:bg-[#E5A918]/20 dark:text-[#F5C443]">
-                    人像
-                  </span>
-                  <Link
-                    to="/portraits"
-                    className="inline-flex shrink-0 items-center gap-0.5 rounded-md border border-border/70 bg-[#FAF8F4] px-1.5 py-0.5 text-xs font-medium text-muted-foreground transition-colors hover:border-foreground/35 hover:text-foreground dark:bg-muted/45"
-                  >
-                    <span>图库</span>
-                    <ArrowUpRightIcon className="size-3" />
-                  </Link>
-                </div>
-                <span className="min-w-0 truncate text-right text-xs text-muted-foreground">
-                  {recipe.portrait ? `${recipe.portrait.分区} · ${recipe.portrait.发长}` : '待选人像'}
-                </span>
-              </div>
-
-              {recipe.portrait ? (
-                <div
-                  className="line-clamp-2 text-xs leading-snug font-bold text-foreground sm:text-[13px]"
-                  title={recipe.portrait.发型名称}
-                >
-                  {recipe.portrait.发型名称}
-                </div>
-              ) : (
-                <Link
-                  to="/portraits"
-                  className="line-clamp-2 text-xs leading-snug text-muted-foreground hover:text-foreground hover:underline"
-                >
-                  未选择
-                </Link>
-              )}
-            </div>
-
-            <div className="col-span-2 @[360px]/slot:col-span-1 @[360px]/slot:col-start-2 @[360px]/slot:row-start-2 @[360px]/slot:self-end">
-              <SlotSwapActions
-                slot="portrait"
-                diceColorClass="text-[#E5A918]"
-                similarTitle="在相同分区与发长中换一个"
-                otherTitle="从其他分类中换一个"
-                uploadLabel={recipe.portrait ? '上传替换人像参考图' : '上传人像参考图'}
-                disabled={uploadingSlot !== null || randomizingAction !== null}
-                randomizingAction={randomizingAction}
-                uploadingSlot={uploadingSlot}
-                spinKey={slotActionSpin['portrait:similar'] || 0}
-                onRandomSlot={(s, scope) => void handleRandomSlot(s, scope)}
-                onUploadClick={() => {
-                  uploadSlotRef.current = 'portrait'
-                  slotInputRef.current?.click()
-                }}
-              />
-            </div>
-          </div>
-        </div>
-
-        {/* 附加参考图全宽捷径条 */}
-        <div
-          onClick={() => extraImages.length === 0 && fileInputRef.current?.click()}
-          className={cn(
-            'mt-2 flex min-h-7 items-center justify-between gap-2 rounded-xl border border-dashed px-3 py-0.5 transition-colors',
-            isDragging
-              ? 'border-[#E5A918] bg-muted text-foreground'
-              : extraImages.length === 0
-                ? 'cursor-pointer border-border bg-[#FAF8F4]/80 text-muted-foreground hover:border-foreground/40 hover:text-foreground dark:bg-muted/20'
-                : 'border-border/80 bg-[#FAF8F4]/70 dark:bg-muted/20'
-          )}
-        >
-          <div className="flex min-w-0 flex-1 items-center gap-1.5">
-            {extraImages.length === 0 && (
-              <span className="shrink-0 text-xs font-medium text-foreground">附加参考图</span>
-            )}
-
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation()
-                fileInputRef.current?.click()
-              }}
-              className="inline-flex h-6 shrink-0 items-center gap-1 rounded-md border border-border bg-card px-2 text-xs font-medium text-foreground hover:bg-muted"
-            >
-              <ImagePlusIcon className="size-3" />
-              <span>+ 图</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation()
-                setUrlModalOpen(true)
-              }}
-              className="inline-flex h-6 shrink-0 items-center gap-1 rounded-md border border-border bg-card px-2 text-xs font-medium text-foreground hover:bg-muted"
-            >
-              <LinkIcon className="size-3" />
-              <span>URL</span>
-            </button>
-
-            {extraImages.length > 0 && (
-              <DndContext sensors={dndSensors} collisionDetection={closestCenter} onDragEnd={handleExtraDragEnd}>
-                <SortableContext
-                  items={extraImages.map((x) => x.id)}
-                  strategy={horizontalListSortingStrategy}
-                >
-                  <div className="no-scrollbar flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto pl-1">
-                    {extraImages.map((img, idx) => (
-                      <SortableExtraPill
-                        key={img.id}
-                        img={img}
-                        idx={idx}
-                        onUpdateName={updateExtraImageName}
-                        onRemove={removeExtraImage}
-                        onPreview={setZoomImageUrl}
-                      />
-                    ))}
-                  </div>
-                </SortableContext>
-              </DndContext>
-            )}
-          </div>
-
-          <span className="shrink-0 truncate text-right text-xs text-muted-foreground">
-            {extraImages.length > 0 ? (
-              <>
-                <span className="hidden sm:inline">已加 {extraImages.length} 张 · 可拖拽排序</span>
-                <span className="font-mono sm:hidden">{extraImages.length} 张</span>
-              </>
-            ) : isDragging ? (
-              '松开添加参考图'
-            ) : (
-              <>
-                <span className="hidden sm:inline">支持点击、拖拽或 Ctrl+V 粘贴</span>
-                <span className="sm:hidden">可拖拽/粘贴</span>
-              </>
-            )}
-          </span>
-        </div>
-      </section>
-
-      {/* 下区：左侧生成控制 + 右侧纯净生成监视器 */}
-      <StudioSplitLayout
-        isMobile={isMobile}
-        left={
-          <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col">
-            {/* 控制台主区：选择画师 + 成图画风 + 画幅比例 + 画面细节 + 生成主按钮 */}
-            <section
-              data-impeccable-ignore="nested-cards"
-              className="ks-elevation @container/controls flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-border bg-card"
-            >
-              <div className="min-h-0 flex-1 space-y-2 overflow-x-hidden overflow-y-auto px-2.5 py-1.5">
-              {/* 选择 AI小画家 与实体画笔 */}
-              <div className="space-y-1.5">
-                <div className="flex min-h-[20px] flex-wrap items-center justify-between gap-2">
-                  <span className="shrink-0 text-xs font-extrabold tracking-tight text-foreground sm:text-sm">
-                    AI小画家
-                  </span>
-                </div>
-
-                <ArtistStageSelector
-                  artists={STUDIO_ARTISTS}
-                  providers={providers}
-                  providersLoaded={providersLoaded}
-                  selectedProvider={selectedProvider}
-                  selectedProfileId={activeProfile?.profileId ?? null}
-                  selectedProfileByProvider={selectedProfileByProvider}
-                  activeBrushColorHex={activeBrushPalette?.hex}
-                  activeBrushGlowHex={activeBrushPalette?.glowHex}
-                  brushReactionTick={artistReturnTick}
-                  generatingProviderId={showGeneratingState ? runningArtist.id : null}
-                  awayProviderIds={awayProviderIds}
-                  frustratedAwayProviderId={frustratedAwayProviderId}
-                  onSelectProvider={(providerId) => {
-                    setSelectedProvider(providerId)
-                  }}
-                  onSelectProfile={(providerId, profileId) => {
-                    setSelectedProfileForProvider(providerId, profileId)
-                  }}
-                />
-              </div>
-
-              {/* 2. 成图画风 */}
-              <div className="border-t border-border/70 pt-0.5">
-                <StylePresetSelector
-                  value={stylePreset}
-                  allowFaceStyleShift={allowFaceStyleShift}
-                  allowPoseStyleShift={allowPoseStyleShift}
-                  onChange={setStylePreset}
-                  onAllowFaceStyleShiftChange={setAllowFaceStyleShift}
-                  onAllowPoseStyleShiftChange={setAllowPoseStyleShift}
-                  onOpenBrowser={openStylePicker}
-                />
-              </div>
-
-              {/* 画幅比例 + 分辨率（当画笔支持分辨率时与画幅并排排版，彻底释放左侧纵向空间） */}
-              <div
-                className={cn(
-                  'grid grid-cols-1 gap-2 border-t border-border/70 pt-0.5',
-                  activeProfile &&
-                    activeProfileResolutions.length >= 2 &&
-                    (activeProfileResolutions.length >= 3
-                      ? '@[510px]/controls:grid-cols-[minmax(0,1fr)_auto]'
-                      : '@[430px]/controls:grid-cols-[minmax(0,1fr)_auto]')
-                )}
-              >
-                <div className="min-w-0 space-y-1">
-                  <div className="flex flex-wrap items-center justify-between gap-1.5">
-                    <span className="text-xs font-extrabold tracking-tight text-foreground sm:text-sm">画幅比例</span>
-                    <motion.div
-                      key={`${displayRatio.id}-${displayRatioDims.label}`}
-                      initial={{ opacity: 0, y: 2 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ duration: 0.14 }}
-                      className="flex min-w-0 max-w-full items-center gap-1 rounded-full border border-border/80 bg-[#FAF8F4] px-2 py-0.5 text-xs dark:bg-muted/50"
-                    >
-                      <AspectRatioLogo ratio={displayRatio.id} compact className="text-foreground" />
-                      <span className="shrink-0 font-mono font-bold text-foreground">{displayRatio.label}</span>
-                      <span className="shrink-0 font-semibold text-foreground">{displayRatio.hint}</span>
-                      <span className="hidden shrink-0 font-mono text-muted-foreground sm:inline">
-                        · {displayRatioDims.label}
-                      </span>
-                    </motion.div>
-                  </div>
-
-                  <div
-                    role="group"
-                    aria-label="选择成图画幅比例"
-                    onMouseLeave={() => setHoveredRatio(null)}
-                    className="grid grid-cols-5 gap-1 rounded-xl border border-border/80 bg-[#FAF8F4] p-0.5 dark:bg-muted/35"
-                  >
-                    {STUDIO_ASPECT_RATIOS.map((opt) => {
-                      const selected = aspectRatio === opt.id
-                      return (
-                        <button
-                          key={opt.id}
-                          type="button"
-                          aria-pressed={selected}
-                          aria-label={`${opt.label} ${opt.hint}`}
-                          onClick={() => setAspectRatio(opt.id)}
-                          onMouseEnter={() => setHoveredRatio(opt.id)}
-                          onFocus={() => setHoveredRatio(opt.id)}
-                          onBlur={() => setHoveredRatio(null)}
-                          className={cn(
-                            'relative flex h-7 min-w-0 cursor-pointer items-center justify-center gap-1 rounded-lg px-1 transition-colors',
-                            selected
-                              ? 'bg-foreground text-background shadow-2xs'
-                              : 'text-muted-foreground hover:text-foreground'
-                          )}
-                        >
-                          <AspectRatioLogo
-                            ratio={opt.id}
-                            selected={selected}
-                            className="relative z-10 size-3.5 shrink-0"
-                          />
-                          <span className="relative z-10 font-mono text-xs font-bold leading-none">{opt.label}</span>
-                        </button>
-                      )
-                    })}
-                  </div>
-                </div>
-
-                {/* 分辨率（当当前画笔支持 2 个及以上分辨率时并排展示） */}
-                {activeProfile && activeProfileResolutions.length >= 2 && (
-                  <div className="shrink-0 space-y-1">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-xs font-extrabold tracking-tight text-foreground sm:text-sm">
-                        分辨率
-                      </span>
-                    </div>
-
-                    <div
-                      role="radiogroup"
-                      aria-label="选择分辨率"
-                      className={cn(
-                        'grid gap-1 rounded-xl border border-border/80 bg-[#FAF8F4] p-0.5 dark:bg-muted/35',
-                        activeProfileResolutions.length === 2 ? 'grid-cols-2' : 'grid-cols-3'
-                      )}
-                    >
-                      {activeProfileResolutions.map((resOpt) => {
-                        const selected = activeResolution === resOpt.resolution
-                        const resMeta = STUDIO_RESOLUTION_META[resOpt.resolution]
-                        return (
-                          <button
-                            key={resOpt.resolution}
-                            type="button"
-                            role="radio"
-                            aria-checked={selected}
-                            aria-label={`${resOpt.resolution} ${resMeta.hint}`}
-                            onClick={() =>
-                              setSelectedResolutionForProfile(
-                                activeProfile.profileId,
-                                resOpt.resolution
-                              )
-                            }
-                            className={cn(
-                              'relative flex h-7 min-w-0 cursor-pointer items-center justify-center gap-1 rounded-lg px-2 transition-colors',
-                              selected
-                                ? 'bg-foreground text-background shadow-2xs'
-                                : 'text-muted-foreground hover:text-foreground'
-                            )}
-                          >
-                            <span className="relative z-10 font-mono text-xs font-bold leading-none">
-                              {resOpt.resolution}
-                            </span>
-                            <span
-                              className={cn(
-                                'relative z-10 shrink-0 whitespace-nowrap text-xs font-medium leading-none',
-                                selected ? 'text-background/80' : 'text-muted-foreground'
-                              )}
-                            >
-                              {resMeta.hint}
-                            </span>
-                          </button>
-                        )
-                      })}
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {/* 画面细节 */}
-              <div className="space-y-1 border-t border-border/70 pt-0.5">
-                <div className="flex flex-wrap items-center justify-between gap-1.5">
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-xs font-extrabold tracking-tight text-foreground sm:text-sm">画面细节</span>
-                    <button
-                      type="button"
-                      aria-expanded={promptChipsOpen}
-                      onClick={() => setPromptChipsOpen((v) => !v)}
-                      className={cn(
-                        'inline-flex h-5 items-center gap-1 rounded-full border px-2 text-xs font-medium transition-colors',
-                        promptChipsOpen
-                          ? 'border-foreground bg-foreground text-background'
-                          : 'border-border/80 bg-[#FAF8F4] text-muted-foreground hover:text-foreground dark:bg-muted/40'
-                      )}
-                    >
-                      <WandSparklesIcon className="size-3" />
-                      <span>灵感词条</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setPromptPreviewOpen(true)}
-                      title="查看发送给 AI 画师的完整编译指令"
-                      className="inline-flex h-5 items-center gap-1 rounded-full border border-border/80 bg-[#FAF8F4] px-2 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground dark:bg-muted/40"
-                    >
-                      <FileTextIcon className="size-3" />
-                      <span>查看指令</span>
-                    </button>
-                  </div>
-                  <span className="hidden text-xs text-muted-foreground @[440px]/controls:inline">
-                    Cmd/Ctrl+Enter 生成
-                  </span>
-                </div>
-
-                {promptChipsOpen && (
-                  <div className="space-y-1.5 rounded-xl border border-border/80 bg-[#FAF8F4] p-2 dark:bg-muted/30">
-                    {STUDIO_PROMPT_CHIP_GROUPS.map((group) => (
-                      <div key={group.id} className="flex flex-wrap items-center gap-1">
-                        <span className="w-14 shrink-0 text-xs font-semibold text-muted-foreground">
-                          {group.label}
-                        </span>
-                        <div className="flex min-w-0 flex-1 flex-wrap gap-1">
-                          {group.chips.map((chip) => {
-                            const active = sceneNote.includes(chip.text)
-                            return (
-                              <button
-                                key={chip.label}
-                                type="button"
-                                aria-pressed={active}
-                                title={chip.text}
-                                onClick={() =>
-                                  setSceneNote((prev) => toggleSceneNoteChip(prev, chip.text).next)
-                                }
-                                className={cn(
-                                  'rounded-full border px-2 py-0.5 text-xs font-medium transition-colors',
-                                  active
-                                    ? 'border-[#D9381E]/60 bg-[#D9381E]/12 text-[#B82914] dark:text-[#FF7A59]'
-                                    : 'border-border/80 bg-card text-foreground hover:border-foreground/35'
-                                )}
-                              >
-                                {chip.label}
-                              </button>
-                            )
-                          })}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                <div className="relative">
-                  <Textarea
-                    id="studio-scene-note"
-                    aria-label="补充画面细节"
-                    rows={2}
-                    value={sceneNote}
-                    onChange={(e) => setSceneNote(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (
-                        (e.metaKey || e.ctrlKey) &&
-                        e.key === 'Enter' &&
-                        hydrated &&
-                        !showGeneratingState &&
-                        !userQueueFull &&
-                        uploadingSlot === null
-                      ) {
-                        e.preventDefault()
-                        handleGenerate()
-                      }
-                    }}
-                    placeholder="补充服装材质、灯光氛围、镜头景别或背景环境（可选）…"
-                    className="min-h-[46px] max-h-[88px] resize-none rounded-xl bg-[#FAF8F4] pr-7 text-xs leading-snug dark:bg-muted/30"
-                  />
-                  {sceneNote && (
-                    <button
-                      type="button"
-                      aria-label="清空补充细节"
-                      onClick={() => setSceneNote('')}
-                      className="absolute top-2 right-2 rounded-full p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
-                    >
-                      <XIcon className="size-3" />
-                    </button>
-                  )}
-                </div>
-              </div>
-              </div>
-
-              <div className="shrink-0 space-y-1.5 border-t border-border/75 bg-card/95 p-1.5">
-                {textFallbackFeatureEnabled && (
-                  <div className="flex flex-wrap items-center justify-between gap-1.5 px-0.5">
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-xs font-bold text-foreground">生图模式</span>
-                      <div
-                        role="radiogroup"
-                        aria-label="选择生图模式"
-                        className="inline-flex items-center gap-0.5 rounded-lg border border-border/80 bg-[#FAF8F4] p-0.5 dark:bg-muted/35"
-                      >
-                        <button
-                          type="button"
-                          role="radio"
-                          aria-checked={!effectiveTextToImageMode}
-                          onClick={() => setTextToImageMode(false)}
-                          className={cn(
-                            'inline-flex h-6 cursor-pointer items-center gap-1 rounded-md px-2 text-xs font-semibold transition-colors',
-                            !effectiveTextToImageMode
-                              ? 'bg-foreground text-background shadow-2xs'
-                              : 'text-muted-foreground hover:text-foreground'
-                          )}
-                        >
-                          <ImageIcon className="size-3" />
-                          <span>带图生图</span>
-                        </button>
-                        <button
-                          type="button"
-                          role="radio"
-                          aria-checked={effectiveTextToImageMode}
-                          disabled={!activeProfileSupportsTextFallback}
-                          title={
-                            !activeProfileSupportsTextFallback
-                              ? '当前画笔暂不支持图转文纯文生图模式，请换支画笔或换位AI小画家'
-                              : '先将参考图转为文字描述，再进行纯文生图'
-                          }
-                          onClick={() => setTextToImageMode(true)}
-                          className={cn(
-                            'inline-flex h-6 items-center gap-1 rounded-md px-2 text-xs font-semibold transition-colors',
-                            !activeProfileSupportsTextFallback
-                              ? 'cursor-not-allowed text-muted-foreground/45'
-                              : effectiveTextToImageMode
-                                ? 'cursor-pointer bg-[#B88300] text-white shadow-2xs dark:bg-[#E5A918] dark:text-zinc-950'
-                                : 'cursor-pointer text-muted-foreground hover:text-foreground'
-                          )}
-                        >
-                          <FileTextIcon className="size-3" />
-                          <span>图转文生图</span>
-                        </button>
-                      </div>
-                    </div>
-                    <span className="truncate text-right text-xs text-muted-foreground">
-                      {!activeProfileSupportsTextFallback
-                        ? '当前画笔不支持图转文'
-                        : effectiveTextToImageMode
-                          ? '参考图转文字 · 纯文生图'
-                          : '直传参考原图'}
-                    </span>
-                  </div>
-                )}
-
-                <Button
-                  onClick={() => handleGenerate()}
-                  disabled={!hydrated || showGeneratingState || userQueueFull || uploadingSlot !== null || (Boolean(user) && !activeProviderReady)}
-                  className={cn(
-                    'ks-keycap h-9.5 w-full rounded-xl border-0 text-sm font-extrabold tracking-tight text-white',
-                    insufficientCredits
-                      ? 'bg-[#B88300] hover:bg-[#9A6B00]'
-                      : 'bg-[#D9381E] hover:bg-[#C23018]'
-                  )}
-                >
-                  {showForegroundQueued ? (
-                    <>
-                      <ClockIcon className="size-4" />
-                      <span>
-                        排队中（第 {foregroundJob?.queueInfo?.position ?? 1} 位）…
-                      </span>
-                    </>
-                  ) : showGeneratingState ? (
-                    <>
-                      <LoaderCircleIcon className="size-4 animate-spin" />
-                      <span>AI小画家正在创作中…</span>
-                    </>
-                  ) : userQueueFull ? (
-                    <>
-                      <ClockIcon className="size-4" />
-                      <span>
-                        并发队列已满（绘制 {processingJobs.length} · 排队 {queuedJobs.length}）
-                      </span>
-                    </>
-                  ) : !user ? (
-                    <>
-                      <LogInIcon className="size-4" />
-                      <span>
-                        {providersLoaded && activeProviderReady
-                          ? `登录后${effectiveTextToImageMode ? '图转文生图' : '立即生成角色图'}（消耗 ${activeCost} 积分）`
-                          : effectiveTextToImageMode
-                            ? '登录后图转文生图'
-                            : '登录后立即生成角色图'}
-                      </span>
-                    </>
-                  ) : !activeProviderReady ? (
-                    <>
-                      <CircleAlertIcon className="size-4" />
-                      <span>
-                        这位AI小画家暂休中，换支画笔或点另一位试试！
-                      </span>
-                    </>
-                  ) : insufficientCredits ? (
-                    <>
-                      <CoinsIcon className="size-4" />
-                      <span>积分不足（需 {activeCost} / 剩 {user.creditBalance}）· 点击兑换积分</span>
-                    </>
-                  ) : effectiveTextToImageMode ? (
-                    <>
-                      <FileTextIcon className="size-4" />
-                      <span>图转文生图 · 消耗 {activeCost} 积分</span>
-                    </>
-                  ) : (
-                    <>
-                      <SparklesIcon className="size-4" />
-                      <span>立即生成角色图 · 消耗 {activeCost} 积分</span>
-                    </>
-                  )}
-                </Button>
-              </div>
-            </section>
-          </div>
-        }
-        right={
-          <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col">
-            <section
-              data-impeccable-ignore="nested-cards"
-              className="ks-elevation flex min-h-[380px] flex-1 flex-col overflow-hidden rounded-2xl border border-border bg-card p-2.5 md:min-h-0 md:p-3"
-            >
-              <div className="mb-2 flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-border/70 pb-1.5">
-                <div className="flex flex-wrap items-center gap-2">
-                  <div className="flex items-center gap-1.5">
-                    <MonitorIcon className="size-4 text-[#D9381E]" />
-                    <h2 className="text-xs font-extrabold tracking-tight sm:text-sm">生成监视器</h2>
-                  </div>
-
-                  {previewUrl && !showGeneratingState && !showFailedStage && (
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      {previewResult && (
-                        <>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="h-7 rounded-lg px-2 text-xs"
-                            onClick={() => setDetailWorkItem(previewResult)}
-                          >
-                            <InfoIcon className="size-3.5" />
-                            <span>详情</span>
-                          </Button>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            title="将当前成图加入附加参考图继续迭代"
-                            className="h-7 rounded-lg px-2 text-xs"
-                            onClick={() => handleUseImageAsExtraRef(previewResult)}
-                          >
-                            <ImagePlusIcon className="size-3.5 text-[#116E65] dark:text-[#4FD1C5]" />
-                            <span className="hidden sm:inline">设为附图</span>
-                          </Button>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="h-7 rounded-lg px-2 text-xs"
-                            onClick={() => setComparisonResult(previewResult)}
-                          >
-                            <EyeIcon className="size-3.5" />
-                            <span>对比</span>
-                          </Button>
-                        </>
-                      )}
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="h-7 rounded-lg px-2 text-xs"
-                        onClick={() => setZoomImageUrl(previewUrl)}
-                      >
-                        <ZoomInIcon className="size-3.5" />
-                        <span>大图</span>
-                      </Button>
-                      <Button variant="outline" size="sm" className="h-7 rounded-lg px-2 text-xs" asChild>
-                        <a href={previewUrl} download={downloadFileName('character', previewUrl)}>
-                          <DownloadIcon className="size-3.5" />
-                          <span>下载</span>
-                        </a>
-                      </Button>
-                    </div>
-                  )}
-                </div>
-
-                <span
-                  className={cn(
-                    'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium',
-                    showGeneratingState
-                      ? 'bg-[#E5A918]/15 text-[#7A5200] dark:text-[#E5A918]'
-                      : generationError
-                        ? 'bg-destructive/15 text-destructive'
-                        : previewUrl
-                          ? 'bg-[#116E65]/12 text-[#116E65] dark:text-[#4FD1C5]'
-                          : 'bg-muted text-muted-foreground'
-                  )}
-                >
-                  <span
-                    className={cn(
-                      'size-1.5 rounded-full',
-                      showGeneratingState
-                        ? 'animate-pulse bg-[#E5A918]'
-                        : generationError
-                          ? 'bg-destructive'
-                          : previewUrl
-                            ? 'bg-[#116E65] dark:bg-[#4FD1C5]'
-                            : 'bg-muted-foreground/50'
-                    )}
-                  />
-                  {showForegroundQueued
-                    ? `排队中 · 第 ${foregroundJob?.queueInfo?.position ?? 1} 位`
-                    : showGeneratingState
-                      ? '进行中'
-                      : generationError
-                        ? '生成失败'
-                        : previewUrl
-                          ? `${previewResult?.resolution ? `${previewResult.resolution} · ` : ''}已成图`
-                          : '待命'}
-                </span>
-              </div>
-
-              {/* 主取景视窗（高度始终跟随分栏空间自适应，不被生成图片原始尺寸撑大） */}
-              <div className="relative flex h-[340px] items-center justify-center overflow-hidden rounded-xl border border-border/80 bg-[#FAF8F4] p-2.5 sm:h-[380px] md:h-auto md:min-h-0 md:flex-1 dark:bg-[#141418]">
-                <span aria-hidden="true" className="pointer-events-none absolute top-2.5 left-2.5 size-3 border-t border-l border-foreground/20" />
-                <span aria-hidden="true" className="pointer-events-none absolute top-2.5 right-2.5 size-3 border-t border-r border-foreground/20" />
-                <span aria-hidden="true" className="pointer-events-none absolute bottom-2.5 left-2.5 size-3 border-b border-l border-foreground/20" />
-                <span aria-hidden="true" className="pointer-events-none absolute right-2.5 bottom-2.5 size-3 border-r border-b border-foreground/20" />
-
-                {(showGeneratingState || showDeliveryScene || showFailedStage) && (
-                  <div
-                    className={cn(
-                      'relative z-10 flex w-full flex-col items-center text-center',
-                      showFailedStage
-                        ? 'max-h-full max-w-md gap-2 overflow-y-auto px-2 py-1'
-                        : 'max-w-xs gap-3'
-                    )}
-                  >
-                    <GeneratingSpriteStage
-                      providerId={
-                        deliveryState
-                          ? deliveryState.providerId
-                          : showFailedStage && failedStageArtist
-                            ? failedStageArtist.providerId
-                            : runningArtist.id
-                      }
-                      brushColorHex={
-                        deliveryState
-                          ? deliveryState.brushHex
-                          : showFailedStage && failedStageArtist
-                            ? failedStageArtist.brushHex
-                            : runningBrushColorHex
-                      }
-                      brushGlowHex={
-                        deliveryState
-                          ? deliveryState.brushGlow
-                          : showFailedStage && failedStageArtist
-                            ? failedStageArtist.brushGlow
-                            : runningBrushGlowHex
-                      }
-                      stagePhase={
-                        deliveryState?.phase === 'cheering'
-                          ? 'cheering'
-                          : deliveryState?.phase === 'throwing'
-                            ? 'returning'
-                            : showFailedStage
-                              ? 'frustrated'
-                              : isEnteringMonitor
-                                ? 'entering'
-                                : showForegroundQueued
-                                  ? 'queued'
-                                  : 'working'
-                      }
-                      previewImageUrl={deliveryState?.imageUrl}
-                      reactionTick={stageResumeTick}
-                    />
-                    {showForegroundQueued && foregroundJob ? (
-                      <div className="w-full space-y-2.5 rounded-xl border border-[#E5A918]/45 bg-card/95 p-3 text-center shadow-sm">
-                        <div className="flex items-center justify-center gap-1.5 text-sm font-extrabold text-foreground">
-                          <ClockIcon className="size-4 text-[#B88300] dark:text-[#E5A918]" />
-                          <span>
-                            排队等待中 · 第 {foregroundJob.queueInfo?.position ?? 1} 位
-                          </span>
-                        </div>
-                        <p className="text-xs leading-relaxed text-muted-foreground">
-                          {foregroundJob.queueInfo
-                            ? `前面还有 ${foregroundJob.queueInfo.aheadCount} 个任务 · ${
-                                foregroundJob.queueInfo.reason === 'model_busy'
-                                  ? `当前画笔并发已满${
-                                      foregroundJob.queueInfo.modelAheadCount > 0
-                                        ? `（同画笔前有 ${foregroundJob.queueInfo.modelAheadCount} 个）`
-                                        : ''
-                                    }`
-                                  : foregroundJob.queueInfo.reason === 'user_busy'
-                                    ? '您同时绘制的任务数已达上限'
-                                    : '当前全站生图并发较高'
-                              }`
-                            : '正在等待空闲并发槽位，轮到后将自动开画…'}
-                        </p>
-                        <div className="relative h-1.5 overflow-hidden rounded-full border border-border bg-background">
-                          <motion.div
-                            aria-hidden="true"
-                            animate={{ x: ['-40%', '220%'] }}
-                            transition={{ duration: 2.2, repeat: Infinity, ease: 'linear' }}
-                            className="h-full w-1/3 rounded-full bg-[#E5A918]/75"
-                          />
-                        </div>
-                        <div className="flex flex-wrap items-center justify-between gap-2 pt-0.5 text-xs">
-                          <span className="font-mono text-muted-foreground">
-                            已等待 {elapsedSeconds}s
-                          </span>
-                          <div className="flex items-center gap-1.5">
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              disabled={isForegroundCancelling}
-                              onClick={() => void handleCancelForegroundQueued()}
-                              className="h-7 rounded-full border-destructive/40 px-2.5 text-xs font-semibold text-destructive hover:bg-destructive/10"
-                            >
-                              {isForegroundCancelling
-                                ? '取消中…'
-                                : `取消排队（退 ${foregroundJob.creditsCost} 积分）`}
-                            </Button>
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              onClick={handleMoveToBackground}
-                              title="先放进后台排队，左侧按钮立即解锁可继续创作下一张"
-                              className="h-7 rounded-full px-2.5 text-xs font-semibold"
-                            >
-                              后台排队
-                            </Button>
-                          </div>
-                        </div>
-                      </div>
-                    ) : showGeneratingState ? (
-                      <div className="w-full space-y-2.5">
-                        <div className="text-sm font-bold text-foreground">
-                          AI小画家正在绘图中
-                        </div>
-
-                        <div className="space-y-1.5">
-                          <div className="relative h-2 overflow-hidden rounded-full border border-border bg-card">
-                            <div
-                              className="h-full bg-[#D9381E] transition-all duration-700"
-                              style={{ width: `${barWidth}%` }}
-                            />
-                            {isDrawingStage && (
-                              <motion.div
-                                aria-hidden="true"
-                                animate={{ x: ['-40%', '220%'] }}
-                                transition={{ duration: 1.4, repeat: Infinity, ease: 'linear' }}
-                                className="absolute inset-y-0 left-0 w-1/3 bg-gradient-to-r from-transparent via-white/45 to-transparent"
-                              />
-                            )}
-                          </div>
-                          <div className="flex items-center justify-between font-mono text-xs text-muted-foreground">
-                            <span>
-                              {liveStage === 'transcribing_refs'
-                                ? '正在将参考图转为文字…'
-                                : liveStage === 'text_generating'
-                                  ? '纯文生图绘制中…'
-                                  : liveStageOrder === 0
-                                    ? '准备素材中…'
-                                    : liveStageOrder === 1
-                                      ? '绘制中…'
-                                      : '保存成图中…'}
-                            </span>
-                            <div className="flex items-center gap-2">
-                              <span>{elapsedSeconds}s</span>
-                              <Button
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                onClick={activeCloudJobId ? handleMoveToBackground : handleCancelBeforeJob}
-                                title={
-                                  activeCloudJobId
-                                    ? '收起绘制界面转入后台继续画，可立即发起下一个任务，完成后自动通知入库'
-                                    : '取消本次上传与生成请求'
-                                }
-                                className="h-6 rounded-full px-2.5 text-xs font-sans"
-                              >
-                                {activeCloudJobId ? '后台绘制' : '取消'}
-                              </Button>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    ) : showFailedStage ? (
-                      <div className="w-full space-y-2.5 rounded-xl border border-destructive/30 bg-card/95 p-3 text-center shadow-sm">
-                        <div className="flex items-center justify-center gap-1.5 text-sm font-bold text-destructive">
-                          <CircleAlertIcon className="size-4 shrink-0" />
-                          <span>生成失败（已自动退还积分）</span>
-                        </div>
-                        <p className="text-xs leading-relaxed text-muted-foreground">
-                          {generationError}
-                        </p>
-                        <div className="flex flex-wrap items-center justify-center gap-2 pt-0.5">
-                          <Button
-                            type="button"
-                            size="sm"
-                            disabled={showGeneratingState || userQueueFull || (Boolean(user) && !activeProviderReady)}
-                            className="rounded-xl bg-[#D9381E] text-xs font-bold text-white hover:bg-[#C23018]"
-                            onClick={() => handleGenerate()}
-                          >
-                            <RotateCcwIcon className="size-3.5" />
-                            重试生成
-                          </Button>
-                          {textFallbackFeatureEnabled &&
-                            activeProfileSupportsTextFallback &&
-                            !effectiveTextToImageMode && (
-                              <Button
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                disabled={showGeneratingState || userQueueFull || (Boolean(user) && !activeProviderReady)}
-                                className="rounded-xl border-[#E5A918]/55 text-xs font-semibold hover:bg-[#E5A918]/10"
-                                onClick={() => {
-                                  setTextToImageMode(true)
-                                  handleGenerate({ textToImage: true })
-                                }}
-                              >
-                                <FileTextIcon className="size-3.5 text-[#B88300] dark:text-[#E5A918]" />
-                                改用图转文生图
-                              </Button>
-                            )}
-                          {previewUrl && (
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              className="rounded-xl text-xs"
-                              onClick={() => setZoomImageUrl(previewUrl)}
-                            >
-                              查看上一张作品
-                            </Button>
-                          )}
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            className="rounded-xl text-xs text-muted-foreground hover:text-foreground"
-                            onClick={() => {
-                              setGenerationError('')
-                              setPreviewUrl('')
-                            }}
-                          >
-                            返回
-                          </Button>
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="text-xs font-bold text-muted-foreground">
-                        画好啦 · 作品飞向画框中…
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {!showGeneratingState && !showFailedStage && previewUrl ? (
-                  <MonitorResultCard
-                    previewUrl={previewUrl}
-                    hiddenForDelivery={showDeliveryScene}
-                    skipIntro={skipResultIntro}
-                    onImageReady={() => setResultImgLoadedUrl(previewUrl)}
-                    onZoom={() => setZoomImageUrl(previewUrl)}
-                  />
-                ) : !showGeneratingState && !showFailedStage ? (
-                  <div className="relative flex w-full max-w-md flex-col items-center gap-3.5 text-center sm:gap-4">
-                    <div
-                      aria-hidden="true"
-                      className="pointer-events-none absolute top-1/2 left-1/2 size-72 -translate-x-1/2 -translate-y-1/2 rounded-full border border-dashed border-foreground/[0.08]"
-                    />
-                    <div
-                      aria-hidden="true"
-                      className="pointer-events-none absolute top-1/2 left-1/2 size-96 -translate-x-1/2 -translate-y-1/2 rounded-full border border-foreground/[0.04]"
-                    />
-
-                    <div className="relative flex max-w-full items-center justify-center gap-2 sm:gap-5">
-                      <div className="flex items-center -space-x-4 sm:-space-x-3">
-                        {[
-                          {
-                            key: 'pose',
-                            label: '姿势',
-                            src: recipe.pose ? referenceImageUrl(poseThumbPath(recipe.pose)) : '',
-                            icon: PersonStandingIcon,
-                            tint: 'text-[#D9381E] dark:text-[#FF7A59]',
-                          },
-                          {
-                            key: 'costume',
-                            label: '服装',
-                            src: recipe.costume ? referenceImageUrl(recipe.costume.缩略图) : '',
-                            icon: ShirtIcon,
-                            tint: 'text-[#116E65] dark:text-[#4FD1C5]',
-                          },
-                          {
-                            key: 'portrait',
-                            label: '人像',
-                            src: recipe.portrait ? referenceImageUrl(recipe.portrait.缩略图) : '',
-                            icon: UserRoundIcon,
-                            tint: 'text-[#B88300] dark:text-[#E5A918]',
-                          },
-                        ].map((slot, i) => {
-                          const Icon = slot.icon
-                          const tiltClass = i === 0 ? '-rotate-[5.5deg]' : i === 2 ? 'rotate-[5.5deg]' : 'rotate-0'
-                          return (
-                            <div
-                              key={slot.key}
-                              className={cn(
-                                'relative flex h-[76px] w-[56px] shrink-0 items-center justify-center overflow-hidden rounded-xl border border-border bg-card shadow-sm transition-all duration-200 hover:z-10 hover:-translate-y-2 hover:scale-105 hover:rotate-0 hover:shadow-md sm:h-28 sm:w-[84px]',
-                                tiltClass
-                              )}
-                            >
-                              {slot.src ? (
-                                <img
-                                  src={slot.src}
-                                  alt={slot.label}
-                                  className="h-full w-full object-cover object-top"
-                                />
-                              ) : (
-                                <Icon className={cn('size-5 opacity-60', slot.tint)} />
-                              )}
-                            </div>
-                          )
-                        })}
-                      </div>
-
-                      <ArrowRightIcon className="size-4 shrink-0 text-muted-foreground/70" />
-
-                      <button
-                        type="button"
-                        onClick={() => openStylePicker('all')}
-                        aria-label={`更换风格（当前：${viewfinderStyleLabel}）`}
-                        className="group relative flex size-24 shrink-0 cursor-pointer flex-col items-center justify-center overflow-hidden rounded-2xl border-2 border-[#D9381E]/85 bg-card shadow-md transition-transform hover:scale-[1.03] focus-visible:outline-2 focus-visible:outline-ring sm:size-36"
-                      >
-                        {styleVisual.preview ? (
-                          <>
-                            <img
-                              src={styleVisual.preview}
-                              alt={viewfinderStyleLabel}
-                              className="h-full w-full object-cover object-top"
-                            />
-                            <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 via-black/45 to-transparent px-2 pt-4 pb-1.5 text-center">
-                              <span className="block truncate text-xs font-bold text-white">{styleVisual.shortLabel}</span>
-                            </div>
-                          </>
-                        ) : (
-                          <div className="flex h-full w-full flex-col items-center justify-center gap-1.5 border border-dashed border-border/80 bg-muted/20 p-2 text-center">
-                            <WandSparklesIcon className="size-5 text-[#D9381E] sm:size-6" />
-                            <span className="text-xs font-bold text-foreground">{styleVisual.shortLabel}</span>
-                          </div>
-                        )}
-                      </button>
-                    </div>
-
-                    <div className="relative space-y-1">
-                      <div className="text-sm font-bold text-foreground">
-                        {styleVisual.shortLabel} · {aspectRatio}
-                        {activeResolution ? ` · ${activeResolution}` : ''}
-                      </div>
-                      {styleVisual.tagline && (
-                        <p className="text-xs text-muted-foreground">{styleVisual.tagline}</p>
-                      )}
-                    </div>
-
-                    <div className="relative flex flex-wrap items-center justify-center gap-1.5 text-xs">
-                      {[
-                        {
-                          label: recipe.pose
-                            ? `姿势(${recipe.pose.角度 ? `${recipe.pose.角度}·` : ''}${recipe.pose.useDepth ? '深度' : '白模'})`
-                            : '姿势',
-                          to: '/poses' as const,
-                          ok: Boolean(recipe.pose),
-                        },
-                        { label: '服装', to: '/costumes' as const, ok: Boolean(recipe.costume) },
-                        { label: '人像', to: '/portraits' as const, ok: Boolean(recipe.portrait) },
-                      ].map((item) => (
-                        <Link
-                          key={item.to}
-                          to={item.to}
-                          className={cn(
-                            'inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 font-medium transition-colors hover:border-foreground/40',
-                            item.ok
-                              ? 'border-[#116E65]/30 bg-[#116E65]/10 text-[#116E65] dark:border-[#4FD1C5]/30 dark:text-[#4FD1C5]'
-                              : 'border-border bg-card text-muted-foreground hover:text-foreground'
-                          )}
-                        >
-                          {item.ok && <CheckCircle2Icon className="size-3" />}
-                          {item.label}
-                        </Link>
-                      ))}
-                    </div>
-                  </div>
-                ) : null}
-              </div>
-
-              {/* 底部胶片底片条 */}
-              {recentHistory.length > 0 && (
-                <div className="mt-2 flex shrink-0 items-center gap-2 border-t border-border/70 pt-2">
-                  <div className="no-scrollbar flex min-w-0 flex-1 items-center gap-2 overflow-x-auto px-1 py-1">
-                    {recentHistory.map((h) => {
-                      const active = h.imageUrl === previewUrl
-                      return (
-                        <button
-                          key={h.id}
-                          type="button"
-                          aria-label={`切换到成图：${h.recipeSummary}`}
-                          onClick={() => {
-                            setDeliveryState(null)
-                            setHomeworkThrowTask(null)
-                            setSkipResultIntro(false)
-                            setGenerationError('')
-                            setPreviewUrl(h.imageUrl)
-                          }}
-                          className={cn(
-                            'relative h-12 w-10 shrink-0 overflow-hidden rounded-lg border transition-all',
-                            active
-                              ? 'border-[#D9381E] ring-2 ring-[#D9381E]/85'
-                              : 'border-border/80 opacity-75 hover:opacity-100'
-                          )}
-                        >
-                          <img src={h.imageUrl} alt={h.recipeSummary} className="h-full w-full object-cover" />
-                        </button>
-                      )
-                    })}
-                  </div>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setGalleryModalOpen(true)}
-                    className="h-12 shrink-0 rounded-lg px-2.5 text-xs font-medium"
-                  >
-                    全部 ({history.length})
-                  </Button>
-                </div>
-              )}
-            </section>
-          </div>
-        }
+      <input ref={slotInputRef} type="file" accept="image/*" className="hidden" onChange={handleSlotUpload} />
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        multiple
+        className="hidden"
+        onChange={handleUploadFiles}
       />
 
-      {/* 云端作品集（支持搜索、状态/画师筛选、横向信息卡与批量管理） */}
-      <CloudWorksDialog
-        open={galleryModalOpen}
-        onOpenChange={setGalleryModalOpen}
-        history={history}
-        foregroundJobId={foregroundJobId}
-        cancellingJobIds={cancellingJobIds}
-        onRefresh={refreshHistory}
-        onOpenDetail={(item) => setDetailWorkItem(item)}
-        onFocusMonitor={focusJobInMonitor}
-        onCancelQueued={cancelQueuedJob}
-        onCompare={(item) => setComparisonResult(item)}
-        onApplyRecipe={(item) => handleApplyHistoryRecipe(item)}
-        onRegenerate={(item) => handleRegenerateFromHistory(item)}
-        onUseAsExtraRef={(item) => handleUseImageAsExtraRef(item)}
-        onRequestDelete={(item) => setPendingDeleteHistoryItem(item)}
-        onBatchDelete={removeHistoryItems}
-      />
+      <ClassicStudioLayout s={layoutProps} />
 
-      {/* 分栏任务详情灯箱 */}
-      {(() => {
-        const detailIdx = detailWorkItem
-          ? history.findIndex((item) => item.id === detailWorkItem.id)
-          : -1
-        const activeDetail = detailIdx >= 0 ? history[detailIdx] : detailWorkItem
-        return (
-          <WorkDetailDialog
-            item={activeDetail}
-            open={activeDetail !== null}
-            onOpenChange={(open) => {
-              if (!open) setDetailWorkItem(null)
-            }}
-            styleCatalog={styleCatalog}
-            canPrev={detailIdx > 0}
-            canNext={detailIdx >= 0 && detailIdx < history.length - 1}
-            onPrev={() => {
-              if (detailIdx > 0) setDetailWorkItem(history[detailIdx - 1])
-            }}
-            onNext={() => {
-              if (detailIdx >= 0 && detailIdx < history.length - 1) {
-                setDetailWorkItem(history[detailIdx + 1])
-              }
-            }}
-            onZoom={(url) => setZoomImageUrl(url)}
+      {/* 云端作品集（按需懒加载，避免拉大工作台首屏包体积） */}
+      {galleryModalOpen && (
+        <Suspense fallback={null}>
+          <CloudWorksDialog
+            open={galleryModalOpen}
+            onOpenChange={setGalleryModalOpen}
+            history={history}
+            foregroundJobId={foregroundJobId}
+            cancellingJobIds={cancellingJobIds}
+            onRefresh={refreshHistory}
+            onOpenDetail={(item) => setDetailWorkItem(item)}
+            onFocusMonitor={focusJobInMonitor}
+            onCancelQueued={cancelQueuedJob}
             onCompare={(item) => setComparisonResult(item)}
             onApplyRecipe={(item) => handleApplyHistoryRecipe(item)}
             onRegenerate={(item) => handleRegenerateFromHistory(item)}
             onUseAsExtraRef={(item) => handleUseImageAsExtraRef(item)}
-            onFocusMonitor={focusJobInMonitor}
-            onCancelQueued={(id) => void cancelQueuedJob(id)}
-            onDelete={(item) => setPendingDeleteHistoryItem(item)}
+            onRequestDelete={(item) => setPendingDeleteHistoryItem(item)}
+            onBatchDelete={removeHistoryItems}
           />
+        </Suspense>
+      )}
+
+      {/* 分栏任务详情灯箱 */}
+      {detailWorkItem !== null && (() => {
+        const detailIdx = history.findIndex((item) => item.id === detailWorkItem.id)
+        const activeDetail = detailIdx >= 0 ? history[detailIdx] : detailWorkItem
+        return (
+          <Suspense fallback={null}>
+            <WorkDetailDialog
+              item={activeDetail}
+              open
+              onOpenChange={(open) => {
+                if (!open) setDetailWorkItem(null)
+              }}
+              styleCatalog={styleCatalog}
+              canPrev={detailIdx > 0}
+              canNext={detailIdx >= 0 && detailIdx < history.length - 1}
+              onPrev={() => {
+                if (detailIdx > 0) setDetailWorkItem(history[detailIdx - 1])
+              }}
+              onNext={() => {
+                if (detailIdx >= 0 && detailIdx < history.length - 1) {
+                  setDetailWorkItem(history[detailIdx + 1])
+                }
+              }}
+              onZoom={(url) => setZoomImageUrl(url)}
+              onCompare={(item) => setComparisonResult(item)}
+              onApplyRecipe={(item) => handleApplyHistoryRecipe(item)}
+              onRegenerate={(item) => handleRegenerateFromHistory(item)}
+              onUseAsExtraRef={(item) => handleUseImageAsExtraRef(item)}
+              onShareToGallery={(item) => setShareGalleryJob(item)}
+              onFocusMonitor={focusJobInMonitor}
+              onCancelQueued={(id) => void cancelQueuedJob(id)}
+              onDelete={(item) => setPendingDeleteHistoryItem(item)}
+            />
+          </Suspense>
         )
       })()}
 
-      <LocalImageToolsDialog
-        open={localToolsOpen}
-        onOpenChange={setLocalToolsOpen}
-        currentMonitorUrl={previewUrl || undefined}
-        onApplyToSlot={(slot, dataUrl, fileName) => {
-          void applyDataUrlToSlot(slot, dataUrl, fileName).catch((err) => {
-            toast.error(err instanceof Error ? err.message : '载入参考槽位失败')
-          })
-        }}
-      />
+      {shareGalleryJob !== null && (
+        <Suspense fallback={null}>
+          <PublishToGalleryDialog
+            job={shareGalleryJob}
+            open
+            onOpenChange={(open) => {
+              if (!open) setShareGalleryJob(null)
+            }}
+          />
+        </Suspense>
+      )}
 
-      {/* 查看完整编译指令弹窗 */}
-      <Dialog open={promptPreviewOpen} onOpenChange={setPromptPreviewOpen}>
-        <DialogContent className="max-h-[85dvh] w-[95vw] max-w-2xl overflow-y-auto rounded-[24px] p-5 sm:max-w-2xl">
-          <DialogHeader className="pr-8 text-left">
-            <DialogTitle className="flex items-center gap-2 text-base font-extrabold">
-              <FileTextIcon className="size-4 text-[#D9381E]" />
-              <span>完整生成指令预览</span>
-            </DialogTitle>
-            <DialogDescription className="text-xs text-muted-foreground">
-              实时展示当前参考槽位顺序、画风预设与补充细节编译后发送给「{activeArtist.name}」的指令文本。
-            </DialogDescription>
-          </DialogHeader>
-          {(() => {
-            const compiledPrompt = buildRecipePrompt(recipe, activeStyleKey, {
-              sceneNote,
-              allowFaceStyleShift,
-              allowPoseStyleShift,
-              singleStitchedSheet: Boolean(
-                platform.sendStitchedSheet || activeProfile?.needsStitchedSheet
-              ),
-              promptTemplate: platform.promptTemplate,
-              poseSanitize: platform.poseSanitize,
-              stylePresets: styleCatalog,
-              styleCategories: platform.styleCategories,
-              styleSubcategories: platform.styleSubcategories,
-            })
-            const slotTags = [
-              recipe.pose ? `姿势：${recipe.pose.姿势名称}` : null,
-              recipe.costume ? `服装：${recipe.costume.服装名称}` : null,
-              recipe.portrait ? `人像：${recipe.portrait.发型名称 || recipe.portrait.标题}` : null,
-              ...(recipe.extraImages || []).map((ex, i) => `附图${i + 1}：${ex.name}`),
-            ].filter(Boolean) as string[]
-
-            return (
-              <div className="space-y-3 pt-1">
-                <div className="flex flex-wrap items-center gap-1.5">
-                  <span className="rounded-full border border-border bg-[#FAF8F4] px-2.5 py-0.5 font-mono text-xs font-semibold text-foreground dark:bg-muted/40">
-                    {aspectRatio}
-                    {activeResolution ? ` · ${activeResolution}` : ''} · {displayRatioDims.label}
-                  </span>
-                  <span className="rounded-full border border-border bg-[#FAF8F4] px-2.5 py-0.5 text-xs font-semibold text-foreground dark:bg-muted/40">
-                    画风：{viewfinderStyleLabel}
-                  </span>
-                  {slotTags.map((tag, i) => (
-                    <span
-                      key={`${tag}-${i}`}
-                      className="rounded-full border border-border/80 bg-card px-2.5 py-0.5 text-xs text-muted-foreground"
-                    >
-                      {`<IMAGE_${i}>`} {tag}
-                    </span>
-                  ))}
-                </div>
-
-                <div className="rounded-2xl border border-border bg-[#FAF8F4] p-3.5 font-mono text-xs leading-relaxed whitespace-pre-wrap text-foreground dark:bg-muted/35">
-                  {compiledPrompt}
-                </div>
-
-                <div className="flex justify-end gap-2">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => {
-                      void navigator.clipboard
-                        .writeText(compiledPrompt)
-                        .then(() => toast.success('已复制完整生成指令'))
-                        .catch(() => toast.error('复制失败，请手动选中复制'))
-                    }}
-                    className="h-8 rounded-xl text-xs"
-                  >
-                    <CopyIcon className="size-3.5" />
-                    <span>复制指令</span>
-                  </Button>
-                </div>
-              </div>
-            )
-          })()}
-        </DialogContent>
-      </Dialog>
+      {localToolsOpen && (
+        <Suspense fallback={null}>
+          <LocalImageToolsDialog
+            open={localToolsOpen}
+            onOpenChange={setLocalToolsOpen}
+            currentMonitorUrl={previewUrl || undefined}
+            onApplyToSlot={(slot, dataUrl, fileName) => {
+              void applyDataUrlToSlot(slot, dataUrl, fileName).catch((err) => {
+                toast.error(err instanceof Error ? err.message : '载入参考槽位失败')
+              })
+            }}
+          />
+        </Suspense>
+      )}
 
       {/* URL 添加附图弹窗 */}
       <Dialog open={urlModalOpen} onOpenChange={setUrlModalOpen}>
@@ -3333,11 +1610,15 @@ function StudioPage() {
         </DialogContent>
       </Dialog>
 
-      <ReferenceComparisonDialog
-        result={comparisonResult}
-        open={comparisonResult !== null}
-        onOpenChange={(open) => !open && setComparisonResult(null)}
-      />
+      {comparisonResult !== null && (
+        <Suspense fallback={null}>
+          <ReferenceComparisonDialog
+            result={comparisonResult}
+            open
+            onOpenChange={(open) => !open && setComparisonResult(null)}
+          />
+        </Suspense>
+      )}
 
       <Dialog
         open={pendingDeleteHistoryItem !== null}
@@ -3385,11 +1666,15 @@ function StudioPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-      <ImageViewer
-        imageUrl={zoomImageUrl || ''}
-        open={Boolean(zoomImageUrl)}
-        onOpenChange={(open) => !open && setZoomImageUrl(null)}
-      />
+      {Boolean(zoomImageUrl) && (
+        <Suspense fallback={null}>
+          <ImageViewer
+            imageUrl={zoomImageUrl || ''}
+            open
+            onOpenChange={(open) => !open && setZoomImageUrl(null)}
+          />
+        </Suspense>
+      )}
 
       <Dialog open={Boolean(stitchModalUrl)} onOpenChange={(o) => !o && setStitchModalUrl(null)}>
         <DialogContent className="max-h-[90dvh] w-[95vw] max-w-3xl overflow-y-auto p-4 sm:max-w-3xl">
@@ -3417,19 +1702,23 @@ function StudioPage() {
         <DialogContent className="flex h-[86dvh] w-[96vw] max-w-4xl flex-col gap-3 overflow-hidden p-4 sm:max-w-4xl">
           <DialogHeader className="shrink-0">
             <DialogTitle className="flex items-center gap-2 text-base font-extrabold">
-              <LayersIcon className="size-4 text-[#D9381E]" />
+              <LayersIcon className="size-4 text-[var(--skin-accent)]" />
               <span>画风图鉴</span>
             </DialogTitle>
           </DialogHeader>
-          <StyleBrowserPanel
-            key={`${styleModalSeed}-${styleModalInitialCat}`}
-            initialCategoryId={styleModalInitialCat}
-            value={stylePreset}
-            onChange={setStylePreset}
-            onSelectComplete={() => setStyleModalOpen(false)}
-            gridColsClassName="grid-cols-2 sm:grid-cols-3"
-            className="min-h-0 flex-1"
-          />
+          {styleModalOpen && (
+            <Suspense fallback={<div className="min-h-0 flex-1" />}>
+              <StyleBrowserPanel
+                key={`${styleModalSeed}-${styleModalInitialCat}`}
+                initialCategoryId={styleModalInitialCat}
+                value={effectiveStylePreset}
+                onChange={handleStyleChange}
+                onSelectComplete={() => setStyleModalOpen(false)}
+                gridColsClassName="grid-cols-2 sm:grid-cols-3"
+                className="min-h-0 flex-1"
+              />
+            </Suspense>
+          )}
         </DialogContent>
       </Dialog>
 

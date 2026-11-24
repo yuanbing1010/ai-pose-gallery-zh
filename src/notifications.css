@@ -3,7 +3,7 @@
   --normal-bg: var(--popover);
   --normal-text: var(--popover-foreground);
   --normal-border: var(--border);
-  --border-radius: 14px;
+  --border-radius: 12px;
   --width: min(420px, calc(100vw - 24px)) !important;
   font-family: var(--font-sans);
   z-index: 1000;
@@ -37,9 +37,11 @@
   background: transparent;
   color: var(--muted-foreground);
 }
-[data-sonner-toaster].app-notifications [data-sonner-toast]:hover [data-close-button]:hover {
-  background: var(--accent);
-  color: var(--accent-foreground);
+@media (hover: hover) and (pointer: fine) {
+  [data-sonner-toaster].app-notifications [data-sonner-toast]:hover [data-close-button]:hover {
+    background: var(--accent);
+    color: var(--accent-foreground);
+  }
 }
 [data-sonner-toaster].app-notifications [data-sonner-toast] [data-button] { min-height: 44px; height: auto; font-size: 14px; }
 [data-sonner-toaster].app-notifications [data-sonner-toast]:focus-visible,
@@ -70,5 +72,8 @@ html[data-gallery-motion=off] [data-sonner-toaster].app-notifications,
 html[data-gallery-motion=off] [data-sonner-toaster].app-notifications * { transition: none !important; animation: none !important; }
 @media (prefers-reduced-motion: reduce) {
   [data-sonner-toaster].app-notifications,
-  [data-sonner-toaster].app-notifications * { transition: none !important; animation: none !important; }
+  [data-sonner-toaster].app-notifications * {
+    transition: opacity 160ms ease !important;
+    animation: none !important;
+  }
 }

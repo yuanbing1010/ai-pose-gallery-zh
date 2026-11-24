@@ -18,6 +18,7 @@ export interface Env {
   MUSE_API_KEY?: string
   WECHAT_APP_ID?: string
   WECHAT_APP_SECRET?: string
+  GALLERY_INGEST_KEY?: string
 }
 
 export interface AppVariables {

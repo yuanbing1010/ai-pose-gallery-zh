@@ -40,6 +40,13 @@ function getProxyUrlForTarget(targetHost: string): URL | null {
 function createProxyAgent(proxyUrl: URL, targetHost: string, targetPort: number): https.Agent {
   const agent = new https.Agent({ keepAlive: false })
   ;(agent as any).createConnection = (_opts: unknown, cb: (err: Error | null, sock?: tls.TLSSocket) => void) => {
+    let cbDone = false
+    const done = (err: Error | null, sock?: tls.TLSSocket) => {
+      if (cbDone) return
+      cbDone = true
+      cb(err, sock)
+    }
+
     const proxyPort = Number(proxyUrl.port) || (proxyUrl.protocol === 'https:' ? 443 : 80)
     const connectHeaders: Record<string, string> = {
       Host: `${targetHost}:${targetPort}`,
@@ -59,21 +66,26 @@ function createProxyAgent(proxyUrl: URL, targetHost: string, targetPort: number)
       timeout: 15_000,
     })
     proxyReq.once('connect', (res, socket) => {
+      proxyReq.removeAllListeners('timeout')
+      proxyReq.removeAllListeners('error')
       if (res.statusCode !== 200) {
         socket.destroy()
-        cb(new Error(`Proxy CONNECT ${targetHost}:${targetPort} failed: HTTP ${res.statusCode}`))
+        done(new Error(`Proxy CONNECT ${targetHost}:${targetPort} failed: HTTP ${res.statusCode}`))
         return
       }
+      // 清除 CONNECT 阶段设置的 socket 超时，避免残留定时器在 TLS 握手期间误触发
+      socket.setTimeout(0)
       const tlsSock = tls.connect({
         socket,
         servername: targetHost,
+        ALPNProtocols: ['http/1.1'],
       })
-      cb(null, tlsSock)
+      done(null, tlsSock)
     })
     proxyReq.once('timeout', () => {
       proxyReq.destroy(new Error('Proxy CONNECT timeout'))
     })
-    proxyReq.once('error', (err) => cb(err))
+    proxyReq.once('error', (err) => done(err))
     proxyReq.end()
   }
   return agent
@@ -166,78 +178,121 @@ function localAssetsPlugin(): Plugin {
 
       const targetPort = Number(target.port) || 443
       const proxyUrl = getProxyUrlForTarget(target.hostname)
-      const agent = proxyUrl ? createProxyAgent(proxyUrl, target.hostname, targetPort) : undefined
+      const startedAt = Date.now()
 
-      await new Promise<void>((resolve, reject) => {
-        let settled = false
-        const finish = (err?: Error) => {
-          if (settled) return
-          settled = true
-          clearTimeout(deadlineTimer)
-          req.off('aborted', onClientAbort)
-          res.off('close', onClientClose)
-          if (err) reject(err)
-          else resolve()
-        }
+      const sendOnce = (attemptTimeoutMs: number) =>
+        new Promise<{ secureConnected: boolean; clientClosed: boolean }>((resolve, reject) => {
+          let settled = false
+          let secureConnected = false
+          let clientClosed = false
+          const agent = proxyUrl ? createProxyAgent(proxyUrl, target.hostname, targetPort) : undefined
 
-        const upReq = https.request(
-          {
-            hostname: target.hostname,
-            port: targetPort,
-            path: `${target.pathname}${target.search}`,
-            method,
-            headers: forwardHeaders,
-            agent,
-            timeout: upstreamTimeoutMs,
-          },
-          (upRes) => {
-            res.statusCode = upRes.statusCode || 502
-            const ct = upRes.headers['content-type']
-            if (ct) res.setHeader('Content-Type', ct)
-            const retryAfter = upRes.headers['retry-after']
-            if (typeof retryAfter === 'string' && retryAfter) {
-              res.setHeader('Retry-After', retryAfter)
+          const finish = (err?: Error) => {
+            if (settled) return
+            settled = true
+            clearTimeout(deadlineTimer)
+            req.off('aborted', onClientAbort)
+            res.off('close', onClientClose)
+            if (err) {
+              reject(Object.assign(err, { _secureConnected: secureConnected, _clientClosed: clientClosed }))
+            } else {
+              resolve({ secureConnected, clientClosed })
             }
-            upRes.pipe(res)
-            upRes.once('end', () => finish())
-            upRes.once('error', (err) => finish(err))
           }
-        )
 
-        const onClientAbort = () => {
-          const err = new Error('Client aborted upstream request')
-          upReq.destroy(err)
-          finish(err)
-        }
-        const onClientClose = () => {
-          if (!res.writableEnded) {
-            const err = new Error('Client closed upstream request')
+          const upReq = https.request(
+            {
+              hostname: target.hostname,
+              port: targetPort,
+              path: `${target.pathname}${target.search}`,
+              method,
+              headers: forwardHeaders,
+              agent,
+              timeout: attemptTimeoutMs,
+            },
+            (upRes) => {
+              secureConnected = true
+              res.statusCode = upRes.statusCode || 502
+              const ct = upRes.headers['content-type']
+              if (ct) res.setHeader('Content-Type', ct)
+              const cl = upRes.headers['content-length']
+              if (typeof cl === 'string' && /^\d+$/.test(cl)) {
+                res.setHeader('Content-Length', cl)
+              }
+              const retryAfter = upRes.headers['retry-after']
+              if (typeof retryAfter === 'string' && retryAfter) {
+                res.setHeader('Retry-After', retryAfter)
+              }
+              upRes.pipe(res)
+              upRes.once('end', () => finish())
+              upRes.once('error', (err) => finish(err))
+            }
+          )
+
+          upReq.once('socket', (sock) => {
+            const tlsSock = sock as tls.TLSSocket
+            if (tlsSock.encrypted && tlsSock.getCipher?.()) {
+              secureConnected = true
+            } else {
+              sock.once('secureConnect', () => {
+                secureConnected = true
+              })
+            }
+          })
+
+          const onClientAbort = () => {
+            clientClosed = true
+            const err = new Error('Client aborted upstream request')
             upReq.destroy(err)
             finish(err)
           }
-        }
-        req.once('aborted', onClientAbort)
-        res.once('close', onClientClose)
+          const onClientClose = () => {
+            if (!res.writableEnded) {
+              clientClosed = true
+              const err = new Error('Client closed upstream request')
+              upReq.destroy(err)
+              finish(err)
+            }
+          }
+          req.once('aborted', onClientAbort)
+          res.once('close', onClientClose)
 
-        const deadlineTimer = setTimeout(() => {
-          const err = new Error('Upstream request deadline exceeded')
-          upReq.destroy(err)
-          finish(err)
-        }, upstreamTimeoutMs + 1_000)
+          const deadlineTimer = setTimeout(() => {
+            const err = new Error('Upstream request deadline exceeded')
+            upReq.destroy(err)
+            finish(err)
+          }, attemptTimeoutMs + 1_000)
 
-        upReq.once('timeout', () => {
-          upReq.destroy(new Error('Upstream request timeout'))
+          upReq.once('timeout', () => {
+            upReq.destroy(new Error('Upstream request timeout'))
+          })
+          upReq.once('error', (err) => finish(err))
+          if (rawBody.length > 0 && method !== 'GET') {
+            upReq.write(rawBody)
+          }
+          upReq.end()
         })
-        upReq.once('error', (err) => finish(err))
-        if (rawBody.length > 0 && method !== 'GET') {
-          upReq.write(rawBody)
+
+      try {
+        await sendOnce(upstreamTimeoutMs)
+      } catch (firstErr: any) {
+        const elapsedMs = Date.now() - startedAt
+        const remainingMs = upstreamTimeoutMs - elapsedMs - 300
+        const canRetryPreTls =
+          !firstErr?._secureConnected && !firstErr?._clientClosed && !res.headersSent && remainingMs >= 5_000
+        if (!canRetryPreTls) {
+          throw firstErr
         }
-        upReq.end()
-      })
-    } catch (err) {
+        await new Promise((r) => setTimeout(r, 300))
+        await sendOnce(remainingMs)
+      }
+    } catch (err: any) {
       if (!res.headersSent) {
         res.statusCode = 502
         res.setHeader('Content-Type', 'application/json; charset=utf-8')
+        if (err && err._secureConnected === false && !err._clientClosed) {
+          res.setHeader('X-Dev-Pre-Request-Error', '1')
+        }
         res.end(JSON.stringify({ error: { message: err instanceof Error ? err.message : 'Dev upstream proxy failed' } }))
       } else if (!res.destroyed) {
         res.destroy(err instanceof Error ? err : undefined)
@@ -306,6 +361,7 @@ export default defineConfig({
           groups: [
             { name: 'react-vendor', test: /node_modules[\\/](react|react-dom|scheduler)[\\/]/ },
             { name: 'tanstack-vendor', test: /node_modules[\\/]@tanstack[\\/]/ },
+            { name: 'motion-vendor', test: /node_modules[\\/](motion|framer-motion)[\\/]/ },
             { name: 'ui-vendor', test: /node_modules[\\/](radix-ui|@radix-ui|lucide-react|sonner)[\\/]/ },
           ],
         },

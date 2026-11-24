@@ -1,4 +1,5 @@
-import { useState, type ReactNode } from 'react'
+import { useId, useState, type ReactNode } from 'react'
+import { motion } from 'motion/react'
 import { ArrowRightIcon, ChevronLeftIcon, ChevronRightIcon, LoaderCircleIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
@@ -16,18 +17,25 @@ import { cn } from '@/lib/utils'
 import { ADMIN_DIALOG_CLS, type AdminConfirmAction } from './auditHelpers'
 
 export function AdminPageHeader({
+  eyebrow,
   title,
   description,
   actions,
 }: {
+  eyebrow?: ReactNode
   title: ReactNode
   description?: ReactNode
   actions?: ReactNode
 }) {
   return (
-    <div className="flex flex-wrap items-end justify-between gap-4 border-b border-zinc-950 pb-3.5 dark:border-zinc-100">
+    <div className="flex flex-wrap items-end justify-between gap-4 border-b-2 border-zinc-950 pb-4 dark:border-zinc-100">
       <div className="min-w-0">
-        <h1 className="text-xl font-bold tracking-tight">{title}</h1>
+        {eyebrow && (
+          <div className="mb-1 font-mono text-xs font-semibold tracking-wider text-zinc-500 uppercase dark:text-zinc-400">
+            {eyebrow}
+          </div>
+        )}
+        <h1 className="text-xl font-extrabold tracking-[-0.025em] sm:text-2xl">{title}</h1>
         {description && (
           <p className="mt-1 text-xs leading-relaxed text-zinc-600 dark:text-zinc-400">
             {description}
@@ -60,18 +68,25 @@ export function AdminPanel({
 }) {
   const hasHeader = Boolean(title || subtitle || headerRight)
   return (
-    <section className={cn('border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950', className)}>
+    <section
+      className={cn(
+        'border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950',
+        className
+      )}
+    >
       {hasHeader && (
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-200 bg-zinc-50 px-4 py-2.5 sm:px-5 dark:border-zinc-800 dark:bg-zinc-900/70">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-200 bg-zinc-50/90 px-4 py-3 sm:px-5 dark:border-zinc-800 dark:bg-zinc-900/70">
           <div className="min-w-0">
             {title && (
-              <div className="flex items-center gap-2 text-xs font-bold text-zinc-950 dark:text-zinc-100">
+              <div className="flex items-center gap-2 text-xs font-bold tracking-tight text-zinc-950 dark:text-zinc-100">
                 {icon}
                 <span>{title}</span>
               </div>
             )}
             {subtitle && (
-              <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">{subtitle}</p>
+              <p className="mt-0.5 text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">
+                {subtitle}
+              </p>
             )}
           </div>
           {headerRight && <div className="flex flex-wrap items-center gap-2">{headerRight}</div>}
@@ -112,27 +127,42 @@ export function AdminMetricGrid({ items }: { items: AdminMetricItem[] }) {
   return (
     <div
       className={cn(
-        'grid divide-x divide-y divide-zinc-200 border border-zinc-200 dark:divide-zinc-800 dark:border-zinc-800',
+        'grid divide-x divide-y divide-zinc-200 border border-zinc-200 bg-white dark:divide-zinc-800 dark:border-zinc-800 dark:bg-zinc-950',
         colsCls
       )}
     >
       {items.map((item, idx) => {
         const inner = (
           <>
+            {item.onClick && (
+              <span
+                aria-hidden="true"
+                className="pointer-events-none absolute inset-x-0 top-0 h-[2px] origin-left scale-x-0 bg-zinc-950 transition-transform duration-200 group-hover:scale-x-100 dark:bg-zinc-100"
+              />
+            )}
             <div className="flex items-center justify-between gap-2 text-xs font-medium text-zinc-500 dark:text-zinc-400">
               <span className="truncate">
-                {item.code ? <span className="mr-1 font-mono">{item.code}</span> : null}
+                {item.code ? (
+                  <span className="mr-1.5 font-mono text-xs font-bold text-zinc-400 dark:text-zinc-500">
+                    {item.code}
+                  </span>
+                ) : null}
                 {item.label}
               </span>
               {item.onClick && (
-                <ArrowRightIcon className="size-3.5 shrink-0 opacity-0 transition-opacity group-hover:opacity-100" />
+                <ArrowRightIcon className="size-3.5 shrink-0 -translate-x-1 opacity-0 transition-[transform,opacity] duration-150 group-hover:translate-x-0 group-hover:opacity-100" />
               )}
             </div>
-            <div className={cn('mt-1.5 font-mono text-xl font-bold sm:text-2xl', METRIC_TONE_CLS[item.tone ?? 'default'])}>
+            <div
+              className={cn(
+                'mt-2 font-mono text-2xl font-extrabold tracking-tight tabular-nums sm:text-[26px]',
+                METRIC_TONE_CLS[item.tone ?? 'default']
+              )}
+            >
               {item.value}
             </div>
             {item.hint && (
-              <div className="mt-1 truncate text-xs text-zinc-500 dark:text-zinc-400">
+              <div className="mt-1.5 truncate text-xs text-zinc-500 dark:text-zinc-400">
                 {item.hint}
               </div>
             )}
@@ -145,14 +175,14 @@ export function AdminMetricGrid({ items }: { items: AdminMetricItem[] }) {
               key={idx}
               type="button"
               onClick={item.onClick}
-              className="group p-4 text-left transition-colors hover:bg-zinc-50 sm:p-5 dark:hover:bg-zinc-900/60"
+              className="group relative p-4 text-left transition-colors hover:bg-zinc-50 sm:p-5 dark:hover:bg-zinc-900/60"
             >
               {inner}
             </button>
           )
         }
         return (
-          <div key={idx} className="p-4 sm:p-5">
+          <div key={idx} className="relative p-4 sm:p-5">
             {inner}
           </div>
         )
@@ -177,9 +207,10 @@ export function AdminFilterBar<T extends string>({
   onChange: (next: T) => void
   rightSlot?: ReactNode
 }) {
+  const layoutGroupId = useId()
   return (
     <div className="flex flex-wrap items-center justify-between gap-3">
-      <div className="flex flex-wrap items-center gap-1.5 text-xs">
+      <div className="inline-flex flex-wrap items-center border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
         {options.map((opt) => {
           const active = value === opt.id
           return (
@@ -188,13 +219,20 @@ export function AdminFilterBar<T extends string>({
               type="button"
               onClick={() => onChange(opt.id)}
               className={cn(
-                'border px-2.5 py-1 font-mono text-xs transition-colors',
+                'relative border-r border-zinc-200 px-3 py-1.5 font-mono text-xs transition-colors last:border-r-0 dark:border-zinc-800',
                 active
-                  ? 'border-zinc-950 bg-zinc-950 font-bold text-white dark:border-zinc-100 dark:bg-zinc-100 dark:text-zinc-950'
-                  : 'border-zinc-200 bg-white text-zinc-600 hover:border-zinc-400 hover:text-zinc-950 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-400 dark:hover:border-zinc-600 dark:hover:text-zinc-100'
+                  ? 'font-bold text-white dark:text-zinc-950'
+                  : 'text-zinc-600 hover:bg-zinc-50 hover:text-zinc-950 dark:text-zinc-400 dark:hover:bg-zinc-900/50 dark:hover:text-zinc-100'
               )}
             >
-              {opt.label}
+              {active && (
+                <motion.span
+                  layoutId={`admin-filter-${layoutGroupId}`}
+                  transition={{ type: 'spring', stiffness: 560, damping: 40 }}
+                  className="pointer-events-none absolute inset-0 bg-zinc-950 dark:bg-zinc-100"
+                />
+              )}
+              <span className="relative z-10">{opt.label}</span>
             </button>
           )
         })}
@@ -227,7 +265,7 @@ export function AdminBadge({
     <span
       title={title}
       className={cn(
-        'inline-flex items-center gap-1 border px-1.5 py-0.5 font-mono text-xs font-semibold',
+        'inline-flex shrink-0 items-center gap-1 whitespace-nowrap border px-1.5 py-0.5 font-mono text-xs font-semibold',
         toneCls[tone],
         className
       )}
@@ -357,7 +395,7 @@ export function AdminPagination({
   return (
     <div
       className={cn(
-        'flex flex-wrap items-center justify-between gap-2 border border-zinc-200 px-4 py-2.5 font-mono text-xs text-zinc-500 dark:border-zinc-800',
+        'flex flex-wrap items-center justify-between gap-2 border border-zinc-200 px-4 py-2.5 font-mono text-xs tabular-nums text-zinc-500 dark:border-zinc-800',
         className
       )}
     >

@@ -1,6 +1,13 @@
 import { queryOptions } from '@tanstack/react-query'
 import { MIO_POSE_SYSTEM } from '../../shared/mioArchive'
-import type { CostumeItem, MioGalleryPayload, PortraitItem, PoseGroup, PoseItem } from '@/types/gallery'
+import type {
+  CostumeItem,
+  MioGalleryPayload,
+  OutfitDbGalleryPayload,
+  PortraitItem,
+  PoseGroup,
+  PoseItem,
+} from '@/types/gallery'
 
 export const ANGLES = ['正面', '俯视', '仰视', '侧面', '斜侧', '背面'] as const
 
@@ -56,14 +63,56 @@ export function buildPoseGroups(items: PoseItem[]): { items: PoseItem[]; groups:
   return { items, groups, lines }
 }
 
-const GALLERY_DATA_VERSION = '20261119'
+const GALLERY_DATA_VERSION = '20261123'
 
-let mioOverlayPromise: Promise<MioGalleryPayload | null> | null = null
-let mioOverlayFetchedAt = 0
+interface CachedOverlayLoader<T extends { synced?: boolean }> {
+  fetch: () => Promise<T | null>
+  invalidate: () => void
+}
+
+function createOverlayLoader<T extends { synced?: boolean }>(endpoint: string): CachedOverlayLoader<T> {
+  let promise: Promise<T | null> | null = null
+  let fetchedAt = 0
+  return {
+    fetch: async () => {
+      const now = Date.now()
+      if (!promise || now - fetchedAt > 60_000) {
+        fetchedAt = now
+        promise = (async () => {
+          try {
+            const res = await fetch(endpoint, { signal: AbortSignal.timeout(4000) })
+            if (!res.ok) return null
+            const payload = (await res.json()) as Partial<T>
+            if (!payload?.synced) return null
+            return payload as T
+          } catch {
+            return null
+          }
+        })()
+      }
+      return promise
+    },
+    invalidate: () => {
+      promise = null
+      fetchedAt = 0
+    },
+  }
+}
+
+const mioOverlay = createOverlayLoader<MioGalleryPayload>('/api/gallery/mio')
+const outfitDbOverlay = createOverlayLoader<OutfitDbGalleryPayload>('/api/gallery/outfit-db')
 
 export function invalidateMioGalleryCache(): void {
-  mioOverlayPromise = null
-  mioOverlayFetchedAt = 0
+  mioOverlay.invalidate()
+}
+
+export function invalidateOutfitDbGalleryCache(): void {
+  outfitDbOverlay.invalidate()
+}
+
+export function invalidateExternalGalleryCaches(): void {
+  mioOverlay.invalidate()
+  outfitDbOverlay.invalidate()
 }
 
 async function fetchStaticJson<T>(url: string, fallback?: T): Promise<T> {
@@ -75,43 +124,48 @@ async function fetchStaticJson<T>(url: string, fallback?: T): Promise<T> {
   return (await res.json()) as T
 }
 
-async function fetchSyncedMioOverlay(): Promise<MioGalleryPayload | null> {
-  const now = Date.now()
-  if (!mioOverlayPromise || now - mioOverlayFetchedAt > 60_000) {
-    mioOverlayFetchedAt = now
-    mioOverlayPromise = (async () => {
-      try {
-        const res = await fetch('/api/gallery/mio', { signal: AbortSignal.timeout(4000) })
-        if (!res.ok) return null
-        const payload = (await res.json()) as Partial<MioGalleryPayload>
-        if (!payload?.synced) return null
-        return payload as MioGalleryPayload
-      } catch {
-        return null
-      }
-    })()
-  }
-  return mioOverlayPromise
-}
-
-function resolveEffectiveMioList<T extends { id: string }>(
+function resolveEffectiveExternalList<T extends { id: string }>(
   staticList: T[],
-  staticGenerated: string | null,
+  staticStamp: string | null,
   overlayList: T[] | undefined,
-  overlayGenerated: string | null | undefined,
+  overlayStamp: string | null | undefined,
   overlaySynced: boolean | undefined
 ): T[] {
   if (!overlaySynced || !overlayList || overlayList.length === 0) {
     return staticList
   }
-  const sGen = staticGenerated || ''
-  const oGen = overlayGenerated || ''
-  const preferOverlay = oGen > sGen || (oGen === sGen && overlayList.length >= staticList.length)
+  const sStamp = staticStamp || ''
+  const oStamp = overlayStamp || ''
+  const preferOverlay =
+    oStamp > sStamp || (oStamp === sStamp && overlayList.length >= staticList.length)
   if (preferOverlay) return overlayList
   const seen = new Set(staticList.map((item) => item.id))
   const extras = overlayList.filter((item) => !seen.has(item.id))
   return extras.length > 0 ? [...staticList, ...extras] : staticList
 }
+
+export interface HomePreviewData {
+  generatedAt: string
+  counts: {
+    poseGroups: number
+    poses: number
+    depthCapablePoses: number
+    costumes: number
+    portraits: number
+  }
+  depthPoses: PoseItem[]
+  sampleCostume: CostumeItem | null
+  samplePortrait: PortraitItem | null
+}
+
+/** 首页轻量预览数据包（~5KB），避免首页首屏拉取 4.84MB 全量三库 JSON 阻塞 LCP */
+export const homePreviewQuery = queryOptions({
+  queryKey: ['gallery', 'home-preview', GALLERY_DATA_VERSION],
+  staleTime: Infinity,
+  queryFn: async () => {
+    return fetchStaticJson<HomePreviewData>('/data/home-preview.json')
+  },
+})
 
 export const posesQuery = queryOptions({
   queryKey: ['gallery', 'poses', GALLERY_DATA_VERSION],
@@ -121,9 +175,9 @@ export const posesQuery = queryOptions({
       fetchStaticJson<PoseItem[]>('/data/pose-zh.json'),
       fetchStaticJson<PoseItem[]>('/data/pose-mio-zh.json', []),
       fetchStaticJson<{ generated?: string }>('/data/mio/source.json', {}),
-      fetchSyncedMioOverlay(),
+      mioOverlay.fetch(),
     ])
-    const effectiveMio = resolveEffectiveMioList(
+    const effectiveMio = resolveEffectiveExternalList(
       mioStaticPoses,
       mioSourceMeta.generated || null,
       overlay?.poses,
@@ -138,23 +192,44 @@ export const costumesQuery = queryOptions({
   queryKey: ['gallery', 'costumes', GALLERY_DATA_VERSION],
   staleTime: Infinity,
   queryFn: async () => {
-    const [giaReal, charadb, giaAnime, shisei, mioStaticCostumes, mioSourceMeta, overlay] = await Promise.all([
+    const [
+      giaReal,
+      charadb,
+      giaAnime,
+      shisei,
+      mioStaticCostumes,
+      mioSourceMeta,
+      mioSyncOverlay,
+      outfitDbStaticCostumes,
+      outfitDbSourceMeta,
+      outfitDbSyncOverlay,
+    ] = await Promise.all([
       fetchStaticJson<CostumeItem[]>('/data/costume-zh.json'),
       fetchStaticJson<CostumeItem[]>('/data/costume-anime-zh.json'),
       fetchStaticJson<CostumeItem[]>('/data/costume-gia-anime-zh.json'),
       fetchStaticJson<CostumeItem[]>('/data/costume-shisei-zh.json'),
       fetchStaticJson<CostumeItem[]>('/data/costume-mio-zh.json', []),
       fetchStaticJson<{ generated?: string }>('/data/mio/source.json', {}),
-      fetchSyncedMioOverlay(),
+      mioOverlay.fetch(),
+      fetchStaticJson<CostumeItem[]>('/data/costume-outfit-db-zh.json', []),
+      fetchStaticJson<{ updated?: string }>('/data/outfit-db/source.json', {}),
+      outfitDbOverlay.fetch(),
     ])
-    const effectiveMio = resolveEffectiveMioList(
+    const effectiveMio = resolveEffectiveExternalList(
       mioStaticCostumes,
       mioSourceMeta.generated || null,
-      overlay?.costumes,
-      overlay?.generated,
-      overlay?.synced
+      mioSyncOverlay?.costumes,
+      mioSyncOverlay?.generated,
+      mioSyncOverlay?.synced
     )
-    return [...giaReal, ...charadb, ...giaAnime, ...shisei, ...effectiveMio]
+    const effectiveOutfitDb = resolveEffectiveExternalList(
+      outfitDbStaticCostumes,
+      outfitDbSourceMeta.updated || null,
+      outfitDbSyncOverlay?.costumes,
+      outfitDbSyncOverlay?.updated,
+      outfitDbSyncOverlay?.synced
+    )
+    return [...giaReal, ...charadb, ...giaAnime, ...shisei, ...effectiveMio, ...effectiveOutfitDb]
   },
 })
 
